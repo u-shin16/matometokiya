@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import urllib.error
@@ -184,6 +186,9 @@ _AI_IMAGE_MIME_TYPES = {
     ".heif": "image/heif",
 }
 _AI_FILE_EXTENSIONS = _AI_DOCUMENT_EXTENSIONS | set(_AI_IMAGE_MIME_TYPES)
+_TODO_API_TOKEN_HASH_ENV = "MATOME_TODO_API_TOKEN_SHA256"
+_TODO_API_UID_ENV = "MATOME_TODO_API_UID"
+_firestore_client = None
 
 app.config["MAX_CONTENT_LENGTH"] = _AI_FILE_MAX_BYTES + (512 * 1024)
 
@@ -491,6 +496,156 @@ def normalize_ai_mindmap_tree(tree):
     return normalize_node(tree)
 
 
+def _get_bearer_token() -> str | None:
+    authorization = request.headers.get("Authorization", "")
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    return token or None
+
+
+def authenticate_todo_api_request():
+    expected_hash = os.getenv(_TODO_API_TOKEN_HASH_ENV, "").strip().lower()
+    uid = os.getenv(_TODO_API_UID_ENV, "").strip()
+    if (
+        len(expected_hash) != 64
+        or any(character not in "0123456789abcdef" for character in expected_hash)
+        or not uid
+    ):
+        return None, (
+            jsonify(error="Todo APIのサーバー設定が完了していません。"),
+            503,
+            {"Cache-Control": "no-store"},
+        )
+
+    token = _get_bearer_token()
+    if token is None:
+        return None, (
+            jsonify(error="Bearerトークンが必要です。"),
+            401,
+            {
+                "Cache-Control": "no-store",
+                "WWW-Authenticate": 'Bearer realm="matometokiya-todos"',
+            },
+        )
+
+    presented_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(presented_hash, expected_hash):
+        return None, (
+            jsonify(error="Bearerトークンが正しくありません。"),
+            401,
+            {
+                "Cache-Control": "no-store",
+                "WWW-Authenticate": 'Bearer realm="matometokiya-todos"',
+            },
+        )
+    return uid, None
+
+
+def get_firestore_client():
+    global _firestore_client
+    if _firestore_client is not None:
+        return _firestore_client
+
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+        if service_account_json:
+            credential = credentials.Certificate(json.loads(service_account_json))
+            firebase_admin.initialize_app(credential)
+        else:
+            firebase_admin.initialize_app()
+
+    _firestore_client = firestore.client()
+    return _firestore_client
+
+
+def _serialize_firestore_value(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _project_name_for_note(note_id: str, notes_by_id: dict[str, dict]) -> str | None:
+    current_id = note_id
+    seen: set[str] = set()
+    while current_id:
+        if current_id in seen:
+            return None
+        seen.add(current_id)
+        current_note = notes_by_id.get(current_id)
+        if current_note is None:
+            return None
+        parent_id = current_note.get("parent_id")
+        if parent_id is None:
+            title = str(current_note.get("title") or "").strip()
+            return title or None
+        current_id = str(parent_id)
+    return None
+
+
+def build_incomplete_todo_payload(
+    todo_documents: list[tuple[str, dict]],
+    note_documents: list[tuple[str, dict]],
+    project: str | None = None,
+) -> list[dict]:
+    notes_by_id = {document_id: data for document_id, data in note_documents}
+    requested_project = project.strip() if project else None
+    todos = []
+
+    for document_id, data in todo_documents:
+        if data.get("done") is not False:
+            continue
+        note_id = str(data.get("note_id") or "")
+        note = notes_by_id.get(note_id)
+        project_name = _project_name_for_note(note_id, notes_by_id) if note_id else None
+        if requested_project is not None and project_name != requested_project:
+            continue
+        content = str((note or {}).get("title") or data.get("title") or "無題").strip()
+        todos.append(
+            {
+                "id": document_id,
+                "content": content or "無題",
+                "priority": None,
+                "project": project_name,
+                "created_at": _serialize_firestore_value(data.get("created_at")),
+            }
+        )
+
+    return sorted(
+        todos,
+        key=lambda todo: (todo["created_at"], todo["id"]),
+        reverse=True,
+    )
+
+
+def fetch_incomplete_todos_for_uid(uid: str, project: str | None = None) -> list[dict]:
+    from google.cloud.firestore_v1.base_query import FieldFilter
+
+    user_ref = get_firestore_client().collection("users").document(uid)
+    todo_snapshot = (
+        user_ref.collection("todos")
+        .where(filter=FieldFilter("done", "==", False))
+        .stream()
+    )
+    todo_documents = [(document.id, document.to_dict() or {}) for document in todo_snapshot]
+    if not todo_documents:
+        return []
+
+    note_documents = [
+        (document.id, document.to_dict() or {})
+        for document in user_ref.collection("notes").stream()
+    ]
+    return build_incomplete_todo_payload(todo_documents, note_documents, project)
+
+
 @app.get("/app")
 def index():
     response = make_response(render_template("index.html"))
@@ -677,6 +832,40 @@ def keyword_page(slug):
 @app.errorhandler(413)
 def request_too_large(_error):
     return jsonify(error="ファイルサイズは10MB以下にしてください。"), 413
+
+
+@app.get("/api/v1/todos")
+def api_incomplete_todos():
+    uid, auth_error = authenticate_todo_api_request()
+    if auth_error is not None:
+        return auth_error
+
+    project = request.args.get("project")
+    if project is not None:
+        project = project.strip()
+        if not project:
+            return jsonify(error="projectは空にできません。"), 400, {"Cache-Control": "no-store"}
+        if len(project) > 120:
+            return jsonify(error="projectは120文字以内で指定してください。"), 400, {"Cache-Control": "no-store"}
+
+    try:
+        todos = fetch_incomplete_todos_for_uid(uid, project)
+    except Exception:
+        app.logger.exception("Todo APIでFirestoreの読み取りに失敗しました。")
+        return (
+            jsonify(error="Todoの取得に失敗しました。"),
+            502,
+            {"Cache-Control": "no-store"},
+        )
+
+    response = jsonify(
+        todos=todos,
+        count=len(todos),
+        project=project,
+        read_only=True,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.post("/api/ai-note")

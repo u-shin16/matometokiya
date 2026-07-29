@@ -12,7 +12,7 @@ Firebase Storage（users/{uid}/media/）へ移行する、ローカル専用・�
      （コピーするだけで、VPS側のファイルは削除しない）
 
 実行:
-  pip install firebase-admin   # requirements.txt には含まれない
+  pip install -r requirements.txt
   python scripts/migrate_to_firestore.py --uid <uid> --dry-run
   python scripts/migrate_to_firestore.py --uid <uid>
 """

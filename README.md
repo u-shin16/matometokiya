@@ -182,7 +182,134 @@ Firebase Authentication（Google/メールログインとも）とこのアプ�
 - `collabRooms/{roomId}/presence/{uid}`
 - Firebase Storage: `collabRooms/{roomId}/media/`
 
-`firestore.rules` により、個人データは各ユーザーの `uid` 配下のみ、共同編集データは参加者として登録されたログイン済みユーザーが読み書きできます。共同ルーム本体の更新はホストのみ許可されます。共同編集中の表示用presenceは、参加者が互いに読み取れ、自分の状態だけを書き込めます。`storage.rules` では個人メディアを本人限定、共同メディアをログイン済みユーザーかつ有効なルームID配下に限定します。バックエンドサーバーはメモ・メディアのデータを一切経由・保存しません。
+`firestore.rules` により、個人データは各ユーザーの `uid` 配下のみ、共同編集データは参加者として登録されたログイン済みユーザーが読み書きできます。共同ルーム本体の更新はホストのみ許可されます。共同編集中の表示用presenceは、参加者が互いに読み取れ、自分の状態だけを書き込めます。`storage.rules` では個人メディアを本人限定、共同メディアをログイン済みユーザーかつ有効なルームID配下に限定します。通常の画面操作ではバックエンドサーバーを経由しません。後述の読み取り専用Todo APIだけが、環境変数で固定した1ユーザーの未完了TodoをFirestoreから読み取ります。
+
+Todoはユーザーごとに次のコレクションへ保存されます。
+
+```text
+users/{uid}/todos/{todoId}
+```
+
+現在のTodoドキュメントは次のフィールドを持ちます。
+
+| フィールド | 型 | 内容 |
+| --- | --- | --- |
+| `id` | string | Todo ID（ドキュメントIDと同じ） |
+| `note_id` | string | 対応する `users/{uid}/notes/{noteId}` のID |
+| `title` | string | Todo追加時点のメモタイトル |
+| `done` | boolean | `false` が未完了、`true` が完了 |
+| `created_at` | string | Todo追加日時（ローカルISO形式） |
+
+優先度と対象プロジェクトの専用フィールドはありません。読み取り専用APIでは、優先度を `null` として返し、対象プロジェクトは対応メモから `parent_id` を辿った最上位メモのタイトルとして導出します。
+
+## Claude Codeから未完了Todoを取得する
+
+### 読み取り専用API
+
+```text
+GET /api/v1/todos
+GET /api/v1/todos?project=返事きたで
+Authorization: Bearer <APIトークン>
+```
+
+- 本番URL: `https://matome.webtool-labs.com/api/v1/todos`
+- `project` は省略可能で、最上位メモのタイトルとの完全一致です
+- `users/{MATOME_TODO_API_UID}/todos` のうち `done == false` だけを返します
+- UIDはサーバーの環境変数で固定し、リクエストからは受け取りません
+- `POST`、`PUT`、`PATCH`、`DELETE` は提供しません
+- 成功時は `{"todos": [...], "count": 1, "project": null, "read_only": true}` を返します
+- 各Todoは `id`, `content`, `priority`, `project`, `created_at` を含みます
+- 認証失敗は `401`、サーバー設定不足は `503`、Firestore読み取り失敗は `502` です
+- 応答には `Cache-Control: no-store` を付けます
+
+### トークンとVPS側の環境変数
+
+十分に長いランダムトークンを生成し、そのSHA-256だけをVPSへ設定します。平文トークンはClaude Codeを実行するPC側だけに保存してください。
+
+```bash
+python - <<'PY'
+import hashlib
+import secrets
+
+token = secrets.token_urlsafe(32)
+print(f"PC用 MATOME_TODO_API_TOKEN={token}")
+print(f"VPS用 MATOME_TODO_API_TOKEN_SHA256={hashlib.sha256(token.encode()).hexdigest()}")
+PY
+```
+
+VPS側:
+
+```dotenv
+MATOME_TODO_API_UID=<Firebase Authenticationの対象uid>
+MATOME_TODO_API_TOKEN_SHA256=<64文字のSHA-256>
+GOOGLE_APPLICATION_CREDENTIALS=/etc/matometokiya/service-account.json
+```
+
+`GOOGLE_APPLICATION_CREDENTIALS` の代わりに、サービスアカウントJSON全体を `FIREBASE_SERVICE_ACCOUNT_JSON` へ設定することもできます。どちらも設定されている場合は `FIREBASE_SERVICE_ACCOUNT_JSON` を優先します。サービスアカウントには対象Firestoreを読み取れる最小限のIAM権限を与えてください。
+
+Claude Codeを実行するPC側:
+
+```bash
+export MATOME_TODO_API_URL="https://matome.webtool-labs.com/api/v1/todos"
+export MATOME_TODO_API_TOKEN="<平文トークン>"
+```
+
+### 実行
+
+追加先にしたいVS Codeプロジェクトのルートをカレントディレクトリにして実行します。
+
+```bash
+python /path/to/matometokiya/scripts/fetch_matome_todos.py
+python /path/to/matometokiya/scripts/fetch_matome_todos.py --project "返事きたで"
+```
+
+このリポジトリ自身で実行する場合:
+
+```bash
+python scripts/fetch_matome_todos.py --project "返事きたで"
+```
+
+現在のカレントディレクトリに `docs/TODO.txt` を作成し、Todo IDがまだ記録されていない未完了Todoだけを次の形式で追記します。Todoが0件でも `docs` と `TODO.txt` は作成します。
+
+```text
+[まとめときや Todo]
+- ID: 0123456789ab
+- 内容: ログイン画面を改善する
+- 優先度: 未設定
+- 対象プロジェクト: 返事きたで
+- 取得日時: YYYY-MM-DD HH:MM
+```
+
+### VPSへ反映する
+
+VPSの実際の配置先・systemdサービス名へ読み替えて実行します。
+
+```bash
+cd /path/to/matometokiya
+git pull --ff-only
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+その後、VPSの秘密情報管理先（systemdの `EnvironmentFile` など）へ上記サーバー用環境変数を設定し、Gunicornサービスを再起動します。
+
+```bash
+sudo systemctl restart <matometokiya-service-name>
+sudo systemctl status <matometokiya-service-name>
+```
+
+Nginxなどのリバースプロキシでは `/api/v1/todos` も既存Flaskアプリへ転送し、必ずHTTPSで公開してください。
+
+### セキュリティとロールバック
+
+- 平文トークン、サービスアカウントJSON、`.env` はコミットしないでください
+- URLクエリにはトークンを入れず、必ず `Authorization` ヘッダーを使ってください
+- Firebase Admin SDKはFirestoreルールを迂回するため、UID固定とBearer認証を外さないでください
+- 鍵付きメモもFirestore上では暗号化されていないため、APIは紐づくメモのタイトルを返します
+- トークン漏えい時は新しいトークンを生成し、VPSのハッシュとPC側トークンを同時に差し替えてください
+- 公開運用ではNginx等でレート制限とアクセスログの保護も設定してください
+- 元に戻す場合は、デプロイコミットを `git revert` して再デプロイし、追加したTodo API環境変数を削除してサービスを再起動します。APIはFirestoreへ書き込まないため、Todoデータの復元作業は不要です
+- クライアント側の追記だけを戻す場合は、対象プロジェクトの `docs/TODO.txt` から `[まとめときや Todo]` ブロックを削除します
 
 ## 既存データの移行（旧バージョンからのアップグレード）
 
@@ -194,7 +321,7 @@ Firebase Authentication（Google/メールログインとも）とこのアプ�
 4. 依存関係をインストールして実行する
 
 ```bash
-pip install firebase-admin
+pip install -r requirements.txt
 python scripts/migrate_to_firestore.py --uid <uid> --dry-run
 python scripts/migrate_to_firestore.py --uid <uid>
 ```
