@@ -561,15 +561,20 @@ def get_firestore_client():
     import firebase_admin
     from firebase_admin import credentials, firestore
 
+    # GOOGLE_CLOUD_PROJECT はVertex AI用に別プロジェクトを指す場合があるため、
+    # Firestoreの接続先プロジェクトはFIREBASE_AUTH_DOMAINから明示的に固定する。
+    firebase_project_id = FIREBASE_AUTH_DOMAIN.split(".")[0]
+    options = {"projectId": firebase_project_id}
+
     try:
         firebase_admin.get_app()
     except ValueError:
         service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
         if service_account_json:
             credential = credentials.Certificate(json.loads(service_account_json))
-            firebase_admin.initialize_app(credential)
+            firebase_admin.initialize_app(credential, options)
         else:
-            firebase_admin.initialize_app()
+            firebase_admin.initialize_app(options=options)
 
     _firestore_client = firestore.client()
     return _firestore_client
