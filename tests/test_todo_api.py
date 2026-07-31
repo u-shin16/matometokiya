@@ -46,6 +46,7 @@ class TodoPayloadTests(unittest.TestCase):
                     "content": "ログイン画面を改善する",
                     "note_content": "",
                     "children": [],
+                    "path": ["返事きたで"],
                     "priority": None,
                     "project": "返事きたで",
                     "created_at": "2026-07-29T10:00:00",
@@ -97,6 +98,23 @@ class TodoPayloadTests(unittest.TestCase):
                 {"title": "ボタンを大きくする", "content": ""},
             ],
         )
+
+    def test_includes_ancestor_path_from_root_to_parent(self):
+        todos = [
+            (
+                "todo-1",
+                {"note_id": "screen", "title": "追加時のタイトル", "done": False},
+            )
+        ]
+        notes = [
+            ("root", {"title": "制作", "parent_id": None}),
+            ("app", {"title": "homepage", "parent_id": "root"}),
+            ("screen", {"title": "最初の画面", "parent_id": "app"}),
+        ]
+
+        result = app_module.build_incomplete_todo_payload(todos, notes)
+
+        self.assertEqual(result[0]["path"], ["制作", "homepage"])
 
     def test_project_filter_is_an_exact_match(self):
         todos = [

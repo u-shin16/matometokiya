@@ -606,6 +606,35 @@ def _project_name_for_note(note_id: str, notes_by_id: dict[str, dict]) -> str | 
     return None
 
 
+def _ancestor_titles(note_id: str, notes_by_id: dict[str, dict]) -> list[str]:
+    """指定メモの祖先のタイトルを、ルート側から順に並べて返す（メモ自身は含まない）。
+    例：制作 > RakuYade > homepage のように、どのアプリの話かを辿れるようにする。"""
+    titles = []
+    current_id = note_id
+    seen: set[str] = set()
+    while True:
+        if current_id in seen:
+            break
+        seen.add(current_id)
+        current_note = notes_by_id.get(current_id)
+        if current_note is None:
+            break
+        parent_id = current_note.get("parent_id")
+        if parent_id is None:
+            break
+        parent_id = str(parent_id)
+        parent_note = notes_by_id.get(parent_id)
+        if parent_note is None:
+            break
+        title = str(parent_note.get("title") or "").strip()
+        if title:
+            titles.append(title)
+        current_id = parent_id
+
+    titles.reverse()
+    return titles
+
+
 def _child_notes(note_id: str, notes_by_id: dict[str, dict]) -> list[dict]:
     """指定メモの直下の子メモを、order順に並べて返す。"""
     children = []
@@ -644,12 +673,14 @@ def build_incomplete_todo_payload(
         content = str((note or {}).get("title") or data.get("title") or "無題").strip()
         note_content = str((note or {}).get("content") or "").strip()
         children = _child_notes(note_id, notes_by_id) if note_id else []
+        path = _ancestor_titles(note_id, notes_by_id) if note_id else []
         todos.append(
             {
                 "id": document_id,
                 "content": content or "無題",
                 "note_content": note_content,
                 "children": children,
+                "path": path,
                 "priority": None,
                 "project": project_name,
                 "created_at": _serialize_firestore_value(data.get("created_at")),

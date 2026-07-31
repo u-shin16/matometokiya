@@ -67,6 +67,23 @@ class FetchMatomeTodosTests(unittest.TestCase):
         self.assertIn("- 配色を見直す: アクセントカラーを変更", content)
         self.assertIn("- ボタンを大きくする", content)
 
+    def test_includes_ancestor_path(self):
+        todos = [
+            {
+                "id": "todo-1",
+                "content": "最初の画面",
+                "priority": None,
+                "project": "制作",
+                "path": ["制作", "homepage"],
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_path, _, _ = fetch_matome_todos.append_todos(root, todos)
+            content = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("- 経路: 制作 > homepage", content)
+
     def test_omits_note_content_and_children_when_empty(self):
         todos = [{"id": "todo-1", "content": "無題", "priority": None, "project": None}]
         with tempfile.TemporaryDirectory() as temporary_directory:

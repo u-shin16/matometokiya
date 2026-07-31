@@ -142,6 +142,14 @@ def _format_children(children: Any) -> list[str]:
     return lines if len(lines) > 1 else []
 
 
+def _format_path(path: Any) -> str:
+    if not isinstance(path, list):
+        return ""
+    titles = [_single_line(item, "") for item in path]
+    titles = [title for title in titles if title]
+    return " > ".join(titles)
+
+
 def format_todo(todo: dict[str, Any], fetched_at: str) -> str:
     lines = [
         "[まとめときや Todo]",
@@ -151,6 +159,10 @@ def format_todo(todo: dict[str, Any], fetched_at: str) -> str:
         f"- 対象プロジェクト: {_single_line(todo.get('project'))}",
         f"- 取得日時: {fetched_at}",
     ]
+
+    path = _format_path(todo.get("path"))
+    if path:
+        lines.append(f"- 経路: {path}")
 
     note_content = _single_line(todo.get("note_content"), "")
     if note_content:
