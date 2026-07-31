@@ -163,5 +163,73 @@ class TodoApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 405)
 
 
+class TodoCompleteApiTests(unittest.TestCase):
+    READ_TOKEN = "test-read-token-that-is-long-enough"
+    WRITE_TOKEN = "test-write-token-that-is-long-enough"
+    UID = "firebase-user-123"
+
+    def setUp(self):
+        app_module.app.config.update(TESTING=True)
+        self.client = app_module.app.test_client()
+        self.env = {
+            "MATOME_TODO_API_UID": self.UID,
+            "MATOME_TODO_API_TOKEN_SHA256": hashlib.sha256(
+                self.READ_TOKEN.encode("utf-8")
+            ).hexdigest(),
+            "MATOME_TODO_API_WRITE_TOKEN_SHA256": hashlib.sha256(
+                self.WRITE_TOKEN.encode("utf-8")
+            ).hexdigest(),
+        }
+
+    def test_rejects_missing_token(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            response = self.client.post("/api/v1/todos/todo-1/complete")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    def test_rejects_read_token_for_write_endpoint(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            response = self.client.post(
+                "/api/v1/todos/todo-1/complete",
+                headers={"Authorization": f"Bearer {self.READ_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_marks_todo_done_with_write_token(self):
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(
+                app_module, "mark_todo_done_for_uid", return_value=True
+            ) as mark_done,
+        ):
+            response = self.client.post(
+                "/api/v1/todos/todo-1/complete",
+                headers={"Authorization": f"Bearer {self.WRITE_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"id": "todo-1", "done": True})
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        mark_done.assert_called_once_with(self.UID, "todo-1")
+
+    def test_returns_404_when_todo_not_found(self):
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "mark_todo_done_for_uid", return_value=False),
+        ):
+            response = self.client.post(
+                "/api/v1/todos/missing-todo/complete",
+                headers={"Authorization": f"Bearer {self.WRITE_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_get_is_not_allowed(self):
+        response = self.client.get("/api/v1/todos/todo-1/complete")
+        self.assertEqual(response.status_code, 405)
+
+
 if __name__ == "__main__":
     unittest.main()

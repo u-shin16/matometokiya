@@ -187,6 +187,7 @@ _AI_IMAGE_MIME_TYPES = {
 }
 _AI_FILE_EXTENSIONS = _AI_DOCUMENT_EXTENSIONS | set(_AI_IMAGE_MIME_TYPES)
 _TODO_API_TOKEN_HASH_ENV = "MATOME_TODO_API_TOKEN_SHA256"
+_TODO_API_WRITE_TOKEN_HASH_ENV = "MATOME_TODO_API_WRITE_TOKEN_SHA256"
 _TODO_API_UID_ENV = "MATOME_TODO_API_UID"
 _firestore_client = None
 
@@ -505,8 +506,8 @@ def _get_bearer_token() -> str | None:
     return token or None
 
 
-def authenticate_todo_api_request():
-    expected_hash = os.getenv(_TODO_API_TOKEN_HASH_ENV, "").strip().lower()
+def _authenticate_todo_api_request(token_hash_env: str):
+    expected_hash = os.getenv(token_hash_env, "").strip().lower()
     uid = os.getenv(_TODO_API_UID_ENV, "").strip()
     if (
         len(expected_hash) != 64
@@ -541,6 +542,15 @@ def authenticate_todo_api_request():
             },
         )
     return uid, None
+
+
+def authenticate_todo_api_request():
+    return _authenticate_todo_api_request(_TODO_API_TOKEN_HASH_ENV)
+
+
+def authenticate_todo_write_api_request():
+    """完了マーク用の書き込みAPI認証。読み取り用とは別のトークンを要求する。"""
+    return _authenticate_todo_api_request(_TODO_API_WRITE_TOKEN_HASH_ENV)
 
 
 def get_firestore_client():
@@ -644,6 +654,21 @@ def fetch_incomplete_todos_for_uid(uid: str, project: str | None = None) -> list
         for document in user_ref.collection("notes").stream()
     ]
     return build_incomplete_todo_payload(todo_documents, note_documents, project)
+
+
+def mark_todo_done_for_uid(uid: str, todo_id: str) -> bool:
+    """指定Todoをdone=Trueにする。対象が存在しなければFalseを返す。"""
+    todo_ref = (
+        get_firestore_client()
+        .collection("users")
+        .document(uid)
+        .collection("todos")
+        .document(todo_id)
+    )
+    if not todo_ref.get().exists:
+        return False
+    todo_ref.update({"done": True})
+    return True
 
 
 @app.get("/app")
@@ -864,6 +889,34 @@ def api_incomplete_todos():
         project=project,
         read_only=True,
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/v1/todos/<todo_id>/complete")
+def api_complete_todo(todo_id):
+    uid, auth_error = authenticate_todo_write_api_request()
+    if auth_error is not None:
+        return auth_error
+
+    todo_id = (todo_id or "").strip()
+    if not todo_id or len(todo_id) > 200:
+        return jsonify(error="todo_idが正しくありません。"), 400, {"Cache-Control": "no-store"}
+
+    try:
+        found = mark_todo_done_for_uid(uid, todo_id)
+    except Exception:
+        app.logger.exception("Todo APIでFirestoreの書き込みに失敗しました。")
+        return (
+            jsonify(error="Todoの更新に失敗しました。"),
+            502,
+            {"Cache-Control": "no-store"},
+        )
+
+    if not found:
+        return jsonify(error="指定されたTodoが見つかりません。"), 404, {"Cache-Control": "no-store"}
+
+    response = jsonify(id=todo_id, done=True)
     response.headers["Cache-Control"] = "no-store"
     return response
 

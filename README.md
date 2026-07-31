@@ -182,7 +182,7 @@ Firebase Authentication（Google/メールログインとも）とこのアプ�
 - `collabRooms/{roomId}/presence/{uid}`
 - Firebase Storage: `collabRooms/{roomId}/media/`
 
-`firestore.rules` により、個人データは各ユーザーの `uid` 配下のみ、共同編集データは参加者として登録されたログイン済みユーザーが読み書きできます。共同ルーム本体の更新はホストのみ許可されます。共同編集中の表示用presenceは、参加者が互いに読み取れ、自分の状態だけを書き込めます。`storage.rules` では個人メディアを本人限定、共同メディアをログイン済みユーザーかつ有効なルームID配下に限定します。通常の画面操作ではバックエンドサーバーを経由しません。後述の読み取り専用Todo APIだけが、環境変数で固定した1ユーザーの未完了TodoをFirestoreから読み取ります。
+`firestore.rules` により、個人データは各ユーザーの `uid` 配下のみ、共同編集データは参加者として登録されたログイン済みユーザーが読み書きできます。共同ルーム本体の更新はホストのみ許可されます。共同編集中の表示用presenceは、参加者が互いに読み取れ、自分の状態だけを書き込めます。`storage.rules` では個人メディアを本人限定、共同メディアをログイン済みユーザーかつ有効なルームID配下に限定します。通常の画面操作ではバックエンドサーバーを経由しません。後述のTodo APIだけが、環境変数で固定した1ユーザーの未完了Todoに対して、Firestoreの読み取り（一覧取得）と、対象Todoの`done`フィールドのみの書き込み（完了マーク）を行います。
 
 Todoはユーザーごとに次のコレクションへ保存されます。
 
@@ -202,38 +202,57 @@ users/{uid}/todos/{todoId}
 
 優先度と対象プロジェクトの専用フィールドはありません。読み取り専用APIでは、優先度を `null` として返し、対象プロジェクトは対応メモから `parent_id` を辿った最上位メモのタイトルとして導出します。
 
-## Claude Codeから未完了Todoを取得する
+## Claude CodeからTodoを取得・完了にする
 
 ### 読み取り専用API
 
 ```text
 GET /api/v1/todos
 GET /api/v1/todos?project=返事きたで
-Authorization: Bearer <APIトークン>
+Authorization: Bearer <読み取り用APIトークン>
 ```
 
 - 本番URL: `https://matome.webtool-labs.com/api/v1/todos`
 - `project` は省略可能で、最上位メモのタイトルとの完全一致です
 - `users/{MATOME_TODO_API_UID}/todos` のうち `done == false` だけを返します
 - UIDはサーバーの環境変数で固定し、リクエストからは受け取りません
-- `POST`、`PUT`、`PATCH`、`DELETE` は提供しません
 - 成功時は `{"todos": [...], "count": 1, "project": null, "read_only": true}` を返します
 - 各Todoは `id`, `content`, `priority`, `project`, `created_at` を含みます
 - 認証失敗は `401`、サーバー設定不足は `503`、Firestore読み取り失敗は `502` です
 - 応答には `Cache-Control: no-store` を付けます
 
+### 完了にする書き込みAPI
+
+```text
+POST /api/v1/todos/<todo_id>/complete
+Authorization: Bearer <書き込み用APIトークン>
+```
+
+- 本番URL: `https://matome.webtool-labs.com/api/v1/todos/<todo_id>/complete`
+- `todo_id` は読み取りAPIが返す `id` の値です
+- **読み取り用とは別のトークン**（`MATOME_TODO_API_WRITE_TOKEN_SHA256`）で認証します。読み取り用トークンではアクセスできません
+- 対象Todoの `done` を `true` に更新するだけで、他のフィールドやメモ本体は変更しません
+- 成功時は `{"id": "...", "done": true}` を返します
+- 対象が存在しない場合は `404`、認証失敗は `401`、サーバー設定不足は `503`、Firestore書き込み失敗は `502` です
+- 応答には `Cache-Control: no-store` を付けます
+- `GET`、`PUT`、`PATCH`、`DELETE` は提供しません
+
 ### トークンとVPS側の環境変数
 
-十分に長いランダムトークンを生成し、そのSHA-256だけをVPSへ設定します。平文トークンはClaude Codeを実行するPC側だけに保存してください。
+読み取り用・書き込み用それぞれに、十分に長いランダムトークンを生成し、そのSHA-256だけをVPSへ設定します。平文トークンはClaude Codeを実行するPC側だけに保存してください。
 
 ```bash
 python - <<'PY'
 import hashlib
 import secrets
 
-token = secrets.token_urlsafe(32)
-print(f"PC用 MATOME_TODO_API_TOKEN={token}")
-print(f"VPS用 MATOME_TODO_API_TOKEN_SHA256={hashlib.sha256(token.encode()).hexdigest()}")
+for label, env_name, hash_env_name in [
+    ("読み取り用", "MATOME_TODO_API_TOKEN", "MATOME_TODO_API_TOKEN_SHA256"),
+    ("書き込み用", "MATOME_TODO_API_WRITE_TOKEN", "MATOME_TODO_API_WRITE_TOKEN_SHA256"),
+]:
+    token = secrets.token_urlsafe(32)
+    print(f"PC用 {env_name}={token}  ({label})")
+    print(f"VPS用 {hash_env_name}={hashlib.sha256(token.encode()).hexdigest()}")
 PY
 ```
 
@@ -241,17 +260,19 @@ VPS側:
 
 ```dotenv
 MATOME_TODO_API_UID=<Firebase Authenticationの対象uid>
-MATOME_TODO_API_TOKEN_SHA256=<64文字のSHA-256>
+MATOME_TODO_API_TOKEN_SHA256=<読み取り用トークンの64文字SHA-256>
+MATOME_TODO_API_WRITE_TOKEN_SHA256=<書き込み用トークンの64文字SHA-256>
 GOOGLE_APPLICATION_CREDENTIALS=/etc/matometokiya/service-account.json
 ```
 
-`GOOGLE_APPLICATION_CREDENTIALS` の代わりに、サービスアカウントJSON全体を `FIREBASE_SERVICE_ACCOUNT_JSON` へ設定することもできます。どちらも設定されている場合は `FIREBASE_SERVICE_ACCOUNT_JSON` を優先します。サービスアカウントには対象Firestoreを読み取れる最小限のIAM権限を与えてください。
+`GOOGLE_APPLICATION_CREDENTIALS` の代わりに、サービスアカウントJSON全体を `FIREBASE_SERVICE_ACCOUNT_JSON` へ設定することもできます。どちらも設定されている場合は `FIREBASE_SERVICE_ACCOUNT_JSON` を優先します。サービスアカウントには対象Firestoreを読み書きできる最小限のIAM権限を与えてください（書き込みAPIがdoneフィールドを更新するため）。
 
 Claude Codeを実行するPC側:
 
 ```bash
 export MATOME_TODO_API_URL="https://matome.webtool-labs.com/api/v1/todos"
-export MATOME_TODO_API_TOKEN="<平文トークン>"
+export MATOME_TODO_API_TOKEN="<読み取り用の平文トークン>"
+export MATOME_TODO_API_WRITE_TOKEN="<書き込み用の平文トークン>"
 ```
 
 ### 実行
@@ -280,6 +301,16 @@ python scripts/fetch_matome_todos.py --project "返事きたで"
 - 取得日時: YYYY-MM-DD HH:MM
 ```
 
+### 対応したTodoを完了にする
+
+`docs/TODO.txt` に記録されたID（`- ID: ...`の値）を指定して実行します。
+
+```bash
+python /path/to/matometokiya/scripts/complete_matome_todo.py 0123456789ab
+```
+
+成功すると `Todo 0123456789ab を完了にしました。` と表示され、まとめときや側のチェックボックスも完了状態になります。`docs/TODO.txt` 自体は自動更新されないため、対応済みの行を手動で削除するかそのまま残すかは運用次第です。
+
 ### VPSへ反映する
 
 VPSの実際の配置先・systemdサービス名へ読み替えて実行します。
@@ -305,10 +336,12 @@ Nginxなどのリバースプロキシでは `/api/v1/todos` も既存Flaskア�
 - 平文トークン、サービスアカウントJSON、`.env` はコミットしないでください
 - URLクエリにはトークンを入れず、必ず `Authorization` ヘッダーを使ってください
 - Firebase Admin SDKはFirestoreルールを迂回するため、UID固定とBearer認証を外さないでください
+- 読み取り用・書き込み用トークンは必ず別のものにしてください。読み取り用トークンが漏れても、書き込み（完了マーク）はできない状態を維持するためです
+- 書き込みAPIは対象Todoの `done` フィールドのみを更新し、それ以外のフィールドやメモ本体・他のTodoには一切触れません
 - 鍵付きメモもFirestore上では暗号化されていないため、APIは紐づくメモのタイトルを返します
-- トークン漏えい時は新しいトークンを生成し、VPSのハッシュとPC側トークンを同時に差し替えてください
+- トークン漏えい時は新しいトークンを生成し、VPSのハッシュとPC側トークンを同時に差し替えてください（読み取り用・書き込み用は個別に差し替え可能です）
 - 公開運用ではNginx等でレート制限とアクセスログの保護も設定してください
-- 元に戻す場合は、デプロイコミットを `git revert` して再デプロイし、追加したTodo API環境変数を削除してサービスを再起動します。APIはFirestoreへ書き込まないため、Todoデータの復元作業は不要です
+- 元に戻す場合は、デプロイコミットを `git revert` して再デプロイし、追加したTodo API環境変数を削除してサービスを再起動します。書き込みAPIは `done` フィールドの更新のみで、Todoドキュメント自体の削除や内容の書き換えは行わないため、データ構造の復元作業は不要です（`done` を意図せず `true` にしてしまった場合は、まとめときやのアプリ画面から該当Todoを未完了に戻せます）
 - クライアント側の追記だけを戻す場合は、対象プロジェクトの `docs/TODO.txt` から `[まとめときや Todo]` ブロックを削除します
 
 ## 既存データの移行（旧バージョンからのアップグレード）
