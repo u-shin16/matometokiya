@@ -19,3 +19,6 @@ data/media/*
 !data/media/.gitkeep
 uploads/*
 !uploads/.gitkeep
+
+# scripts/fetch_matome_todos.py の出力（個人のタスク一覧、リポジトリには含めない）
+docs/TODO.txt
