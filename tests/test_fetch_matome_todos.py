@@ -43,6 +43,40 @@ class FetchMatomeTodosTests(unittest.TestCase):
         self.assertIn("- 対象プロジェクト: 返事きたで", content)
         self.assertRegex(content, r"- 取得日時: \d{4}-\d{2}-\d{2} \d{2}:\d{2}")
 
+    def test_includes_note_content_and_children(self):
+        todos = [
+            {
+                "id": "todo-1",
+                "content": "最初の画面",
+                "priority": None,
+                "project": "制作",
+                "note_content": "起動直後に表示する画面についてのメモ",
+                "children": [
+                    {"title": "配色を見直す", "content": "アクセントカラーを変更"},
+                    {"title": "ボタンを大きくする", "content": ""},
+                ],
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_path, _, _ = fetch_matome_todos.append_todos(root, todos)
+            content = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("- メモ本文: 起動直後に表示する画面についてのメモ", content)
+        self.assertIn("- 子メモ:", content)
+        self.assertIn("- 配色を見直す: アクセントカラーを変更", content)
+        self.assertIn("- ボタンを大きくする", content)
+
+    def test_omits_note_content_and_children_when_empty(self):
+        todos = [{"id": "todo-1", "content": "無題", "priority": None, "project": None}]
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_path, _, _ = fetch_matome_todos.append_todos(root, todos)
+            content = output_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("メモ本文", content)
+        self.assertNotIn("子メモ", content)
+
     def test_does_not_append_existing_ids_twice(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

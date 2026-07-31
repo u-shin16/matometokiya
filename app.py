@@ -606,6 +606,24 @@ def _project_name_for_note(note_id: str, notes_by_id: dict[str, dict]) -> str | 
     return None
 
 
+def _child_notes(note_id: str, notes_by_id: dict[str, dict]) -> list[dict]:
+    """指定メモの直下の子メモを、order順に並べて返す。"""
+    children = []
+    for child_id, child in notes_by_id.items():
+        if str(child.get("parent_id") or "") != note_id:
+            continue
+        order = child.get("order")
+        order = order if isinstance(order, (int, float)) else 0
+        title = str(child.get("title") or "").strip()
+        content = str(child.get("content") or "").strip()
+        if not title and not content:
+            continue
+        children.append({"order": order, "id": child_id, "title": title, "content": content})
+
+    children.sort(key=lambda item: (item["order"], item["id"]))
+    return [{"title": item["title"], "content": item["content"]} for item in children]
+
+
 def build_incomplete_todo_payload(
     todo_documents: list[tuple[str, dict]],
     note_documents: list[tuple[str, dict]],
@@ -624,10 +642,14 @@ def build_incomplete_todo_payload(
         if requested_project is not None and project_name != requested_project:
             continue
         content = str((note or {}).get("title") or data.get("title") or "無題").strip()
+        note_content = str((note or {}).get("content") or "").strip()
+        children = _child_notes(note_id, notes_by_id) if note_id else []
         todos.append(
             {
                 "id": document_id,
                 "content": content or "無題",
+                "note_content": note_content,
+                "children": children,
                 "priority": None,
                 "project": project_name,
                 "created_at": _serialize_firestore_value(data.get("created_at")),

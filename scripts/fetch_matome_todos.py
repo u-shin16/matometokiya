@@ -14,6 +14,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
+# 実行時のカレントディレクトリに関わらず、このリポジトリ直下の.envを読み込む。
+# 既にシェルでexport済みの環境変数は上書きしない（override=False が既定）。
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 API_URL_ENV = "MATOME_TODO_API_URL"
 API_TOKEN_ENV = "MATOME_TODO_API_TOKEN"
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -120,17 +126,39 @@ def existing_todo_ids(output_path: Path) -> set[str]:
     return {match.group(1).strip() for match in TODO_ID_PATTERN.finditer(content)}
 
 
+def _format_children(children: Any) -> list[str]:
+    if not isinstance(children, list):
+        return []
+    lines = ["- 子メモ:"]
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        title = _single_line(child.get("title"), "")
+        body = _single_line(child.get("content"), "")
+        if title and body:
+            lines.append(f"  - {title}: {body}")
+        elif title or body:
+            lines.append(f"  - {title or body}")
+    return lines if len(lines) > 1 else []
+
+
 def format_todo(todo: dict[str, Any], fetched_at: str) -> str:
-    return "\n".join(
-        [
-            "[まとめときや Todo]",
-            f"- ID: {_single_line(todo.get('id'), '不明')}",
-            f"- 内容: {_single_line(todo.get('content'), '無題')}",
-            f"- 優先度: {_single_line(todo.get('priority'))}",
-            f"- 対象プロジェクト: {_single_line(todo.get('project'))}",
-            f"- 取得日時: {fetched_at}",
-        ]
-    )
+    lines = [
+        "[まとめときや Todo]",
+        f"- ID: {_single_line(todo.get('id'), '不明')}",
+        f"- 内容: {_single_line(todo.get('content'), '無題')}",
+        f"- 優先度: {_single_line(todo.get('priority'))}",
+        f"- 対象プロジェクト: {_single_line(todo.get('project'))}",
+        f"- 取得日時: {fetched_at}",
+    ]
+
+    note_content = _single_line(todo.get("note_content"), "")
+    if note_content:
+        lines.append(f"- メモ本文: {note_content}")
+
+    lines.extend(_format_children(todo.get("children")))
+
+    return "\n".join(lines)
 
 
 def append_todos(project_root: Path, todos: list[dict[str, Any]]) -> tuple[Path, int, int]:

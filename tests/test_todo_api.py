@@ -44,10 +44,57 @@ class TodoPayloadTests(unittest.TestCase):
                 {
                     "id": "todo-pending",
                     "content": "ログイン画面を改善する",
+                    "note_content": "",
+                    "children": [],
                     "priority": None,
                     "project": "返事きたで",
                     "created_at": "2026-07-29T10:00:00",
                 }
+            ],
+        )
+
+    def test_includes_note_content_and_child_notes(self):
+        todos = [
+            (
+                "todo-1",
+                {
+                    "note_id": "parent",
+                    "title": "追加時のタイトル",
+                    "done": False,
+                    "created_at": "2026-07-29T10:00:00",
+                },
+            )
+        ]
+        notes = [
+            ("root", {"title": "制作", "parent_id": None}),
+            (
+                "parent",
+                {
+                    "title": "最初の画面",
+                    "content": "起動直後に表示する画面についてのメモ",
+                    "parent_id": "root",
+                },
+            ),
+            (
+                "child-2",
+                {"title": "ボタンを大きくする", "content": "", "parent_id": "parent", "order": 2},
+            ),
+            (
+                "child-1",
+                {"title": "配色を見直す", "content": "アクセントカラーを変更", "parent_id": "parent", "order": 1},
+            ),
+        ]
+
+        result = app_module.build_incomplete_todo_payload(todos, notes)
+
+        self.assertEqual(
+            result[0]["note_content"], "起動直後に表示する画面についてのメモ"
+        )
+        self.assertEqual(
+            result[0]["children"],
+            [
+                {"title": "配色を見直す", "content": "アクセントカラーを変更"},
+                {"title": "ボタンを大きくする", "content": ""},
             ],
         )
 

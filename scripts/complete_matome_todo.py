@@ -9,7 +9,14 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+
+# 実行時のカレントディレクトリに関わらず、このリポジトリ直下の.envを読み込む。
+# 既にシェルでexport済みの環境変数は上書きしない（override=False が既定）。
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 API_URL_ENV = "MATOME_TODO_API_URL"
 WRITE_TOKEN_ENV = "MATOME_TODO_API_WRITE_TOKEN"
