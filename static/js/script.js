@@ -258,7 +258,8 @@ const els = {
   appAccountDeleteBtn: document.getElementById("appAccountDeleteBtn"),
   claudeConnectStatus:   document.getElementById("claudeConnectStatus"),
   claudeConnectCodeBox:  document.getElementById("claudeConnectCodeBox"),
-  claudeConnectCode:     document.getElementById("claudeConnectCode"),
+  claudeConnectMessage:  document.getElementById("claudeConnectMessage"),
+  claudeConnectCopyBtn:  document.getElementById("claudeConnectCopyBtn"),
   claudeConnectStartBtn: document.getElementById("claudeConnectStartBtn"),
   claudeConnectRevokeBtn: document.getElementById("claudeConnectRevokeBtn"),
   appCreatorInfoBtn: document.getElementById("appCreatorInfoBtn"),
@@ -1108,10 +1109,19 @@ function openAppAccount() {
   void refreshClaudeConnectStatus();
 }
 
-function setClaudeConnectConnected(connected) {
+function buildClaudeConnectMessage(code) {
+  return `まとめときやと連携して、コードは${code}`;
+}
+
+function applyClaudeConnectState(connected) {
   if (!els.claudeConnectStatus) return;
   els.claudeConnectStatus.textContent = connected ? "連携済みです。" : "まだ連携していません。";
+  if (els.claudeConnectStartBtn) els.claudeConnectStartBtn.hidden = connected;
   if (els.claudeConnectRevokeBtn) els.claudeConnectRevokeBtn.hidden = !connected;
+}
+
+function setClaudeConnectConnected(connected) {
+  applyClaudeConnectState(connected);
   if (els.claudeConnectCodeBox) els.claudeConnectCodeBox.hidden = true;
 }
 
@@ -1145,14 +1155,25 @@ async function handleClaudeConnectStart() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "連携の開始に失敗しました。");
-    els.claudeConnectCode.textContent = data.code;
+    els.claudeConnectMessage.textContent = buildClaudeConnectMessage(data.code);
     els.claudeConnectCodeBox.hidden = false;
-    els.claudeConnectStatus.textContent = "コードを発行しました。10分以内にClaude Codeで使ってください。";
-    if (els.claudeConnectRevokeBtn) els.claudeConnectRevokeBtn.hidden = false;
+    els.claudeConnectStatus.textContent = "コードを発行しました。10分以内にClaude Codeへ貼り付けてください。";
+    applyClaudeConnectState(true);
   } catch (e) {
     showToast(e.message || "連携の開始に失敗しました。");
   } finally {
     els.claudeConnectStartBtn.disabled = false;
+  }
+}
+
+async function handleClaudeConnectCopy() {
+  const message = els.claudeConnectMessage?.textContent || "";
+  if (!message) return;
+  try {
+    await navigator.clipboard.writeText(message);
+    showToast("コピーしました。Claude Codeに貼り付けてください。");
+  } catch (e) {
+    showToast("コピーできませんでした。手動で選択してコピーしてください。");
   }
 }
 
@@ -13257,6 +13278,7 @@ if (auth) {
   });
   els.claudeConnectStartBtn?.addEventListener("click", handleClaudeConnectStart);
   els.claudeConnectRevokeBtn?.addEventListener("click", handleClaudeConnectRevoke);
+  els.claudeConnectCopyBtn?.addEventListener("click", handleClaudeConnectCopy);
   els.authVerifyResendBtn.addEventListener("click", handleResendVerification);
   els.authVerifyRefreshBtn.addEventListener("click", handleRefreshStatus);
   els.authVerifyLogoutBtn.addEventListener("click", handleLogout);
