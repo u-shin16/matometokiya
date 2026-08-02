@@ -3,9 +3,61 @@ from __future__ import annotations
 import hashlib
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import app as app_module
+
+
+class _FakeSnapshot:
+    def __init__(self, data):
+        self._data = data
+
+    @property
+    def exists(self):
+        return self._data is not None
+
+    def to_dict(self):
+        return dict(self._data) if self._data is not None else None
+
+
+class _FakeDocRef:
+    def __init__(self, store, key):
+        self._store = store
+        self._key = key
+
+    def get(self):
+        return _FakeSnapshot(self._store.get(self._key))
+
+    def set(self, data, merge=False):
+        if merge and self._key in self._store:
+            self._store[self._key].update(data)
+        else:
+            self._store[self._key] = dict(data)
+
+    def update(self, data):
+        self._store[self._key].update(data)
+
+    def delete(self):
+        self._store.pop(self._key, None)
+
+
+class _FakeCollection:
+    def __init__(self, store):
+        self._store = store
+
+    def document(self, key):
+        return _FakeDocRef(self._store, key)
+
+
+class FakeFirestoreClient:
+    """Firestoreクライアントの最小限のフェイク（in-memory）。ペアリングコード周りのテスト専用。"""
+
+    def __init__(self):
+        self._collections: dict[str, dict] = {}
+
+    def collection(self, name):
+        return _FakeCollection(self._collections.setdefault(name, {}))
 
 
 class TodoPayloadTests(unittest.TestCase):
@@ -183,7 +235,10 @@ class TodoApiTests(unittest.TestCase):
         self.assertIn("Bearer", response.headers["WWW-Authenticate"])
 
     def test_rejects_wrong_token(self):
-        with patch.dict(os.environ, self.env, clear=False):
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_lookup_user_token_uid", return_value=None),
+        ):
             response = self.client.get(
                 "/api/v1/todos",
                 headers={"Authorization": "Bearer wrong-token"},
@@ -254,7 +309,10 @@ class TodoCompleteApiTests(unittest.TestCase):
         self.assertEqual(response.headers["Cache-Control"], "no-store")
 
     def test_rejects_read_token_for_write_endpoint(self):
-        with patch.dict(os.environ, self.env, clear=False):
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_lookup_user_token_uid", return_value=None),
+        ):
             response = self.client.post(
                 "/api/v1/todos/todo-1/complete",
                 headers={"Authorization": f"Bearer {self.READ_TOKEN}"},
@@ -294,6 +352,159 @@ class TodoCompleteApiTests(unittest.TestCase):
     def test_get_is_not_allowed(self):
         response = self.client.get("/api/v1/todos/todo-1/complete")
         self.assertEqual(response.status_code, 405)
+
+    def test_accepts_per_user_token_without_admin_env_configured(self):
+        """管理者用の環境変数が一切なくても、一般ユーザー用トークンで認証できる。"""
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(
+                app_module, "_lookup_user_token_uid", return_value="general-user-1"
+            ),
+            patch.object(app_module, "mark_todo_done_for_uid", return_value=True),
+        ):
+            response = self.client.post(
+                "/api/v1/todos/todo-1/complete",
+                headers={"Authorization": "Bearer some-general-user-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+
+
+class ClaudeConnectLogicTests(unittest.TestCase):
+    """start_claude_connect / exchange_pairing_code の実際のロジックを、フェイクのFirestoreで検証する。"""
+
+    def setUp(self):
+        self.fake_db = FakeFirestoreClient()
+        self._patcher = patch.object(
+            app_module, "get_firestore_client", return_value=self.fake_db
+        )
+        self._patcher.start()
+        self.addCleanup(self._patcher.stop)
+
+    def test_start_creates_token_hashes_and_pairing_code(self):
+        result = app_module.start_claude_connect("uid-1")
+
+        self.assertEqual(len(result["code"]), app_module._CLAUDE_PAIRING_CODE_LENGTH)
+        self.assertTrue(result["code"].isdigit())
+        self.assertEqual(result["expires_in"], 600)
+
+        pairing = self.fake_db._collections["pairing_codes"][result["code"]]
+        self.assertEqual(pairing["uid"], "uid-1")
+        self.assertIn("read_token", pairing)
+        self.assertIn("write_token", pairing)
+
+        user_doc = self.fake_db._collections["users"]["uid-1"]
+        self.assertIn("claude_read_token_hash", user_doc)
+        self.assertIn("claude_write_token_hash", user_doc)
+
+    def test_exchange_returns_tokens_and_is_single_use(self):
+        result = app_module.start_claude_connect("uid-1")
+        code = result["code"]
+
+        first = app_module.exchange_pairing_code(code)
+        self.assertIsNotNone(first)
+        self.assertIn("read_token", first)
+        self.assertIn("write_token", first)
+
+        second = app_module.exchange_pairing_code(code)
+        self.assertIsNone(second)
+
+    def test_exchange_rejects_expired_code(self):
+        code = "99999999"
+        self.fake_db._collections.setdefault("pairing_codes", {})[code] = {
+            "uid": "uid-1",
+            "read_token": "r",
+            "write_token": "w",
+            "expires_at": datetime.now(timezone.utc) - timedelta(seconds=1),
+        }
+
+        self.assertIsNone(app_module.exchange_pairing_code(code))
+
+    def test_exchange_rejects_unknown_code(self):
+        self.assertIsNone(app_module.exchange_pairing_code("00000000"))
+
+    def test_authenticate_todo_request_resolves_uid_from_issued_token(self):
+        result = app_module.start_claude_connect("uid-1")
+        tokens = app_module.exchange_pairing_code(result["code"])
+
+        read_hash = hashlib.sha256(tokens["read_token"].encode("utf-8")).hexdigest()
+        self.assertEqual(
+            app_module._lookup_user_token_uid(read_hash, "read"), "uid-1"
+        )
+        self.assertIsNone(
+            app_module._lookup_user_token_uid(read_hash, "write")
+        )
+
+    def test_revoke_deletes_token_hashes(self):
+        app_module.start_claude_connect("uid-1")
+        self.assertEqual(len(self.fake_db._collections["api_tokens"]), 2)
+
+        app_module._revoke_user_tokens("uid-1")
+
+        self.assertEqual(len(self.fake_db._collections["api_tokens"]), 0)
+
+
+class ClaudeConnectApiTests(unittest.TestCase):
+    UID = "firebase-user-123"
+
+    def setUp(self):
+        app_module.app.config.update(TESTING=True)
+        self.client = app_module.app.test_client()
+
+    def test_start_requires_login(self):
+        response = self.client.post("/api/v1/claude-connect/start")
+        self.assertEqual(response.status_code, 401)
+
+    def test_start_returns_code_for_logged_in_user(self):
+        with (
+            patch.object(
+                app_module, "verify_firebase_id_token", return_value=(self.UID, None)
+            ),
+            patch.object(
+                app_module,
+                "start_claude_connect",
+                return_value={"code": "12345678", "expires_in": 600},
+            ) as start,
+        ):
+            response = self.client.post(
+                "/api/v1/claude-connect/start",
+                headers={"Authorization": "Bearer some-id-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"code": "12345678", "expires_in": 600})
+        start.assert_called_once_with(self.UID)
+
+    def test_status_requires_login(self):
+        response = self.client.get("/api/v1/claude-connect/status")
+        self.assertEqual(response.status_code, 401)
+
+    def test_revoke_requires_login(self):
+        response = self.client.post("/api/v1/claude-connect/revoke")
+        self.assertEqual(response.status_code, 401)
+
+    def test_exchange_rejects_malformed_code(self):
+        response = self.client.post(
+            "/api/v1/claude-connect/exchange", json={"code": "abc"}
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_exchange_rejects_unknown_or_expired_code(self):
+        with patch.object(app_module, "exchange_pairing_code", return_value=None):
+            response = self.client.post(
+                "/api/v1/claude-connect/exchange", json={"code": "12345678"}
+            )
+        self.assertEqual(response.status_code, 404)
+
+    def test_exchange_returns_tokens_for_valid_code(self):
+        tokens = {"read_token": "r-token", "write_token": "w-token"}
+        with patch.object(app_module, "exchange_pairing_code", return_value=tokens):
+            response = self.client.post(
+                "/api/v1/claude-connect/exchange", json={"code": "12345678"}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), tokens)
 
 
 if __name__ == "__main__":

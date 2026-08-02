@@ -1293,6 +1293,20 @@
         <button id="appAccountLogoutBtn" class="app-account-action-btn" type="button">ログアウト</button>
         <button id="appAccountDeleteBtn" class="app-account-action-btn danger" type="button">アカウントを削除</button>
       </div>
+
+      <div class="app-account-claude">
+        <p class="settings-section-title">Claude連携</p>
+        <p id="claudeConnectStatus" class="app-account-claude-status">確認中…</p>
+        <div id="claudeConnectCodeBox" class="app-account-claude-code" hidden>
+          <p class="app-account-claude-code-label">連携コード（10分間有効・1回だけ使えます）</p>
+          <p id="claudeConnectCode" class="app-account-claude-code-value"></p>
+          <p class="app-account-claude-help">Claude Codeで「まとめときやと連携して、コードは〇〇〇〇〇〇〇〇」と伝えてください。</p>
+        </div>
+        <div class="app-account-claude-actions">
+          <button id="claudeConnectStartBtn" class="app-account-action-btn" type="button">連携する</button>
+          <button id="claudeConnectRevokeBtn" class="app-account-action-btn danger" type="button" hidden>連携を解除</button>
+        </div>
+      </div>
     </section>
   </div>
 

@@ -344,6 +344,59 @@ Nginxなどのリバースプロキシでは `/api/v1/todos` も既存Flaskア�
 - 元に戻す場合は、デプロイコミットを `git revert` して再デプロイし、追加したTodo API環境変数を削除してサービスを再起動します。書き込みAPIは `done` フィールドの更新のみで、Todoドキュメント自体の削除や内容の書き換えは行わないため、データ構造の復元作業は不要です（`done` を意図せず `true` にしてしまった場合は、まとめときやのアプリ画面から該当Todoを未完了に戻せます）
 - クライアント側の追記だけを戻す場合は、対象プロジェクトの `docs/TODO.txt` から `[まとめときや Todo]` ブロックを削除します
 
+## 一般ユーザーがボタンで連携する（Claude連携）
+
+上記の管理者用トークン（環境変数で固定した1人のUID）とは別に、**ログイン中のユーザーが自分自身でトークンを発行できる仕組み**があります。長いトークンをコピペする必要がないよう、短い使い捨てのペアリングコードで連携します。
+
+### 仕組み
+
+1. まとめときやにログインし、アカウント画面の「Claude連携」→「連携する」を押す
+2. 8桁の数字コード（10分間だけ有効、1回だけ使える）が画面に表示される
+3. Claude Codeで「まとめときやと連携して、コードは〇〇〇〇〇〇〇〇」のように伝える
+4. Claude Codeが`scripts/connect_matome.py <コード>`を実行し、コードをAPIトークンに引き換えて、そのディレクトリの`.env`に自動で書き込む
+5. 以降は`fetch_matome_todos.py`・`complete_matome_todo.py`がそのまま使える
+
+このユーザー自身のトークンは、`api_tokens/{トークンのSHA-256ハッシュ}`（Firestore）に保存され、Todo取得・完了API（`/api/v1/todos`系）はこのコレクションを見てユーザーを特定します。管理者用の環境変数トークンとは独立して動作し、どちらも同時に使えます。
+
+### API仕様
+
+```text
+POST /api/v1/claude-connect/start
+Authorization: Bearer <Firebase IDトークン>
+→ {"code": "12345678", "expires_in": 600}
+
+POST /api/v1/claude-connect/exchange
+Body: {"code": "12345678"}
+→ {"read_token": "...", "write_token": "..."}
+（成功・失敗にかかわらずコードはこの時点で使い捨てられる）
+
+GET /api/v1/claude-connect/status
+Authorization: Bearer <Firebase IDトークン>
+→ {"connected": true, "connected_at": "..."}
+
+POST /api/v1/claude-connect/revoke
+Authorization: Bearer <Firebase IDトークン>
+→ {"connected": false}
+```
+
+- `start`・`status`・`revoke`はログイン中のユーザー本人のみが呼べます（Firebase IDトークンで検証）
+- `exchange`はコード自体が認証情報を兼ねるため、ログイン不要です。コードは10分で失効し、1回使うと即座に無効になります
+- 新しく連携すると、そのユーザーの既存トークンは自動的に失効します（1ユーザー1組のトークン）
+
+### 実行
+
+```bash
+python scripts/connect_matome.py 12345678
+```
+
+このスクリプトと同じ`matometokiya`リポジトリ内の`.env`に、`MATOME_TODO_API_URL`・`MATOME_TODO_API_TOKEN`・`MATOME_TODO_API_WRITE_TOKEN`を自動で書き込みます（既存の他の設定行は変更しません）。
+
+### セキュリティ
+
+- 長いトークンを人間が直接コピペする場面が一切ないため、コピペミスによる事故が起きません
+- ペアリングコードは短時間で失効し、1回しか使えないため、多少見られても実害は小さい設計です
+- `api_tokens`・`pairing_codes`コレクションは、Firestoreのセキュリティルールで特に許可していない（＝デフォルトで拒否される）ため、クライアントSDKから直接読み書きされることはありません。サーバー側（Admin SDK）からのみアクセスします
+
 ## 既存データの移行（旧バージョンからのアップグレード）
 
 旧バージョン（Flask + JSONファイル保存）からアップグレードする場合、`scripts/migrate_to_firestore.py` で既存データをFirestore/Storageへ移行できます。

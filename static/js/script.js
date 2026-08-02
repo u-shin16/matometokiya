@@ -256,6 +256,11 @@ const els = {
   appAccountRefreshStatusBtn: document.getElementById("appAccountRefreshStatusBtn"),
   appAccountLogoutBtn: document.getElementById("appAccountLogoutBtn"),
   appAccountDeleteBtn: document.getElementById("appAccountDeleteBtn"),
+  claudeConnectStatus:   document.getElementById("claudeConnectStatus"),
+  claudeConnectCodeBox:  document.getElementById("claudeConnectCodeBox"),
+  claudeConnectCode:     document.getElementById("claudeConnectCode"),
+  claudeConnectStartBtn: document.getElementById("claudeConnectStartBtn"),
+  claudeConnectRevokeBtn: document.getElementById("claudeConnectRevokeBtn"),
   appCreatorInfoBtn: document.getElementById("appCreatorInfoBtn"),
   appContactBtn:     document.getElementById("appContactBtn"),
   appInfoDialog:     document.getElementById("appInfoDialog"),
@@ -1100,6 +1105,81 @@ function openAppAccount() {
   els.appAccountDialog.hidden = false;
   els.appAccountBtn?.setAttribute("aria-expanded", "true");
   requestAnimationFrame(() => els.appAccountBack?.focus());
+  void refreshClaudeConnectStatus();
+}
+
+function setClaudeConnectConnected(connected) {
+  if (!els.claudeConnectStatus) return;
+  els.claudeConnectStatus.textContent = connected ? "連携済みです。" : "まだ連携していません。";
+  if (els.claudeConnectRevokeBtn) els.claudeConnectRevokeBtn.hidden = !connected;
+  if (els.claudeConnectCodeBox) els.claudeConnectCodeBox.hidden = true;
+}
+
+async function refreshClaudeConnectStatus() {
+  const user = auth?.currentUser;
+  if (!user || !els.claudeConnectStatus) return;
+  els.claudeConnectStatus.textContent = "確認中…";
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/v1/claude-connect/status", {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "状況の取得に失敗しました。");
+    setClaudeConnectConnected(Boolean(data.connected));
+  } catch (e) {
+    els.claudeConnectStatus.textContent = "状況を確認できませんでした。";
+    console.error("[claudeConnect] status error", e);
+  }
+}
+
+async function handleClaudeConnectStart() {
+  const user = auth?.currentUser;
+  if (!user || !els.claudeConnectStartBtn) return;
+  els.claudeConnectStartBtn.disabled = true;
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/v1/claude-connect/start", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "連携の開始に失敗しました。");
+    els.claudeConnectCode.textContent = data.code;
+    els.claudeConnectCodeBox.hidden = false;
+    els.claudeConnectStatus.textContent = "コードを発行しました。10分以内にClaude Codeで使ってください。";
+    if (els.claudeConnectRevokeBtn) els.claudeConnectRevokeBtn.hidden = false;
+  } catch (e) {
+    showToast(e.message || "連携の開始に失敗しました。");
+  } finally {
+    els.claudeConnectStartBtn.disabled = false;
+  }
+}
+
+async function handleClaudeConnectRevoke() {
+  const user = auth?.currentUser;
+  if (!user || !els.claudeConnectRevokeBtn) return;
+  const ok = await showConfirm(
+    "Claude連携を解除しますか？発行済みのトークンは使えなくなります。",
+    "解除する"
+  );
+  if (!ok) return;
+  els.claudeConnectRevokeBtn.disabled = true;
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/v1/claude-connect/revoke", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "連携の解除に失敗しました。");
+    setClaudeConnectConnected(false);
+    showToast("連携を解除しました。");
+  } catch (e) {
+    showToast(e.message || "連携の解除に失敗しました。");
+  } finally {
+    els.claudeConnectRevokeBtn.disabled = false;
+  }
 }
 
 function openAppAccountFromAnchor(anchor) {
@@ -13175,6 +13255,8 @@ if (auth) {
     closeAppManagement();
     handleDeleteAccount(e);
   });
+  els.claudeConnectStartBtn?.addEventListener("click", handleClaudeConnectStart);
+  els.claudeConnectRevokeBtn?.addEventListener("click", handleClaudeConnectRevoke);
   els.authVerifyResendBtn.addEventListener("click", handleResendVerification);
   els.authVerifyRefreshBtn.addEventListener("click", handleRefreshStatus);
   els.authVerifyLogoutBtn.addEventListener("click", handleLogout);

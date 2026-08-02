@@ -2518,6 +2518,49 @@ body.has-management-open {
   background: #fef2f2;
 }
 
+.app-account-claude {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+}
+
+.app-account-claude-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.app-account-claude-code {
+  padding: 12px;
+  border: 1px dashed var(--primary);
+  border-radius: 12px;
+  background: var(--primary-soft);
+  text-align: center;
+}
+
+.app-account-claude-code-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.app-account-claude-code-value {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin: 4px 0;
+}
+
+.app-account-claude-help {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.app-account-claude-actions {
+  display: grid;
+  gap: 8px;
+}
+
 .app-management-link {
   width: fit-content;
   color: #1d4ed8;

@@ -4,10 +4,11 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import urllib.error
 import urllib.request
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -189,6 +190,8 @@ _AI_FILE_EXTENSIONS = _AI_DOCUMENT_EXTENSIONS | set(_AI_IMAGE_MIME_TYPES)
 _TODO_API_TOKEN_HASH_ENV = "MATOME_TODO_API_TOKEN_SHA256"
 _TODO_API_WRITE_TOKEN_HASH_ENV = "MATOME_TODO_API_WRITE_TOKEN_SHA256"
 _TODO_API_UID_ENV = "MATOME_TODO_API_UID"
+_CLAUDE_PAIRING_CODE_LENGTH = 8
+_CLAUDE_PAIRING_CODE_TTL = timedelta(minutes=10)
 _firestore_client = None
 
 app.config["MAX_CONTENT_LENGTH"] = _AI_FILE_MAX_BYTES + (512 * 1024)
@@ -506,20 +509,38 @@ def _get_bearer_token() -> str | None:
     return token or None
 
 
-def _authenticate_todo_api_request(token_hash_env: str):
+_API_TOKEN_TYPE_READ = "read"
+_API_TOKEN_TYPE_WRITE = "write"
+
+
+def _lookup_user_token_uid(token_hash: str, token_type: str) -> str | None:
+    """一般ユーザー用トークンのハッシュから、対応するuidをFirestoreの api_tokens コレクションで引く。"""
+    doc = get_firestore_client().collection("api_tokens").document(token_hash).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    if data.get("type") != token_type:
+        return None
+    uid = data.get("uid")
+    return str(uid) if uid else None
+
+
+def _is_valid_admin_token(token_hash_env: str, presented_hash: str) -> str | None:
+    """管理者用の固定トークン（環境変数）と一致すればuidを返す。"""
     expected_hash = os.getenv(token_hash_env, "").strip().lower()
-    uid = os.getenv(_TODO_API_UID_ENV, "").strip()
+    admin_uid = os.getenv(_TODO_API_UID_ENV, "").strip()
     if (
         len(expected_hash) != 64
         or any(character not in "0123456789abcdef" for character in expected_hash)
-        or not uid
+        or not admin_uid
     ):
-        return None, (
-            jsonify(error="Todo APIのサーバー設定が完了していません。"),
-            503,
-            {"Cache-Control": "no-store"},
-        )
+        return None
+    if not hmac.compare_digest(presented_hash, expected_hash):
+        return None
+    return admin_uid
 
+
+def _authenticate_todo_api_request(token_hash_env: str, token_type: str):
     token = _get_bearer_token()
     if token is None:
         return None, (
@@ -532,34 +553,47 @@ def _authenticate_todo_api_request(token_hash_env: str):
         )
 
     presented_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    if not hmac.compare_digest(presented_hash, expected_hash):
+
+    admin_uid = _is_valid_admin_token(token_hash_env, presented_hash)
+    if admin_uid:
+        return admin_uid, None
+
+    try:
+        user_uid = _lookup_user_token_uid(presented_hash, token_type)
+    except Exception:
+        app.logger.exception("Todo APIのトークン確認に失敗しました。")
         return None, (
-            jsonify(error="Bearerトークンが正しくありません。"),
-            401,
-            {
-                "Cache-Control": "no-store",
-                "WWW-Authenticate": 'Bearer realm="matometokiya-todos"',
-            },
+            jsonify(error="トークンの確認に失敗しました。"),
+            502,
+            {"Cache-Control": "no-store"},
         )
-    return uid, None
+
+    if user_uid:
+        return user_uid, None
+
+    return None, (
+        jsonify(error="Bearerトークンが正しくありません。"),
+        401,
+        {
+            "Cache-Control": "no-store",
+            "WWW-Authenticate": 'Bearer realm="matometokiya-todos"',
+        },
+    )
 
 
 def authenticate_todo_api_request():
-    return _authenticate_todo_api_request(_TODO_API_TOKEN_HASH_ENV)
+    return _authenticate_todo_api_request(_TODO_API_TOKEN_HASH_ENV, _API_TOKEN_TYPE_READ)
 
 
 def authenticate_todo_write_api_request():
     """完了マーク用の書き込みAPI認証。読み取り用とは別のトークンを要求する。"""
-    return _authenticate_todo_api_request(_TODO_API_WRITE_TOKEN_HASH_ENV)
+    return _authenticate_todo_api_request(_TODO_API_WRITE_TOKEN_HASH_ENV, _API_TOKEN_TYPE_WRITE)
 
 
-def get_firestore_client():
-    global _firestore_client
-    if _firestore_client is not None:
-        return _firestore_client
-
+def _ensure_firebase_app():
+    """firebase_adminのデフォルトAppを、正しいプロジェクトIDで初期化しておく。"""
     import firebase_admin
-    from firebase_admin import credentials, firestore
+    from firebase_admin import credentials
 
     # GOOGLE_CLOUD_PROJECT はVertex AI用に別プロジェクトを指す場合があるため、
     # Firestoreの接続先プロジェクトはFIREBASE_AUTH_DOMAINから明示的に固定する。
@@ -576,8 +610,50 @@ def get_firestore_client():
         else:
             firebase_admin.initialize_app(options=options)
 
+
+def get_firestore_client():
+    global _firestore_client
+    if _firestore_client is not None:
+        return _firestore_client
+
+    from firebase_admin import firestore
+
+    _ensure_firebase_app()
     _firestore_client = firestore.client()
     return _firestore_client
+
+
+def verify_firebase_id_token():
+    """AuthorizationヘッダーのFirebase IDトークン（ログイン中の一般ユーザー用）を検証し、uidを返す。"""
+    token = _get_bearer_token()
+    if token is None:
+        return None, (
+            jsonify(error="ログイン情報が必要です。"),
+            401,
+            {"Cache-Control": "no-store"},
+        )
+
+    from firebase_admin import auth as firebase_auth
+
+    _ensure_firebase_app()
+
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+    except Exception:
+        return None, (
+            jsonify(error="ログイン情報の確認に失敗しました。再度ログインし直してください。"),
+            401,
+            {"Cache-Control": "no-store"},
+        )
+
+    uid = decoded.get("uid")
+    if not uid:
+        return None, (
+            jsonify(error="ログイン情報の確認に失敗しました。再度ログインし直してください。"),
+            401,
+            {"Cache-Control": "no-store"},
+        )
+    return uid, None
 
 
 def _serialize_firestore_value(value) -> str:
@@ -727,6 +803,117 @@ def mark_todo_done_for_uid(uid: str, todo_id: str) -> bool:
         return False
     todo_ref.update({"done": True})
     return True
+
+
+def _generate_pairing_code() -> str:
+    return f"{secrets.randbelow(10 ** _CLAUDE_PAIRING_CODE_LENGTH):0{_CLAUDE_PAIRING_CODE_LENGTH}d}"
+
+
+def _revoke_user_tokens(uid: str) -> None:
+    """このユーザーのClaude連携用トークンをすべて失効させる。"""
+    from firebase_admin import firestore
+
+    db = get_firestore_client()
+    user_ref = db.collection("users").document(uid)
+    user_doc = user_ref.get()
+    data = user_doc.to_dict() or {} if user_doc.exists else {}
+
+    for field in ("claude_read_token_hash", "claude_write_token_hash"):
+        token_hash = data.get(field)
+        if token_hash:
+            db.collection("api_tokens").document(token_hash).delete()
+
+    if user_doc.exists:
+        user_ref.update(
+            {
+                "claude_connected_at": firestore.DELETE_FIELD,
+                "claude_read_token_hash": firestore.DELETE_FIELD,
+                "claude_write_token_hash": firestore.DELETE_FIELD,
+            }
+        )
+
+
+def start_claude_connect(uid: str) -> dict:
+    """このユーザー用に新しいAPIトークンを発行し、短い引き換えコードを発行する。
+    既存のトークンがあれば、この時点で失効させる（1ユーザー1組のトークンにする）。"""
+    db = get_firestore_client()
+
+    _revoke_user_tokens(uid)
+
+    read_token = secrets.token_urlsafe(32)
+    write_token = secrets.token_urlsafe(32)
+    read_hash = hashlib.sha256(read_token.encode("utf-8")).hexdigest()
+    write_hash = hashlib.sha256(write_token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+
+    db.collection("api_tokens").document(read_hash).set(
+        {"uid": uid, "type": _API_TOKEN_TYPE_READ, "created_at": now}
+    )
+    db.collection("api_tokens").document(write_hash).set(
+        {"uid": uid, "type": _API_TOKEN_TYPE_WRITE, "created_at": now}
+    )
+    db.collection("users").document(uid).set(
+        {
+            "claude_connected_at": now,
+            "claude_read_token_hash": read_hash,
+            "claude_write_token_hash": write_hash,
+        },
+        merge=True,
+    )
+
+    code = _generate_pairing_code()
+    for _ in range(5):
+        if not db.collection("pairing_codes").document(code).get().exists:
+            break
+        code = _generate_pairing_code()
+    else:
+        raise RuntimeError("ペアリングコードの発行に失敗しました。")
+
+    db.collection("pairing_codes").document(code).set(
+        {
+            "uid": uid,
+            "read_token": read_token,
+            "write_token": write_token,
+            "expires_at": now + _CLAUDE_PAIRING_CODE_TTL,
+        }
+    )
+
+    return {"code": code, "expires_in": int(_CLAUDE_PAIRING_CODE_TTL.total_seconds())}
+
+
+def exchange_pairing_code(code: str) -> dict | None:
+    """コードを使い捨てで引き換え、対応するトークンを返す。無効・期限切れならNoneを返す。"""
+    db = get_firestore_client()
+    doc_ref = db.collection("pairing_codes").document(code)
+    doc = doc_ref.get()
+    if not doc.exists:
+        return None
+
+    data = doc.to_dict() or {}
+    doc_ref.delete()  # 成功・失敗にかかわらず、コードは1回きりで使い捨てる
+
+    expires_at = data.get("expires_at")
+    if not isinstance(expires_at, datetime):
+        return None
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        return None
+
+    read_token = data.get("read_token")
+    write_token = data.get("write_token")
+    if not read_token or not write_token:
+        return None
+
+    return {"read_token": read_token, "write_token": write_token}
+
+
+def get_claude_connect_status(uid: str) -> str | None:
+    doc = get_firestore_client().collection("users").document(uid).get()
+    if not doc.exists:
+        return None
+    connected_at = (doc.to_dict() or {}).get("claude_connected_at")
+    return _serialize_firestore_value(connected_at) if connected_at else None
 
 
 @app.get("/app")
@@ -975,6 +1162,92 @@ def api_complete_todo(todo_id):
         return jsonify(error="指定されたTodoが見つかりません。"), 404, {"Cache-Control": "no-store"}
 
     response = jsonify(id=todo_id, done=True)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/v1/claude-connect/start")
+def api_claude_connect_start():
+    """ログイン中のユーザー用に、Claude Code連携のペアリングコードを発行する。"""
+    uid, auth_error = verify_firebase_id_token()
+    if auth_error is not None:
+        return auth_error
+
+    try:
+        result = start_claude_connect(uid)
+    except Exception:
+        app.logger.exception("Claude連携の開始に失敗しました。")
+        return (
+            jsonify(error="連携の開始に失敗しました。時間をおいて再度お試しください。"),
+            502,
+            {"Cache-Control": "no-store"},
+        )
+
+    response = jsonify(**result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/v1/claude-connect/exchange")
+def api_claude_connect_exchange():
+    """ペアリングコードを、実際のAPIトークンと引き換える（ログイン不要、コード自体が認証）。"""
+    payload = request.get_json(silent=True) or {}
+    code = str(payload.get("code") or "").strip()
+    if not code.isdigit() or len(code) != _CLAUDE_PAIRING_CODE_LENGTH:
+        return jsonify(error="コードが正しくありません。"), 400, {"Cache-Control": "no-store"}
+
+    try:
+        result = exchange_pairing_code(code)
+    except Exception:
+        app.logger.exception("ペアリングコードの引き換えに失敗しました。")
+        return (
+            jsonify(error="引き換えに失敗しました。時間をおいて再度お試しください。"),
+            502,
+            {"Cache-Control": "no-store"},
+        )
+
+    if result is None:
+        return (
+            jsonify(error="コードが無効か、有効期限が切れています。もう一度発行してください。"),
+            404,
+            {"Cache-Control": "no-store"},
+        )
+
+    response = jsonify(**result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/api/v1/claude-connect/status")
+def api_claude_connect_status():
+    uid, auth_error = verify_firebase_id_token()
+    if auth_error is not None:
+        return auth_error
+
+    try:
+        connected_at = get_claude_connect_status(uid)
+    except Exception:
+        app.logger.exception("Claude連携状況の取得に失敗しました。")
+        return jsonify(error="状況の取得に失敗しました。"), 502, {"Cache-Control": "no-store"}
+
+    response = jsonify(connected=connected_at is not None, connected_at=connected_at)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/v1/claude-connect/revoke")
+def api_claude_connect_revoke():
+    uid, auth_error = verify_firebase_id_token()
+    if auth_error is not None:
+        return auth_error
+
+    try:
+        _revoke_user_tokens(uid)
+    except Exception:
+        app.logger.exception("Claude連携の解除に失敗しました。")
+        return jsonify(error="連携の解除に失敗しました。"), 502, {"Cache-Control": "no-store"}
+
+    response = jsonify(connected=False)
     response.headers["Cache-Control"] = "no-store"
     return response
 
