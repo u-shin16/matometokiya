@@ -340,7 +340,6 @@ const els = {
   imageEditEraserTypeWrap: document.getElementById("imageEditEraserTypeWrap"),
   imageEditPenSizeWrap: document.getElementById("imageEditPenSizeWrap"),
   // Auth
-  bootSplash:         document.getElementById("bootSplash"),
   appShell:           document.querySelector(".app-shell"),
   authOverlay:        document.getElementById("authOverlay"),
   authDialog:         document.getElementById("authDialog"),
@@ -12853,12 +12852,7 @@ function updatePasswordVisibility() {
   els.authPassword.type = els.authShowPassword.checked ? "text" : "password";
 }
 
-function hideBootSplash() {
-  if (els.bootSplash) els.bootSplash.hidden = true;
-}
-
 function showAuthScreen() {
-  hideBootSplash();
   els.appShell.hidden    = true;
   els.authOverlay.hidden = false;
   els.authDialog.classList.remove("is-verifying");
@@ -12872,13 +12866,11 @@ function showAuthScreen() {
 }
 
 function showApp() {
-  hideBootSplash();
   els.authOverlay.hidden = true;
   els.appShell.hidden    = false;
 }
 
 function showVerificationScreen(user, message = EMAIL_VERIFICATION_REQUIRED) {
-  hideBootSplash();
   els.appShell.hidden = true;
   els.authOverlay.hidden = false;
   els.authDialog.classList.add("is-verifying");
