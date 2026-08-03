@@ -5551,7 +5551,7 @@ function resolveMemoColorShortcutName(name) {
 }
 
 function tryApplyMemoColorShortcut() {
-  return tryApplyMemoLineStartFormatShortcut(/^\[([^\]]{1,8})\][  ](.+)$/, match => {
+  return tryApplyMemoLineStartFormatShortcut(/^[\[［]([^\]］]{1,8})[\]］][  ](.+)$/, match => {
     const colorValue = resolveMemoColorShortcutName(match[1]);
     if (!colorValue) return null;
     return { style: { color: colorValue } };
