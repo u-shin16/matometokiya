@@ -5474,11 +5474,15 @@ function tryApplyMemoHeadingShortcut() {
   const previousSibling = container.previousSibling;
   if (previousSibling && previousSibling.nodeName !== "BR") return false;
 
-  const textBeforeCaret = container.textContent.slice(0, range.startOffset);
-  const match = /^(#{1,2}) (.+)$/.exec(textBeforeCaret);
+  // 改行直後の行は、直前の見出しspanの解除跡としてゼロ幅スペースが先頭に残ることがあるため、
+  // 判定前に読み飛ばす。また「# 」の空白はブラウザがnbspに変換することがあるため両方許容する。
+  const rawTextBeforeCaret = container.textContent.slice(0, range.startOffset);
+  const leadingZwsLength = /^​*/.exec(rawTextBeforeCaret)[0].length;
+  const textBeforeCaret = rawTextBeforeCaret.slice(leadingZwsLength);
+  const match = /^(#{1,2})[  ](.+)$/.exec(textBeforeCaret);
   if (!match) return false;
 
-  const prefixLength = match[1].length + 1;
+  const prefixLength = leadingZwsLength + match[1].length + 1;
   const headingClass = match[1].length === 1 ? "memo-text-heading" : "memo-text-subheading";
   const caretOffsetInRemainder = range.startOffset - prefixLength;
 
