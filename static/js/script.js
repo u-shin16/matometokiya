@@ -5456,10 +5456,11 @@ function getMemoHeadingClass(level) {
   return "";
 }
 
-// 行頭で「# 」「## 」の後ろに文字を入力した時点で、その文字ごと見出し・小見出しへ変換する。
-// 「# 」だけ（まだ後ろに文字がない状態）では何も変化させない。
-// 既存の「見出しボタン」（選択範囲をspanで囲む方式）とは別実装にし、既存の装飾処理には触れない。
-function tryApplyMemoHeadingShortcut() {
+// 行頭で「マーカー + 半角スペース」の後ろに文字を入力した時点で、その文字ごと
+// 指定クラスのspanへ変換する（見出し「# 」「## 」・取り消し線「~ 」で共通利用）。
+// マーカーとスペースだけ（まだ後ろに文字がない状態）では何も変化させない。
+// 既存のツールバー（選択範囲をspanで囲む方式）とは別実装にし、既存の装飾処理には触れない。
+function tryApplyMemoLineStartFormatShortcut(markerPattern, resolveClass) {
   if (!getSelectedNote()) return false;
 
   const selection = window.getSelection();
@@ -5474,23 +5475,26 @@ function tryApplyMemoHeadingShortcut() {
   const previousSibling = container.previousSibling;
   if (previousSibling && previousSibling.nodeName !== "BR") return false;
 
-  // 改行直後の行は、直前の見出しspanの解除跡としてゼロ幅スペースが先頭に残ることがあるため、
-  // 判定前に読み飛ばす。また「# 」の空白はブラウザがnbspに変換することがあるため両方許容する。
+  // 改行直後の行は、直前の書式spanの解除跡としてゼロ幅スペースが先頭に残ることがあるため、
+  // 判定前に読み飛ばす。またマーカー後の空白はブラウザがnbspに変換することがあるため両方許容する。
   const rawTextBeforeCaret = container.textContent.slice(0, range.startOffset);
   const leadingZwsLength = /^​*/.exec(rawTextBeforeCaret)[0].length;
   const textBeforeCaret = rawTextBeforeCaret.slice(leadingZwsLength);
-  const match = /^(#{1,2})[  ](.+)$/.exec(textBeforeCaret);
+  const match = markerPattern.exec(textBeforeCaret);
   if (!match) return false;
 
-  const prefixLength = leadingZwsLength + match[1].length + 1;
-  const headingClass = match[1].length === 1 ? "memo-text-heading" : "memo-text-subheading";
+  const formatClass = resolveClass(match);
+  if (!formatClass) return false;
+
+  const remainderText = match[match.length - 1];
+  const prefixLength = leadingZwsLength + match[0].length - remainderText.length;
   const caretOffsetInRemainder = range.startOffset - prefixLength;
 
   state.isApplyingMemoFormat = true;
   try {
     const remainder = container.textContent.slice(prefixLength);
     const span = document.createElement("span");
-    span.className = headingClass;
+    span.className = formatClass;
     const textNode = document.createTextNode(remainder);
     span.appendChild(textNode);
     container.parentNode.replaceChild(span, container);
@@ -5508,6 +5512,17 @@ function tryApplyMemoHeadingShortcut() {
     setTimeout(() => { state.isApplyingMemoFormat = false; }, 0);
   }
   return true;
+}
+
+function tryApplyMemoHeadingShortcut() {
+  return tryApplyMemoLineStartFormatShortcut(
+    /^(#{1,2})[  ](.+)$/,
+    match => (match[1].length === 1 ? "memo-text-heading" : "memo-text-subheading")
+  );
+}
+
+function tryApplyMemoStrikeShortcut() {
+  return tryApplyMemoLineStartFormatShortcut(/^~[  ](.+)$/, () => "memo-text-strike");
 }
 
 // 見出し/小見出しspan内の文字を全部消したとき、その空spanにカーソルが残って
@@ -5534,7 +5549,7 @@ function pruneEmptyMemoHeadingSpanAtCaret() {
   for (const candidate of candidates) {
     if (!candidate) continue;
     const element = candidate.nodeType === Node.ELEMENT_NODE ? candidate : candidate.parentElement;
-    const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading");
+    const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading, .memo-text-strike");
     if (!headingSpan || !els.contentInput.contains(headingSpan)) continue;
     if (headingSpan.textContent.replace(/​/g, "").trim()) continue;
 
@@ -5570,16 +5585,17 @@ function stripNativeStickyFormatting() {
   const caretOffset = range ? range.startOffset : 0;
   let mutated = false;
 
-  el.querySelectorAll("b, strong, i, em, u, font").forEach(tag => {
+  el.querySelectorAll("b, strong, i, em, u, s, strike, font").forEach(tag => {
     tag.replaceWith(...tag.childNodes);
     mutated = true;
   });
 
   el.querySelectorAll("[style]").forEach(styled => {
-    if (styled.classList.contains("memo-text-heading") || styled.classList.contains("memo-text-subheading")) return;
-    if (!styled.style.fontSize && !styled.style.fontWeight) return;
+    if (styled.classList.contains("memo-text-heading") || styled.classList.contains("memo-text-subheading") || styled.classList.contains("memo-text-strike")) return;
+    if (!styled.style.fontSize && !styled.style.fontWeight && !styled.style.textDecoration) return;
     styled.style.removeProperty("font-size");
     styled.style.removeProperty("font-weight");
+    styled.style.removeProperty("text-decoration");
     if (!styled.getAttribute("style")) {
       styled.replaceWith(...styled.childNodes);
     }
@@ -5607,7 +5623,7 @@ function splitMemoHeadingSpanAtLineBreak() {
   const caretOffset = range.startOffset;
 
   const element = caretNode.nodeType === Node.ELEMENT_NODE ? caretNode : caretNode.parentElement;
-  const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading");
+  const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading, .memo-text-strike");
   if (!headingSpan || !els.contentInput.contains(headingSpan)) return;
 
   const br = headingSpan.querySelector("br");
@@ -12891,7 +12907,7 @@ els.contentInput.addEventListener("blur", () => {
   setCollabPresence("viewing");
 });
 els.contentInput.addEventListener("compositionstart", () => { _isComposing = true; redirectMediaCaretTyping(); });
-els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); scheduleSave(); });
+els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); tryApplyMemoStrikeShortcut(); scheduleSave(); });
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -12908,6 +12924,7 @@ els.contentInput.addEventListener("input", () => {
     splitMemoHeadingSpanAtLineBreak();
     stripNativeStickyFormatting();
     tryApplyMemoHeadingShortcut();
+    tryApplyMemoStrikeShortcut();
   }
   updateEmptyState();
   updateMemoFormatUiFromSelection();

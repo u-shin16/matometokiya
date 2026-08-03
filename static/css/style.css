@@ -985,6 +985,8 @@ body.has-large-editor-open .note-head {
 #contentInput i,
 #contentInput em,
 #contentInput u,
+#contentInput s,
+#contentInput strike,
 #contentInput font {
   font-weight: inherit;
   font-style: inherit;
@@ -992,9 +994,11 @@ body.has-large-editor-open .note-head {
 }
 
 #contentInput [style*="font-size"],
-#contentInput [style*="font-weight"] {
+#contentInput [style*="font-weight"],
+#contentInput [style*="text-decoration"] {
   font-size: inherit !important;
   font-weight: inherit !important;
+  text-decoration: inherit !important;
 }
 
 .content-input {
