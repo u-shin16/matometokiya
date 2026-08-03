@@ -977,6 +977,26 @@ body.has-large-editor-open .note-head {
   padding: 0 0.08em;
 }
 
+/* このアプリはfont-size/font-weightをインラインstyleや<b>/<strong>で付けることはないため、
+   IME変換中などにブラウザが勝手に復元してくる太字・文字サイズを見た目だけ無効化する。
+   実際のDOM除去はJS側（変換確定後）で行うが、変換中の見た目はCSSで先に潰しておく。 */
+#contentInput b,
+#contentInput strong,
+#contentInput i,
+#contentInput em,
+#contentInput u,
+#contentInput font {
+  font-weight: inherit;
+  font-style: inherit;
+  text-decoration: inherit;
+}
+
+#contentInput [style*="font-size"],
+#contentInput [style*="font-weight"] {
+  font-size: inherit !important;
+  font-weight: inherit !important;
+}
+
 .content-input {
   position: relative;
   flex: 1;
