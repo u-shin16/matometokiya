@@ -5456,7 +5456,8 @@ function getMemoHeadingClass(level) {
   return "";
 }
 
-// 行頭で「# 」「## 」と入力した直後（スペースを押した瞬間）に見出し・小見出しへ変換する。
+// 行頭で「# 」「## 」の後ろに文字を入力した時点で、その文字ごと見出し・小見出しへ変換する。
+// 「# 」だけ（まだ後ろに文字がない状態）では何も変化させない。
 // 既存の「見出しボタン」（選択範囲をspanで囲む方式）とは別実装にし、既存の装飾処理には触れない。
 function tryApplyMemoHeadingShortcut() {
   if (!getSelectedNote()) return false;
@@ -5474,24 +5475,24 @@ function tryApplyMemoHeadingShortcut() {
   if (previousSibling && previousSibling.nodeName !== "BR") return false;
 
   const textBeforeCaret = container.textContent.slice(0, range.startOffset);
-  const match = /^(#{1,2})$/.exec(textBeforeCaret);
+  const match = /^(#{1,2}) (.+)$/.exec(textBeforeCaret);
   if (!match) return false;
 
+  const prefixLength = match[1].length + 1;
   const headingClass = match[1].length === 1 ? "memo-text-heading" : "memo-text-subheading";
+  const caretOffsetInRemainder = range.startOffset - prefixLength;
 
   state.isApplyingMemoFormat = true;
   try {
-    container.textContent = container.textContent.slice(range.startOffset);
-
+    const remainder = container.textContent.slice(prefixLength);
     const span = document.createElement("span");
     span.className = headingClass;
-    const caretAnchor = document.createTextNode("​");
-    span.appendChild(caretAnchor);
-    container.parentNode.insertBefore(span, container);
-    if (!container.textContent) container.remove();
+    const textNode = document.createTextNode(remainder);
+    span.appendChild(textNode);
+    container.parentNode.replaceChild(span, container);
 
     const newRange = document.createRange();
-    newRange.setStart(caretAnchor, 1);
+    newRange.setStart(textNode, Math.max(0, Math.min(remainder.length, caretOffsetInRemainder)));
     newRange.collapse(true);
     selection.removeAllRanges();
     selection.addRange(newRange);
@@ -12782,21 +12783,18 @@ els.contentInput.addEventListener("blur", () => {
   setCollabPresence("viewing");
 });
 els.contentInput.addEventListener("compositionstart", () => { _isComposing = true; redirectMediaCaretTyping(); });
-els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); scheduleSave(); });
+els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); tryApplyMemoHeadingShortcut(); scheduleSave(); });
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key.length !== 1) return;
   redirectMediaCaretTyping();
 });
-els.contentInput.addEventListener("keydown", e => {
-  if (e.key !== " " || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
-  if (tryApplyMemoHeadingShortcut()) e.preventDefault();
-});
 els.contentInput.addEventListener("input", () => {
   setCollabPresence("content");
   repairMediaCaretAfterEdit();
   pruneEmptyMemoHeadingSpanAtCaret();
+  if (!_isComposing) tryApplyMemoHeadingShortcut();
   updateEmptyState();
   updateMemoFormatUiFromSelection();
   if (!_isComposing) scheduleSave();
