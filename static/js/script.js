@@ -5466,8 +5466,9 @@ function tryApplyMemoHeadingShortcut() {
 
   const range = selection.getRangeAt(0);
   const container = range.startContainer;
-  // 何かの装飾spanの中（＝行の途中）では発動しない。行頭の生テキストノードのみ対象。
-  if (container.nodeType !== Node.TEXT_NODE || container.parentNode !== els.contentInput) return false;
+  // 行頭の生テキストノードのみ対象。改行はBR、またはブラウザがEnterで挿入するDIV/Pの形を取りうるため、
+  // 直接の親がcontentInputかどうかではなく、contentInput配下にあるかどうかで判定する。
+  if (container.nodeType !== Node.TEXT_NODE || !els.contentInput.contains(container)) return false;
 
   const previousSibling = container.previousSibling;
   if (previousSibling && previousSibling.nodeName !== "BR") return false;
@@ -5502,6 +5503,32 @@ function tryApplyMemoHeadingShortcut() {
     setTimeout(() => { state.isApplyingMemoFormat = false; }, 0);
   }
   return true;
+}
+
+// 見出し/小見出しspan内の文字を全部消したとき、その空spanにカーソルが残って
+// 次に打つ文字までその書式を引き継いでしまうのを防ぐ。文字が無くなったら書式ごと解除する。
+function pruneEmptyMemoHeadingSpanAtCaret() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return;
+
+  const range = selection.getRangeAt(0);
+  const node = range.startContainer;
+  const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading");
+  if (!headingSpan || !els.contentInput.contains(headingSpan)) return;
+  if (headingSpan.textContent.replace(/​/g, "").trim()) return;
+
+  const parent = headingSpan.parentNode;
+  if (!parent) return;
+
+  const anchor = document.createTextNode("​");
+  parent.replaceChild(anchor, headingSpan);
+
+  const newRange = document.createRange();
+  newRange.setStart(anchor, 1);
+  newRange.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(newRange);
 }
 
 function getMemoHeadingLevelForAction() {
@@ -12755,7 +12782,7 @@ els.contentInput.addEventListener("blur", () => {
   setCollabPresence("viewing");
 });
 els.contentInput.addEventListener("compositionstart", () => { _isComposing = true; redirectMediaCaretTyping(); });
-els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); scheduleSave(); });
+els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); scheduleSave(); });
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -12769,6 +12796,7 @@ els.contentInput.addEventListener("keydown", e => {
 els.contentInput.addEventListener("input", () => {
   setCollabPresence("content");
   repairMediaCaretAfterEdit();
+  pruneEmptyMemoHeadingSpanAtCaret();
   updateEmptyState();
   updateMemoFormatUiFromSelection();
   if (!_isComposing) scheduleSave();
