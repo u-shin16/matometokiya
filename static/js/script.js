@@ -5457,10 +5457,11 @@ function getMemoHeadingClass(level) {
 }
 
 // 行頭で「マーカー + 半角スペース」の後ろに文字を入力した時点で、その文字ごと
-// 指定クラスのspanへ変換する（見出し「# 」「## 」・取り消し線「~ 」で共通利用）。
+// 指定の見た目（クラスまたはインラインstyle）へ変換する
+// （見出し「# 」「## 」・取り消し線「~ 」・文字色「[色名] 」で共通利用）。
 // マーカーとスペースだけ（まだ後ろに文字がない状態）では何も変化させない。
 // 既存のツールバー（選択範囲をspanで囲む方式）とは別実装にし、既存の装飾処理には触れない。
-function tryApplyMemoLineStartFormatShortcut(markerPattern, resolveClass) {
+function tryApplyMemoLineStartFormatShortcut(markerPattern, resolveSpanConfig) {
   if (!getSelectedNote()) return false;
 
   const selection = window.getSelection();
@@ -5485,8 +5486,8 @@ function tryApplyMemoLineStartFormatShortcut(markerPattern, resolveClass) {
   const match = markerPattern.exec(lineText);
   if (!match) return false;
 
-  const formatClass = resolveClass(match);
-  if (!formatClass) return false;
+  const config = resolveSpanConfig(match);
+  if (!config) return false;
 
   const remainderText = match[match.length - 1];
   const prefixLength = leadingZwsLength + match[0].length - remainderText.length;
@@ -5496,7 +5497,8 @@ function tryApplyMemoLineStartFormatShortcut(markerPattern, resolveClass) {
   try {
     const remainder = container.textContent.slice(prefixLength);
     const span = document.createElement("span");
-    span.className = formatClass;
+    if (config.className) span.className = config.className;
+    if (config.style) Object.assign(span.style, config.style);
     const textNode = document.createTextNode(remainder);
     span.appendChild(textNode);
     container.parentNode.replaceChild(span, container);
@@ -5519,12 +5521,41 @@ function tryApplyMemoLineStartFormatShortcut(markerPattern, resolveClass) {
 function tryApplyMemoHeadingShortcut() {
   return tryApplyMemoLineStartFormatShortcut(
     /^(#{1,2})[  ](.+)$/,
-    match => (match[1].length === 1 ? "memo-text-heading" : "memo-text-subheading")
+    match => ({ className: match[1].length === 1 ? "memo-text-heading" : "memo-text-subheading" })
   );
 }
 
 function tryApplyMemoStrikeShortcut() {
-  return tryApplyMemoLineStartFormatShortcut(/^~[  ](.+)$/, () => "memo-text-strike");
+  return tryApplyMemoLineStartFormatShortcut(/^~[  ](.+)$/, () => ({ className: "memo-text-strike" }));
+}
+
+// 「色名」は既存の文字色パレット（日本語名・英語名どちらも）から解決する。
+// パレットに無い色名を書いた場合は何もしない（誤変換を避ける）。
+const MEMO_COLOR_SHORTCUT_ALIASES = {
+  "黒": "#111827", "black": "#111827",
+  "赤": "#ef4444", "red": "#ef4444",
+  "青": "#3b82f6", "blue": "#3b82f6",
+  "黄色": "#facc15", "黄": "#facc15", "yellow": "#facc15",
+  "緑": "#22c55e", "green": "#22c55e",
+  "紫": "#a855f7", "purple": "#a855f7",
+  "ピンク": "#ec4899", "pink": "#ec4899",
+  "オレンジ": "#f97316", "orange": "#f97316",
+};
+
+function resolveMemoColorShortcutName(name) {
+  const normalized = String(name ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  return Object.prototype.hasOwnProperty.call(MEMO_COLOR_SHORTCUT_ALIASES, normalized)
+    ? MEMO_COLOR_SHORTCUT_ALIASES[normalized]
+    : null;
+}
+
+function tryApplyMemoColorShortcut() {
+  return tryApplyMemoLineStartFormatShortcut(/^\[([^\]]{1,8})\][  ](.+)$/, match => {
+    const colorValue = resolveMemoColorShortcutName(match[1]);
+    if (!colorValue) return null;
+    return { style: { color: colorValue } };
+  });
 }
 
 // 見出し/小見出しspan内の文字を全部消したとき、その空spanにカーソルが残って
@@ -5551,7 +5582,7 @@ function pruneEmptyMemoHeadingSpanAtCaret() {
   for (const candidate of candidates) {
     if (!candidate) continue;
     const element = candidate.nodeType === Node.ELEMENT_NODE ? candidate : candidate.parentElement;
-    const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading, .memo-text-strike");
+    const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading, .memo-text-strike, [style*='color']");
     if (!headingSpan || !els.contentInput.contains(headingSpan)) continue;
     if (headingSpan.textContent.replace(/​/g, "").trim()) continue;
 
@@ -5625,7 +5656,7 @@ function splitMemoHeadingSpanAtLineBreak() {
   const caretOffset = range.startOffset;
 
   const element = caretNode.nodeType === Node.ELEMENT_NODE ? caretNode : caretNode.parentElement;
-  const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading, .memo-text-strike");
+  const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading, .memo-text-strike, [style*='color']");
   if (!headingSpan || !els.contentInput.contains(headingSpan)) return;
 
   const br = headingSpan.querySelector("br");
@@ -12909,7 +12940,7 @@ els.contentInput.addEventListener("blur", () => {
   setCollabPresence("viewing");
 });
 els.contentInput.addEventListener("compositionstart", () => { _isComposing = true; redirectMediaCaretTyping(); });
-els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); tryApplyMemoStrikeShortcut(); scheduleSave(); });
+els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); tryApplyMemoStrikeShortcut(); tryApplyMemoColorShortcut(); scheduleSave(); });
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -12927,6 +12958,7 @@ els.contentInput.addEventListener("input", () => {
     stripNativeStickyFormatting();
     tryApplyMemoHeadingShortcut();
     tryApplyMemoStrikeShortcut();
+    tryApplyMemoColorShortcut();
   }
   updateEmptyState();
   updateMemoFormatUiFromSelection();
