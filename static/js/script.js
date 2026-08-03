@@ -5556,6 +5556,45 @@ function pruneEmptyMemoHeadingSpanAtCaret() {
   }
 }
 
+// Chromeは「その位置で最後に効いていた書式（太字・文字サイズなど）」をDOMとは別に
+// 内部で覚えていて、見出しspanが空になって消えたあとにそこへ文字を打つと、
+// このアプリでは使っていないはずの<b>タグや文字サイズのインラインstyleとして
+// 勝手に復元してしまうことがある。このアプリ自身はfont-size/font-weightを
+// インラインstyleで付けることも<b>タグを使うこともないため、見つけ次第
+// 書式を剥がして良い（色指定などcolorだけのstyleは対象外にして残す）。
+function stripNativeStickyFormatting() {
+  const el = els.contentInput;
+  const selection = window.getSelection();
+  const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  const caretNode = range ? range.startContainer : null;
+  const caretOffset = range ? range.startOffset : 0;
+  let mutated = false;
+
+  el.querySelectorAll("b, strong, i, em, u, font").forEach(tag => {
+    tag.replaceWith(...tag.childNodes);
+    mutated = true;
+  });
+
+  el.querySelectorAll("[style]").forEach(styled => {
+    if (styled.classList.contains("memo-text-heading") || styled.classList.contains("memo-text-subheading")) return;
+    if (!styled.style.fontSize && !styled.style.fontWeight) return;
+    styled.style.removeProperty("font-size");
+    styled.style.removeProperty("font-weight");
+    if (!styled.getAttribute("style")) {
+      styled.replaceWith(...styled.childNodes);
+    }
+    mutated = true;
+  });
+
+  if (!mutated || !caretNode || !el.contains(caretNode) || !selection) return;
+  const maxOffset = caretNode.nodeType === Node.TEXT_NODE ? caretNode.textContent.length : caretNode.childNodes.length;
+  const newRange = document.createRange();
+  newRange.setStart(caretNode, Math.min(caretOffset, maxOffset));
+  newRange.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(newRange);
+}
+
 // Shift+Enterなどで見出し/小見出しspanの中に改行(<br>)が入ると、そのまま次の行も
 // 同じspanの中に居続けてしまい太字が続いてしまう。見出しは「#」を付けたその1行だけに
 // 適用したいので、span内に改行ができた時点で、改行より後ろの内容を書式無しのspan外へ追い出す。
@@ -12852,7 +12891,7 @@ els.contentInput.addEventListener("blur", () => {
   setCollabPresence("viewing");
 });
 els.contentInput.addEventListener("compositionstart", () => { _isComposing = true; redirectMediaCaretTyping(); });
-els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); tryApplyMemoHeadingShortcut(); scheduleSave(); });
+els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); scheduleSave(); });
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -12864,6 +12903,7 @@ els.contentInput.addEventListener("input", () => {
   repairMediaCaretAfterEdit();
   pruneEmptyMemoHeadingSpanAtCaret();
   splitMemoHeadingSpanAtLineBreak();
+  stripNativeStickyFormatting();
   if (!_isComposing) tryApplyMemoHeadingShortcut();
   updateEmptyState();
   updateMemoFormatUiFromSelection();
