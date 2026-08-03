@@ -5514,22 +5514,42 @@ function pruneEmptyMemoHeadingSpanAtCaret() {
 
   const range = selection.getRangeAt(0);
   const node = range.startContainer;
-  const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-  const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading");
-  if (!headingSpan || !els.contentInput.contains(headingSpan)) return;
-  if (headingSpan.textContent.replace(/​/g, "").trim()) return;
 
-  const parent = headingSpan.parentNode;
-  if (!parent) return;
+  // まとめて選択して削除した場合など、削除後のキャレットが空spanの「中」ではなく
+  // 親要素側のオフセット（空spanの直前・直後）として報告されるケースがあるため、
+  // キャレット自身の祖先だけでなく、隣接する子要素も候補としてチェックする。
+  const candidates = [];
+  if (node.nodeType === Node.TEXT_NODE) {
+    candidates.push(node.parentElement);
+  } else {
+    candidates.push(node.childNodes[range.startOffset - 1]);
+    candidates.push(node.childNodes[range.startOffset]);
+    candidates.push(node);
+  }
 
-  const anchor = document.createTextNode("​");
-  parent.replaceChild(anchor, headingSpan);
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const element = candidate.nodeType === Node.ELEMENT_NODE ? candidate : candidate.parentElement;
+    const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading");
+    if (!headingSpan || !els.contentInput.contains(headingSpan)) continue;
+    if (headingSpan.textContent.replace(/​/g, "").trim()) continue;
 
-  const newRange = document.createRange();
-  newRange.setStart(anchor, 1);
-  newRange.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(newRange);
+    const parent = headingSpan.parentNode;
+    if (!parent) continue;
+    const caretWasInside = headingSpan.contains(node);
+
+    const anchor = document.createTextNode("​");
+    parent.replaceChild(anchor, headingSpan);
+
+    if (caretWasInside) {
+      const newRange = document.createRange();
+      newRange.setStart(anchor, 1);
+      newRange.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(newRange);
+    }
+    return;
+  }
 }
 
 function getMemoHeadingLevelForAction() {
