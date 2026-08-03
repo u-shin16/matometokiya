@@ -12901,10 +12901,14 @@ els.contentInput.addEventListener("keydown", e => {
 els.contentInput.addEventListener("input", () => {
   setCollabPresence("content");
   repairMediaCaretAfterEdit();
-  pruneEmptyMemoHeadingSpanAtCaret();
-  splitMemoHeadingSpanAtLineBreak();
-  stripNativeStickyFormatting();
-  if (!_isComposing) tryApplyMemoHeadingShortcut();
+  if (!_isComposing) {
+    // IME変換中にDOMをいじると、ブラウザ側の変換中下線の管理が崩れて
+    // 変換確定後も下線が残ってしまうことがあるため、変換確定後にまとめて行う。
+    pruneEmptyMemoHeadingSpanAtCaret();
+    splitMemoHeadingSpanAtLineBreak();
+    stripNativeStickyFormatting();
+    tryApplyMemoHeadingShortcut();
+  }
   updateEmptyState();
   updateMemoFormatUiFromSelection();
   if (!_isComposing) scheduleSave();
