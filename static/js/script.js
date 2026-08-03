@@ -5556,6 +5556,51 @@ function pruneEmptyMemoHeadingSpanAtCaret() {
   }
 }
 
+// Shift+Enterなどで見出し/小見出しspanの中に改行(<br>)が入ると、そのまま次の行も
+// 同じspanの中に居続けてしまい太字が続いてしまう。見出しは「#」を付けたその1行だけに
+// 適用したいので、span内に改行ができた時点で、改行より後ろの内容を書式無しのspan外へ追い出す。
+function splitMemoHeadingSpanAtLineBreak() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return;
+
+  const range = selection.getRangeAt(0);
+  const caretNode = range.startContainer;
+  const caretOffset = range.startOffset;
+
+  const element = caretNode.nodeType === Node.ELEMENT_NODE ? caretNode : caretNode.parentElement;
+  const headingSpan = element?.closest?.(".memo-text-heading, .memo-text-subheading");
+  if (!headingSpan || !els.contentInput.contains(headingSpan)) return;
+
+  const br = headingSpan.querySelector("br");
+  if (!br) return;
+  if (!(br.compareDocumentPosition(caretNode) & Node.DOCUMENT_POSITION_FOLLOWING) && caretNode !== br) return;
+
+  const parent = headingSpan.parentNode;
+  if (!parent) return;
+
+  const separatorBr = document.createElement("br");
+  parent.insertBefore(separatorBr, headingSpan.nextSibling);
+
+  let cursor = br.nextSibling;
+  let insertBeforeNode = separatorBr.nextSibling;
+  while (cursor) {
+    const next = cursor.nextSibling;
+    parent.insertBefore(cursor, insertBeforeNode);
+    cursor = next;
+  }
+  br.remove();
+
+  const newRange = document.createRange();
+  if (els.contentInput.contains(caretNode)) {
+    newRange.setStart(caretNode, Math.min(caretOffset, caretNode.nodeType === Node.TEXT_NODE ? caretNode.textContent.length : caretNode.childNodes.length));
+  } else {
+    newRange.setStartAfter(separatorBr);
+  }
+  newRange.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(newRange);
+}
+
 function getMemoHeadingLevelForAction() {
   const range = getMemoFormatRange();
   if (!range) return state.memoHeadingLevel;
@@ -12807,7 +12852,7 @@ els.contentInput.addEventListener("blur", () => {
   setCollabPresence("viewing");
 });
 els.contentInput.addEventListener("compositionstart", () => { _isComposing = true; redirectMediaCaretTyping(); });
-els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); tryApplyMemoHeadingShortcut(); scheduleSave(); });
+els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); tryApplyMemoHeadingShortcut(); scheduleSave(); });
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -12818,6 +12863,7 @@ els.contentInput.addEventListener("input", () => {
   setCollabPresence("content");
   repairMediaCaretAfterEdit();
   pruneEmptyMemoHeadingSpanAtCaret();
+  splitMemoHeadingSpanAtLineBreak();
   if (!_isComposing) tryApplyMemoHeadingShortcut();
   updateEmptyState();
   updateMemoFormatUiFromSelection();
