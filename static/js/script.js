@@ -5477,10 +5477,12 @@ function tryApplyMemoLineStartFormatShortcut(markerPattern, resolveClass) {
 
   // 改行直後の行は、直前の書式spanの解除跡としてゼロ幅スペースが先頭に残ることがあるため、
   // 判定前に読み飛ばす。またマーカー後の空白はブラウザがnbspに変換することがあるため両方許容する。
-  const rawTextBeforeCaret = container.textContent.slice(0, range.startOffset);
-  const leadingZwsLength = /^​*/.exec(rawTextBeforeCaret)[0].length;
-  const textBeforeCaret = rawTextBeforeCaret.slice(leadingZwsLength);
-  const match = markerPattern.exec(textBeforeCaret);
+  // 判定はキャレットより前だけでなく行全体（テキストノード全体）に対して行う。
+  // これにより「先に文字を打ってから先頭にマーカーを付け足す」という順番でも変換される。
+  const rawText = container.textContent;
+  const leadingZwsLength = /^​*/.exec(rawText)[0].length;
+  const lineText = rawText.slice(leadingZwsLength);
+  const match = markerPattern.exec(lineText);
   if (!match) return false;
 
   const formatClass = resolveClass(match);
