@@ -5456,6 +5456,54 @@ function getMemoHeadingClass(level) {
   return "";
 }
 
+// 行頭で「# 」「## 」と入力した直後（スペースを押した瞬間）に見出し・小見出しへ変換する。
+// 既存の「見出しボタン」（選択範囲をspanで囲む方式）とは別実装にし、既存の装飾処理には触れない。
+function tryApplyMemoHeadingShortcut() {
+  if (!getSelectedNote()) return false;
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return false;
+
+  const range = selection.getRangeAt(0);
+  const container = range.startContainer;
+  // 何かの装飾spanの中（＝行の途中）では発動しない。行頭の生テキストノードのみ対象。
+  if (container.nodeType !== Node.TEXT_NODE || container.parentNode !== els.contentInput) return false;
+
+  const previousSibling = container.previousSibling;
+  if (previousSibling && previousSibling.nodeName !== "BR") return false;
+
+  const textBeforeCaret = container.textContent.slice(0, range.startOffset);
+  const match = /^(#{1,2})$/.exec(textBeforeCaret);
+  if (!match) return false;
+
+  const headingClass = match[1].length === 1 ? "memo-text-heading" : "memo-text-subheading";
+
+  state.isApplyingMemoFormat = true;
+  try {
+    container.textContent = container.textContent.slice(range.startOffset);
+
+    const span = document.createElement("span");
+    span.className = headingClass;
+    const caretAnchor = document.createTextNode("​");
+    span.appendChild(caretAnchor);
+    container.parentNode.insertBefore(span, container);
+    if (!container.textContent) container.remove();
+
+    const newRange = document.createRange();
+    newRange.setStart(caretAnchor, 1);
+    newRange.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(newRange);
+
+    updateEmptyState();
+    updateMemoFormatUiFromSelection();
+    scheduleSave();
+  } finally {
+    setTimeout(() => { state.isApplyingMemoFormat = false; }, 0);
+  }
+  return true;
+}
+
 function getMemoHeadingLevelForAction() {
   const range = getMemoFormatRange();
   if (!range) return state.memoHeadingLevel;
@@ -12713,6 +12761,10 @@ els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key.length !== 1) return;
   redirectMediaCaretTyping();
+});
+els.contentInput.addEventListener("keydown", e => {
+  if (e.key !== " " || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  if (tryApplyMemoHeadingShortcut()) e.preventDefault();
 });
 els.contentInput.addEventListener("input", () => {
   setCollabPresence("content");
