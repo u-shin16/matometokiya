@@ -991,6 +991,7 @@ body.has-large-editor-open .note-head {
   font-weight: inherit;
   font-style: inherit;
   text-decoration: inherit;
+  color: inherit;
 }
 
 #contentInput [style*="font-size"],
