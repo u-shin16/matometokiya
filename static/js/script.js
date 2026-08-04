@@ -5663,6 +5663,34 @@ function tryApplyMemoColorShortcut() {
   });
 }
 
+// ハイライトの色は文字色の名前とは別（薄いパレット色）なので、専用の対応表で解決する。
+const MEMO_HIGHLIGHT_SHORTCUT_ALIASES = {
+  "黄色": "#fef08a", "黄": "#fef08a", "yellow": "#fef08a",
+  "緑": "#bbf7d0", "green": "#bbf7d0",
+  "青": "#bfdbfe", "blue": "#bfdbfe",
+  "赤": "#fecaca", "red": "#fecaca",
+  "紫": "#e9d5ff", "purple": "#e9d5ff",
+  "ピンク": "#fbcfe8", "pink": "#fbcfe8",
+  "オレンジ": "#fed7aa", "orange": "#fed7aa",
+  "白": "#ffffff", "white": "#ffffff",
+};
+
+function resolveMemoHighlightShortcutName(name) {
+  const normalized = String(name ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  return Object.prototype.hasOwnProperty.call(MEMO_HIGHLIGHT_SHORTCUT_ALIASES, normalized)
+    ? MEMO_HIGHLIGHT_SHORTCUT_ALIASES[normalized]
+    : null;
+}
+
+function tryApplyMemoHighlightShortcut() {
+  return tryApplyMemoLineStartFormatShortcut(/^[{｛]([^}｝]{1,8})[}｝][  ](.+)$/, match => {
+    const highlightValue = resolveMemoHighlightShortcutName(match[1]);
+    if (!highlightValue) return null;
+    return { style: { backgroundColor: highlightValue } };
+  });
+}
+
 // 見出し/小見出しspan内の文字を全部消したとき、その空spanにカーソルが残って
 // 次に打つ文字までその書式を引き継いでしまうのを防ぐ。文字が無くなったら書式ごと解除する。
 function pruneEmptyMemoHeadingSpanAtCaret() {
@@ -5707,6 +5735,50 @@ function pruneEmptyMemoHeadingSpanAtCaret() {
     }
     return;
   }
+}
+
+// ハイライト(background-color)は、ブラウザが「直前まで効いていた書式」を復元するとき、
+// <font>のような専用タグを使わずこのアプリ自身が作るspanと同じ形（styleのbackground-color）
+// で復元してしまうため、他の書式のようにCSSやDOMの後始末だけでは見分けて打ち消せない。
+// そこで、削除操作によって行が空になった直後にフォーカスを出し入れし、ブラウザ内部の
+// 「直前の書式」キャッシュそのものをリセットする。ただし同じinputイベントの中で行っても
+// 効果が無く、かつリセットが実際に効く前に別の入力が来ていたら実行してはいけない
+// （キャレット位置がずれて入力が乱れる不具合の原因になるため）。
+function resetStickyHighlightIfLineEmptiedByDeletion(inputType) {
+  if (!inputType || !inputType.startsWith("delete")) return;
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return;
+
+  const range = selection.getRangeAt(0);
+  const node = range.startContainer;
+  const el = els.contentInput;
+  if (!el.contains(node) && node !== el) return;
+
+  let line = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  while (line && line !== el && line.parentNode !== el) line = line.parentNode;
+  if (!line) return;
+
+  if (line.textContent.replace(/​/g, "").trim()) return;
+
+  const savedNode = node;
+  const savedOffset = range.startOffset;
+  setTimeout(() => {
+    if (!el.isConnected) return;
+    const currentSelection = window.getSelection();
+    if (!currentSelection || currentSelection.rangeCount === 0 || !currentSelection.isCollapsed) return;
+    const currentRange = currentSelection.getRangeAt(0);
+    // この間に別の入力があってキャレット位置が動いていたら、古い状態を復元してしまうため中断する。
+    if (currentRange.startContainer !== savedNode || currentRange.startOffset !== savedOffset) return;
+
+    el.blur();
+    el.focus();
+    const restoredRange = document.createRange();
+    restoredRange.setStart(savedNode, savedOffset);
+    restoredRange.collapse(true);
+    currentSelection.removeAllRanges();
+    currentSelection.addRange(restoredRange);
+  }, 0);
 }
 
 // Chromeは「その位置で最後に効いていた書式（太字・文字サイズなど）」をDOMとは別に
@@ -13064,14 +13136,14 @@ els.contentInput.addEventListener("blur", () => {
   setCollabPresence("viewing");
 });
 els.contentInput.addEventListener("compositionstart", () => { _isComposing = true; redirectMediaCaretTyping(); });
-els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); tryApplyMemoStrikeShortcut(); tryApplyMemoColorShortcut(); scheduleSave(); });
+els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); tryApplyMemoStrikeShortcut(); tryApplyMemoColorShortcut(); tryApplyMemoHighlightShortcut(); scheduleSave(); });
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key.length !== 1) return;
   redirectMediaCaretTyping();
 });
-els.contentInput.addEventListener("input", () => {
+els.contentInput.addEventListener("input", e => {
   setCollabPresence("content");
   repairMediaCaretAfterEdit();
   if (!_isComposing) {
@@ -13080,9 +13152,11 @@ els.contentInput.addEventListener("input", () => {
     pruneEmptyMemoHeadingSpanAtCaret();
     splitMemoHeadingSpanAtLineBreak();
     stripNativeStickyFormatting();
+    resetStickyHighlightIfLineEmptiedByDeletion(e.inputType);
     tryApplyMemoHeadingShortcut();
     tryApplyMemoStrikeShortcut();
     tryApplyMemoColorShortcut();
+    tryApplyMemoHighlightShortcut();
   }
   updateEmptyState();
   updateMemoFormatUiFromSelection();
