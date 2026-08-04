@@ -10,6 +10,7 @@ const MEMO_HIGHLIGHT_COLOR_PALETTE = [
   { label: "紫", value: "#e9d5ff" },
   { label: "ピンク", value: "#fbcfe8" },
   { label: "オレンジ", value: "#fed7aa" },
+  { label: "白", value: "#ffffff" },
 ];
 const MEMO_URL_RE = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
 const MEMO_URL_TRAILING_CHARS = ".,!?;:、。！？；：";
@@ -5261,7 +5262,7 @@ function setMemoHighlightPaletteOpen(open) {
 function getMemoHighlightPaletteOption(color) {
   const normalized = normalizeMindMapColor(color);
   return MEMO_HIGHLIGHT_COLOR_PALETTE.find(option => option.value === normalized) ||
-    { label: "なし", value: MEMO_NO_HIGHLIGHT };
+    { label: "ハイライト", value: MEMO_NO_HIGHLIGHT };
 }
 
 function setMemoHighlightPreview(color) {
