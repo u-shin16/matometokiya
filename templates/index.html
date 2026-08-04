@@ -1343,10 +1343,6 @@
     window.FIREBASE_READY = !!(window.firebaseConfig && window.firebaseConfig.apiKey);
     if (window.FIREBASE_READY) firebase.initializeApp(window.firebaseConfig);
   </script>
-  <footer class="app-footer">
-    <a href="https://webtool-labs.com/" target="_blank" rel="noopener noreferrer">RakuYade（他のWebアプリ一覧）</a>
-  </footer>
-
   <script src="{{ url_for('static', filename='js/note-mindmap-sync.js', v=static_version('js/note-mindmap-sync.js')) }}"></script>
   <script src="{{ url_for('static', filename='js/script.js', v=static_version('js/script.js')) }}"></script>
 </body>
