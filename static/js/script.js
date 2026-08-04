@@ -6962,6 +6962,11 @@ function selectNote(id) {
   renderEditor();
   closeMobileMenu();
   setCollabPresence("viewing", { immediate: true });
+  // グリッド表示や親メモ一覧などツリーの外から開いた場合、選択中のメモが
+  // サイドバーのスクロール外にあることがあるため、選択行を表示範囲に入れる。
+  requestAnimationFrame(() => {
+    els.tree.querySelector(".tree-row.active")?.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
 }
 
 async function saveCurrentEditorNow() {
