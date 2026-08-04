@@ -5691,6 +5691,64 @@ function tryApplyMemoHighlightShortcut() {
   });
 }
 
+// 行頭に「= 」を入力すると、その行に付いている見出し・取り消し線・文字色・
+// ハイライトなどの装飾をまとめて解除してプレーンな文字に戻す。ネストして
+// 複数の装飾が付いている場合も、一番外側までまとめて解除する。
+function tryApplyMemoClearFormatShortcut() {
+  if (!getSelectedNote()) return false;
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return false;
+
+  const range = selection.getRangeAt(0);
+  const container = range.startContainer;
+  if (container.nodeType !== Node.TEXT_NODE || !els.contentInput.contains(container)) return false;
+
+  const formatSelector = ".memo-text-heading, .memo-text-subheading, .memo-text-strike, [style*='color']";
+  const innerSpan = container.parentElement?.closest?.(formatSelector);
+  if (!innerSpan || !els.contentInput.contains(innerSpan)) return false;
+  if (innerSpan.firstChild !== container) return false;
+
+  let outerSpan = innerSpan;
+  while (true) {
+    const next = outerSpan.parentElement?.closest?.(formatSelector);
+    if (!next || !els.contentInput.contains(next) || next.firstChild !== outerSpan) break;
+    outerSpan = next;
+  }
+
+  const spanPreviousSibling = outerSpan.previousSibling;
+  if (spanPreviousSibling && spanPreviousSibling.nodeName !== "BR") return false;
+
+  const rawText = container.textContent;
+  const leadingZwsLength = /^​*/.exec(rawText)[0].length;
+  const lineText = rawText.slice(leadingZwsLength);
+  const match = /^=[  ](.+)$/.exec(lineText);
+  if (!match) return false;
+
+  const prefixLength = leadingZwsLength + 2;
+  const caretOffsetInRemainder = range.startOffset - prefixLength;
+
+  state.isApplyingMemoFormat = true;
+  try {
+    const remainder = container.textContent.slice(prefixLength);
+    const textNode = document.createTextNode(remainder);
+    outerSpan.replaceWith(textNode);
+
+    const newRange = document.createRange();
+    newRange.setStart(textNode, Math.max(0, Math.min(remainder.length, caretOffsetInRemainder)));
+    newRange.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(newRange);
+
+    updateEmptyState();
+    updateMemoFormatUiFromSelection();
+    scheduleSave();
+  } finally {
+    setTimeout(() => { state.isApplyingMemoFormat = false; }, 0);
+  }
+  return true;
+}
+
 // 見出し/小見出しspan内の文字を全部消したとき、その空spanにカーソルが残って
 // 次に打つ文字までその書式を引き継いでしまうのを防ぐ。文字が無くなったら書式ごと解除する。
 function pruneEmptyMemoHeadingSpanAtCaret() {
@@ -13136,7 +13194,7 @@ els.contentInput.addEventListener("blur", () => {
   setCollabPresence("viewing");
 });
 els.contentInput.addEventListener("compositionstart", () => { _isComposing = true; redirectMediaCaretTyping(); });
-els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); tryApplyMemoStrikeShortcut(); tryApplyMemoColorShortcut(); tryApplyMemoHighlightShortcut(); scheduleSave(); });
+els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); tryApplyMemoStrikeShortcut(); tryApplyMemoColorShortcut(); tryApplyMemoHighlightShortcut(); tryApplyMemoClearFormatShortcut(); scheduleSave(); });
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -13157,6 +13215,7 @@ els.contentInput.addEventListener("input", e => {
     tryApplyMemoStrikeShortcut();
     tryApplyMemoColorShortcut();
     tryApplyMemoHighlightShortcut();
+    tryApplyMemoClearFormatShortcut();
   }
   updateEmptyState();
   updateMemoFormatUiFromSelection();
