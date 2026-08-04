@@ -97,9 +97,6 @@ const els = {
   mobileMenuBtn:      document.getElementById("mobileMenuBtn"),
   mobileMenuCloseBtn: document.getElementById("mobileMenuCloseBtn"),
   noteListBtn:        document.getElementById("noteListBtn"),
-  noteListPanel:      document.getElementById("noteListPanel"),
-  noteListItems:      document.getElementById("noteListItems"),
-  noteGridBtn:        document.getElementById("noteGridBtn"),
   noteGridOverlay:    document.getElementById("noteGridOverlay"),
   noteGridItems:      document.getElementById("noteGridItems"),
   noteGridClose:      document.getElementById("noteGridClose"),
@@ -138,8 +135,9 @@ const els = {
   mindMapOverlay:   document.getElementById("mindMapOverlay"),
   mindMapClose:     document.getElementById("mindMapClose"),
   mindMapListBtn:   document.getElementById("mindMapListBtn"),
-  mindMapListPanel: document.getElementById("mindMapListPanel"),
-  mindMapListItems: document.getElementById("mindMapListItems"),
+  mindMapGridOverlay: document.getElementById("mindMapGridOverlay"),
+  mindMapGridItems: document.getElementById("mindMapGridItems"),
+  mindMapGridClose: document.getElementById("mindMapGridClose"),
   mindMapSettingsBtn: document.getElementById("mindMapSettingsBtn"),
   mindMapSettingsPanel: document.getElementById("mindMapSettingsPanel"),
   mindMapSettingsClose: document.getElementById("mindMapSettingsClose"),
@@ -972,7 +970,7 @@ function updateNoteListButton(open) {
 function setMobileMenuOpen(open) {
   const shouldOpen = Boolean(open) && isMobileMenuLayout();
   if (shouldOpen) {
-    closeNoteListPanel();
+    closeNoteGridOverlay();
     closeNoteTodoPanel();
     closeMemoFormatPanel();
     closeMemoSettingsPanel();
@@ -2010,7 +2008,7 @@ function openCollabStatusPanel(anchorBtn) {
   if (!els.collabStatusPanel || !isCollabActive()) return;
   closeMemoFormatPanel();
   closeMemoSettingsPanel();
-  closeNoteListPanel();
+  closeNoteGridOverlay();
   closeNoteTodoPanel();
   collabStatusAnchorBtn = anchorBtn || els.collabStatusBtn;
   setCollabStatusHostMenuOpen(false);
@@ -2291,7 +2289,7 @@ function applyMindMapsSnapshot(snap) {
     }
   }
 
-  if (!els.mindMapListPanel?.hidden) renderMindMapList();
+  if (!els.mindMapGridOverlay?.hidden) renderMindMapList();
 }
 
 function startWorkspaceSnapshots() {
@@ -2885,7 +2883,7 @@ async function loadSignedInWorkspace(user) {
 function openAppManagement(anchor) {
   closeMemoSettingsPanel();
   closeMemoFormatPanel();
-  closeNoteListPanel();
+  closeNoteGridOverlay();
   closeNoteTodoPanel();
   closeMindMapSettingsPanel();
   closeMindMapNodeSettingsPanel();
@@ -5130,7 +5128,7 @@ function setMemoFormatPanelOpen(open) {
   if (!els.memoFormatBar || !els.memoFormatToggleBtn || els.memoFormatToggleBtn.disabled) return;
   if (open) {
     closeMemoSettingsPanel();
-    closeNoteListPanel();
+    closeNoteGridOverlay();
     closeNoteTodoPanel();
   }
   els.memoFormatBar.hidden = !open;
@@ -5158,7 +5156,7 @@ function closeMemoFormatPanel() {
 function openMemoSettingsPanel() {
   if (!els.memoSettingsPanel || !els.memoSettingsBtn) return;
   closeMemoFormatPanel();
-  closeNoteListPanel();
+  closeNoteGridOverlay();
   closeNoteTodoPanel();
   hideCtxMenu();
   hideMediaCtxMenu();
@@ -6048,123 +6046,15 @@ function getSelectedRootNoteId() {
   return state.selectedId ? (getNoteAncestorChain(state.selectedId)[0]?.id ?? null) : null;
 }
 
-function renderNoteList() {
-  if (!els.noteListItems) return;
-  els.noteListItems.innerHTML = "";
-  const roots = getRootNotesForList();
-  const activeRootId = getSelectedRootNoteId();
-
-  if (roots.length === 0) {
-    const empty = document.createElement("li");
-    empty.className = "note-list-empty";
-    empty.textContent = "親メモはまだありません。";
-    els.noteListItems.appendChild(empty);
-    return;
-  }
-
-  roots.forEach(note => {
-    const syncDisplayMapId = getNoteSyncDisplayMapId(note);
-    const item = document.createElement("li");
-    item.className = `mindmap-list-item${note.id === activeRootId ? " is-active" : ""}`;
-    item.dataset.id = note.id;
-    if (syncDisplayMapId) applySyncPairStyle(item, syncDisplayMapId);
-
-    const openBtn = document.createElement("button");
-    openBtn.type = "button";
-    openBtn.className = "mindmap-list-open";
-    openBtn.dataset.action = "open";
-
-    const titleLine = document.createElement("span");
-    titleLine.className = "mindmap-list-title-line";
-
-    const title = document.createElement("span");
-    title.className = "mindmap-list-title";
-    title.textContent = note.title || "無題";
-    titleLine.appendChild(title);
-    if (syncDisplayMapId) {
-      const mapTitle = state.mindMapList.find(map => map.id === syncDisplayMapId)?.title;
-      titleLine.appendChild(createSyncPairBadge(
-        syncDisplayMapId,
-        mapTitle ? `マインドマップ「${mapTitle}」と同期中` : "マインドマップと同期中",
-      ));
-    }
-    openBtn.appendChild(titleLine);
-
-    const date = document.createElement("span");
-    date.className = "mindmap-list-date";
-    date.textContent = formatListDate(note.updated_at);
-    openBtn.appendChild(date);
-    item.appendChild(openBtn);
-
-    const actions = document.createElement("div");
-    actions.className = "mindmap-list-actions";
-
-    const renameBtn = document.createElement("button");
-    renameBtn.type = "button";
-    renameBtn.className = "mindmap-list-icon-btn";
-    renameBtn.dataset.action = "rename";
-    const renameBlocked = !canEditNoteTitle(note);
-    renameBtn.disabled = renameBlocked;
-    renameBtn.title = renameBlocked
-      ? "共同作業中、親メモの名前を変更できるのはホストだけです"
-      : "名前を変更";
-    renameBtn.setAttribute("aria-label", `「${note.title || "無題"}」の名前を変更`);
-    renameBtn.textContent = "✏️";
-    actions.appendChild(renameBtn);
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "mindmap-list-icon-btn danger";
-    deleteBtn.dataset.action = "delete";
-    deleteBtn.title = "削除";
-    deleteBtn.setAttribute("aria-label", `「${note.title || "無題"}」を削除`);
-    deleteBtn.textContent = "🗑";
-    deleteBtn.hidden = isCollabActive();
-    actions.appendChild(deleteBtn);
-
-    item.appendChild(actions);
-    els.noteListItems.appendChild(item);
-  });
-}
-
-function positionNoteListPanel() {
-  if (!els.noteListPanel || !els.noteListBtn || els.noteListPanel.hidden) return;
-  const rect = els.noteListBtn.getBoundingClientRect();
-  const edge = 8;
-  const width = els.noteListPanel.offsetWidth;
-  const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge));
-  els.noteListPanel.style.top = `${rect.bottom + 6}px`;
-  els.noteListPanel.style.left = `${left}px`;
-  els.noteListPanel.style.right = "auto";
-}
-
-function openNoteListPanel() {
-  if (!els.noteListPanel) return;
-  closeMemoFormatPanel();
-  closeMemoSettingsPanel();
-  closeNoteTodoPanel();
-  renderNoteList();
-  els.noteListPanel.hidden = false;
-  updateNoteListButton(true);
-  positionNoteListPanel();
-}
-
-function closeNoteListPanel() {
-  if (!els.noteListPanel) return;
-  els.noteListPanel.hidden = true;
-  updateNoteListButton(false);
-}
-
 async function openRootNoteFromList(noteId) {
   if (!await ensureNoteAccess(noteId)) return;
   await saveCurrentEditorNow();
   selectNote(noteId);
-  closeNoteListPanel();
   closeNoteGridOverlay();
 }
 
 // Safari/Chromeのタブ一覧のように、親メモをカード形式で並べて一目で探せるようにする。
-// 既存の「親メモ一覧」（縦一列のリスト）とは別の表示方法として追加した。
+// 縦一列のリストだった「親メモ一覧」を置き換える表示方法。
 function renderNoteGrid() {
   if (!els.noteGridItems) return;
   els.noteGridItems.innerHTML = "";
@@ -6180,55 +6070,94 @@ function renderNoteGrid() {
   }
 
   roots.forEach(note => {
-    const card = document.createElement("button");
-    card.type = "button";
+    const syncDisplayMapId = getNoteSyncDisplayMapId(note);
+    const card = document.createElement("div");
     card.className = `note-grid-card${note.id === activeRootId ? " is-active" : ""}`;
     card.dataset.id = note.id;
+    if (syncDisplayMapId) applySyncPairStyle(card, syncDisplayMapId);
 
-    const title = document.createElement("span");
-    title.className = "note-grid-card-title";
-    title.textContent = note.title || "無題";
-    card.appendChild(title);
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "note-grid-card-open";
+    openBtn.dataset.action = "open";
+
+    const titleLine = document.createElement("span");
+    titleLine.className = "note-grid-card-title";
+    titleLine.textContent = note.title || "無題";
+    if (syncDisplayMapId) {
+      const mapTitle = state.mindMapList.find(map => map.id === syncDisplayMapId)?.title;
+      titleLine.appendChild(createSyncPairBadge(
+        syncDisplayMapId,
+        mapTitle ? `マインドマップ「${mapTitle}」と同期中` : "マインドマップと同期中",
+      ));
+    }
+    openBtn.appendChild(titleLine);
 
     const preview = document.createElement("span");
     preview.className = "note-grid-card-preview";
     preview.textContent = contentToPlainText(note.content).slice(0, 160);
-    card.appendChild(preview);
+    openBtn.appendChild(preview);
 
     const date = document.createElement("span");
     date.className = "note-grid-card-date";
     date.textContent = formatListDate(note.updated_at);
-    card.appendChild(date);
+    openBtn.appendChild(date);
+    card.appendChild(openBtn);
 
-    card.addEventListener("click", () => openRootNoteFromList(note.id));
+    const actions = document.createElement("div");
+    actions.className = "note-grid-card-actions";
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "note-grid-card-icon-btn";
+    renameBtn.dataset.action = "rename";
+    const renameBlocked = !canEditNoteTitle(note);
+    renameBtn.disabled = renameBlocked;
+    renameBtn.title = renameBlocked
+      ? "共同作業中、親メモの名前を変更できるのはホストだけです"
+      : "名前を変更";
+    renameBtn.setAttribute("aria-label", `「${note.title || "無題"}」の名前を変更`);
+    renameBtn.textContent = "✏️";
+    actions.appendChild(renameBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "note-grid-card-icon-btn danger";
+    deleteBtn.dataset.action = "delete";
+    deleteBtn.title = "削除";
+    deleteBtn.setAttribute("aria-label", `「${note.title || "無題"}」を削除`);
+    deleteBtn.textContent = "🗑";
+    deleteBtn.hidden = isCollabActive();
+    actions.appendChild(deleteBtn);
+
+    card.appendChild(actions);
     els.noteGridItems.appendChild(card);
   });
 }
 
 function openNoteGridOverlay() {
   if (!els.noteGridOverlay) return;
-  closeNoteListPanel();
   closeMemoFormatPanel();
   closeMemoSettingsPanel();
   closeNoteTodoPanel();
   renderNoteGrid();
   els.noteGridOverlay.hidden = false;
-  els.noteGridBtn?.setAttribute("aria-expanded", "true");
+  updateNoteListButton(true);
 }
 
 function closeNoteGridOverlay() {
   if (!els.noteGridOverlay || els.noteGridOverlay.hidden) return;
   els.noteGridOverlay.hidden = true;
-  els.noteGridBtn?.setAttribute("aria-expanded", "false");
+  updateNoteListButton(false);
 }
 
-async function startNoteListRename(noteId) {
+async function startNoteGridRename(noteId) {
   const note = getNotes().find(item => item.id === noteId);
-  const item = els.noteListItems?.querySelector(`[data-id="${noteId}"]`);
+  const item = els.noteGridItems?.querySelector(`[data-id="${noteId}"]`);
   if (!note || !item || item.classList.contains("is-editing")) return;
   if (blockRootRenameForGuest(note)) return;
   if (!await ensureNoteAccess(noteId)) return;
-  const openBtn = item.querySelector(".mindmap-list-open");
+  const openBtn = item.querySelector(".note-grid-card-open");
 
   const input = document.createElement("input");
   input.type = "text";
@@ -6245,7 +6174,7 @@ async function startNoteListRename(noteId) {
         await updateNote(noteId, { title: input.value.trim() || "無題" }, false);
         renderTree();
         if (state.selectedId === noteId) renderEditor();
-        renderNoteList();
+        renderNoteGrid();
         showToast("名前を変更しました。");
         return;
       } catch (e) {
@@ -6276,11 +6205,11 @@ async function startNoteListRename(noteId) {
   input.select();
 }
 
-async function deleteRootNoteFromList(noteId) {
+async function deleteRootNoteFromGrid(noteId) {
   if (!await ensureNoteAccess(noteId)) return;
   await saveCurrentEditorNow();
   selectNote(noteId);
-  closeNoteListPanel();
+  closeNoteGridOverlay();
   await deleteSelectedNote();
 }
 
@@ -6493,7 +6422,7 @@ function openNoteTodoPanel() {
   if (!els.noteTodoPanel) return;
   closeMemoFormatPanel();
   closeMemoSettingsPanel();
-  closeNoteListPanel();
+  closeNoteGridOverlay();
   renderTodoList();
   els.noteTodoPanel.hidden = false;
   updateNoteTodoButton(true);
@@ -9860,10 +9789,10 @@ function startMindMapListRename(id) {
     showToast("共同作業中、マインドマップの名前を変更できるのはホストだけです。");
     return;
   }
-  const item = els.mindMapListItems.querySelector(`[data-id="${id}"]`);
+  const item = els.mindMapGridItems?.querySelector(`[data-id="${id}"]`);
   const entry = state.mindMapList.find(m => m.id === id);
   if (!item || !entry || item.classList.contains("is-editing")) return;
-  const openBtn = item.querySelector(".mindmap-list-open");
+  const openBtn = item.querySelector(".note-grid-card-open");
 
   const input = document.createElement("input");
   input.type = "text";
@@ -9879,9 +9808,9 @@ function startMindMapListRename(id) {
       const title = (input.value.trim() || "新しいマインドマップ").slice(0, 80);
       entry.title = title;
       entry.updated_at = nowIso();
-      const titleEl = openBtn.querySelector(".mindmap-list-title");
+      const titleEl = openBtn.querySelector(".note-grid-card-title");
       if (titleEl) titleEl.textContent = title;
-      const dateEl = openBtn.querySelector(".mindmap-list-date");
+      const dateEl = openBtn.querySelector(".note-grid-card-date");
       if (dateEl) dateEl.textContent = formatListDate(entry.updated_at);
       if (state.mindMap?.id === id) els.mindMapTitleInput.value = title;
       renameMindMapAndSync(id, title).catch(e => showToast(e.message));
@@ -9909,51 +9838,58 @@ function startMindMapListRename(id) {
   input.select();
 }
 
+// Safari/Chromeのタブ一覧のように、マインドマップもカード形式で並べて一目で探せるようにする。
+// 縦一列のリストだった「マインドマップ一覧」を置き換える表示方法（親メモのグリッドと同じ形）。
 function renderMindMapList() {
-  els.mindMapListItems.innerHTML = "";
+  if (!els.mindMapGridItems) return;
+  els.mindMapGridItems.innerHTML = "";
   const presentationMode = isMindMapPresentationMode();
+
+  if (state.mindMapList.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "note-grid-empty";
+    empty.textContent = "マインドマップはまだありません。";
+    els.mindMapGridItems.appendChild(empty);
+    return;
+  }
+
   state.mindMapList.forEach(entry => {
-    const item = document.createElement("li");
-    item.className = `mindmap-list-item${entry.id === state.mindMap?.id ? " is-active" : ""}`;
-    item.dataset.id = entry.id;
-    if (entry.sync_enabled && entry.source_note_id) applySyncPairStyle(item, entry.id);
+    const card = document.createElement("div");
+    card.className = `note-grid-card${entry.id === state.mindMap?.id ? " is-active" : ""}`;
+    card.dataset.id = entry.id;
+    if (entry.sync_enabled && entry.source_note_id) applySyncPairStyle(card, entry.id);
 
     const openBtn = document.createElement("button");
     openBtn.type = "button";
-    openBtn.className = "mindmap-list-open";
+    openBtn.className = "note-grid-card-open";
     openBtn.dataset.action = "switch";
 
-    const titleLine = document.createElement("span");
-    titleLine.className = "mindmap-list-title-line";
-
     const title = document.createElement("span");
-    title.className = "mindmap-list-title";
+    title.className = "note-grid-card-title";
     title.textContent = entry.title || "新しいマインドマップ";
-    titleLine.appendChild(title);
     if (entry.sync_enabled && entry.source_note_id) {
-      titleLine.appendChild(createSyncPairBadge(
+      title.appendChild(createSyncPairBadge(
         entry.id,
         entry.source_note_title
           ? `メモ「${entry.source_note_title}」と同期中`
           : "メモと同期中",
       ));
     }
-    openBtn.appendChild(titleLine);
+    openBtn.appendChild(title);
 
     const date = document.createElement("span");
-    date.className = "mindmap-list-date";
+    date.className = "note-grid-card-date";
     date.textContent = formatListDate(entry.updated_at);
     openBtn.appendChild(date);
-
-    item.appendChild(openBtn);
+    card.appendChild(openBtn);
 
     const actions = document.createElement("div");
-    actions.className = "mindmap-list-actions";
+    actions.className = "note-grid-card-actions";
     actions.hidden = presentationMode;
 
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
-    renameBtn.className = "mindmap-list-icon-btn";
+    renameBtn.className = "note-grid-card-icon-btn";
     renameBtn.dataset.action = "rename";
     const renameBlocked = !canEditMindMapTitle();
     renameBtn.disabled = renameBlocked;
@@ -9966,7 +9902,7 @@ function renderMindMapList() {
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
-    deleteBtn.className = "mindmap-list-icon-btn danger";
+    deleteBtn.className = "note-grid-card-icon-btn danger";
     deleteBtn.dataset.action = "delete";
     deleteBtn.title = isCollabActive() ? "共同作業中はマインドマップを削除できません" : "削除";
     deleteBtn.setAttribute("aria-label", "削除");
@@ -9974,29 +9910,27 @@ function renderMindMapList() {
     deleteBtn.disabled = state.mindMapList.length <= 1 || isCollabActive();
     actions.appendChild(deleteBtn);
 
-    item.appendChild(actions);
-    item.addEventListener("contextmenu", e => {
+    card.appendChild(actions);
+    card.addEventListener("contextmenu", e => {
       e.preventDefault();
       e.stopPropagation();
       if (presentationMode) return;
       showMindMapListCtxMenu(e.clientX, e.clientY, entry.id);
     });
-    els.mindMapListItems.appendChild(item);
+    els.mindMapGridItems.appendChild(card);
   });
 }
 
 function openMindMapListPanel() {
+  if (!els.mindMapGridOverlay) return;
   renderMindMapList();
-  const rect = els.mindMapListBtn.getBoundingClientRect();
-  els.mindMapListPanel.style.top = `${rect.bottom + 6}px`;
-  els.mindMapListPanel.style.left = `${rect.left}px`;
-  els.mindMapListPanel.style.right = "auto";
-  els.mindMapListPanel.hidden = false;
+  els.mindMapGridOverlay.hidden = false;
   els.mindMapListBtn.setAttribute("aria-expanded", "true");
 }
 
 function closeMindMapListPanel() {
-  els.mindMapListPanel.hidden = true;
+  if (!els.mindMapGridOverlay || els.mindMapGridOverlay.hidden) return;
+  els.mindMapGridOverlay.hidden = true;
   els.mindMapListBtn.setAttribute("aria-expanded", "false");
 }
 
@@ -10785,11 +10719,15 @@ els.downloadMapPdfBtn?.addEventListener("click", () => { closeMindMapSettingsPan
 els.mindMapLargeBtn?.addEventListener("click", toggleMindMapLargeView);
 els.mindMapSideNewBtn?.addEventListener("click", createNewMindMap);
 els.mindMapListBtn.addEventListener("click", () => {
-  if (els.mindMapListPanel.hidden) openMindMapListPanel();
+  if (els.mindMapGridOverlay?.hidden) openMindMapListPanel();
   else closeMindMapListPanel();
 });
-els.mindMapListItems.addEventListener("click", e => {
-  const item = e.target.closest(".mindmap-list-item");
+els.mindMapGridClose?.addEventListener("click", closeMindMapListPanel);
+els.mindMapGridOverlay?.addEventListener("click", e => {
+  if (e.target === els.mindMapGridOverlay) closeMindMapListPanel();
+});
+els.mindMapGridItems?.addEventListener("click", e => {
+  const item = e.target.closest(".note-grid-card");
   if (!item || item.classList.contains("is-editing")) return;
   const id = item.dataset.id;
   const action = e.target.closest("[data-action]")?.dataset.action;
@@ -10897,7 +10835,6 @@ els.mindMapCanvas.addEventListener("pointercancel", finishMindMapPan);
 window.addEventListener("resize", () => {
   if (!els.mindMapOverlay.hidden && !state.mindMapCentered) centerMindMap();
   if (els.editorArea.classList.contains("is-large-editor")) syncNoteHeadHeight();
-  positionNoteListPanel();
   positionMemoSettingsPanel();
   positionMindMapSettingsPanel();
   positionMindMapNodeSettingsPanel();
@@ -10935,7 +10872,7 @@ function resetMindMapState() {
     setButtonContent(els.mindMapLargeBtn, "⛶", "大画面");
   }
   els.mindMapOverlay.hidden = true;
-  els.mindMapListPanel.hidden = true;
+  if (els.mindMapGridOverlay) els.mindMapGridOverlay.hidden = true;
   els.mindMapContextMenu.hidden = true;
   if (els.mindMapLinkContextMenu) els.mindMapLinkContextMenu.hidden = true;
   els.mindMapLinks.innerHTML = "";
@@ -12918,9 +12855,6 @@ document.addEventListener("click", e => {
     els.memoFormatToggleBtn?.contains(e.target)
   );
   if (!clickedMemoFormat) closeMemoFormatPanel();
-  if (!els.noteListPanel?.hidden && !els.noteListPanel.contains(e.target) && !els.noteListBtn?.contains(e.target)) {
-    closeNoteListPanel();
-  }
   if (!els.noteTodoPanel?.hidden && !els.noteTodoPanel.contains(e.target) && !els.noteTodoBtn?.contains(e.target)) {
     closeNoteTodoPanel();
   }
@@ -12960,9 +12894,6 @@ document.addEventListener("click", e => {
     .some(button => button.contains(e.target));
   if (!els.accountMenu.hidden && !els.accountMenu.contains(e.target) && !accountButtonClicked) {
     els.accountMenu.hidden = true;
-  }
-  if (!els.mindMapListPanel.hidden && !els.mindMapListPanel.contains(e.target) && !els.mindMapListBtn.contains(e.target)) {
-    closeMindMapListPanel();
   }
   const clickedNodeSettings = Boolean(
     els.mindMapNodeSettingsPanel?.contains(e.target) ||
@@ -13023,11 +12954,6 @@ document.addEventListener("keydown", e => {
     closeMemoSettingsPanel();
     return;
   }
-  if (e.key === "Escape" && !els.noteListPanel?.hidden) {
-    e.preventDefault();
-    closeNoteListPanel();
-    return;
-  }
   if (e.key === "Escape" && !els.noteGridOverlay?.hidden) {
     e.preventDefault();
     closeNoteGridOverlay();
@@ -13041,6 +12967,11 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && !els.collabStatusPanel?.hidden) {
     e.preventDefault();
     closeCollabStatusPanel();
+    return;
+  }
+  if (e.key === "Escape" && !els.mindMapGridOverlay?.hidden) {
+    e.preventDefault();
+    closeMindMapListPanel();
     return;
   }
   const mindMapSettingsOpen = !els.mindMapSettingsPanel?.hidden || !els.mindMapNodeSettingsPanel?.hidden;
@@ -13125,11 +13056,6 @@ els.mobileMenuCloseBtn?.addEventListener("click", () => {
 });
 els.noteListBtn?.addEventListener("click", e => {
   e.stopPropagation();
-  if (els.noteListPanel?.hidden) openNoteListPanel();
-  else closeNoteListPanel();
-});
-els.noteGridBtn?.addEventListener("click", e => {
-  e.stopPropagation();
   if (els.noteGridOverlay?.hidden) openNoteGridOverlay();
   else closeNoteGridOverlay();
 });
@@ -13137,17 +13063,17 @@ els.noteGridClose?.addEventListener("click", closeNoteGridOverlay);
 els.noteGridOverlay?.addEventListener("click", e => {
   if (e.target === els.noteGridOverlay) closeNoteGridOverlay();
 });
-els.noteListItems?.addEventListener("click", e => {
-  const item = e.target.closest(".mindmap-list-item");
+els.noteGridItems?.addEventListener("click", e => {
+  const item = e.target.closest(".note-grid-card");
   if (!item || item.classList.contains("is-editing")) return;
   const noteId = item.dataset.id;
   const action = e.target.closest("[data-action]")?.dataset.action;
   if (action === "rename") {
     e.stopPropagation();
-    void startNoteListRename(noteId);
+    void startNoteGridRename(noteId);
   } else if (action === "delete") {
     e.stopPropagation();
-    void deleteRootNoteFromList(noteId);
+    void deleteRootNoteFromGrid(noteId);
   } else if (action === "open") {
     void openRootNoteFromList(noteId);
   }
@@ -13177,13 +13103,13 @@ els.mobileMenuBackdrop.addEventListener("click", closeMobileMenu);
 if (mobileMenuMql.addEventListener) {
   mobileMenuMql.addEventListener("change", e => {
     closeMobileMenu();
-    closeNoteListPanel();
+    closeNoteGridOverlay();
     closeNoteTodoPanel();
   });
 } else {
   mobileMenuMql.addListener(e => {
     closeMobileMenu();
-    closeNoteListPanel();
+    closeNoteGridOverlay();
     closeNoteTodoPanel();
   });
 }
