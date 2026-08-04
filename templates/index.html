@@ -72,6 +72,10 @@
           <span class="btn-icon" aria-hidden="true">🗂️</span>
           <span class="btn-label">一覧</span>
         </button>
+        <button id="noteGridBtn" class="mindmap-tool-btn" type="button" title="親メモをグリッドで一覧表示" aria-label="親メモをグリッドで一覧表示" aria-haspopup="dialog" aria-controls="noteGridOverlay" aria-expanded="false">
+          <span class="btn-icon" aria-hidden="true">▦</span>
+          <span class="btn-label">グリッド</span>
+        </button>
       </div>
       <div class="note-head-spacer"></div>
       <div class="note-head-actions">
@@ -111,6 +115,16 @@
     <div id="noteListPanel" class="context-menu mindmap-list-panel note-list-panel" role="dialog" aria-label="親メモ一覧" hidden>
       <p class="mindmap-list-header">親メモ一覧</p>
       <ul id="noteListItems" class="mindmap-list-items"></ul>
+    </div>
+
+    <div id="noteGridOverlay" class="note-grid-overlay" hidden>
+      <section id="noteGridDialog" class="note-grid-dialog" role="dialog" aria-modal="true" aria-labelledby="noteGridTitle">
+        <div class="templates-head">
+          <p id="noteGridTitle" class="templates-title">親メモ一覧（グリッド）</p>
+          <button id="noteGridClose" class="templates-close" type="button" title="閉じる" aria-label="グリッド表示を閉じる">×</button>
+        </div>
+        <div id="noteGridItems" class="note-grid-items"></div>
+      </section>
     </div>
 
     <div id="noteTodoPanel" class="context-menu mindmap-list-panel note-list-panel" role="dialog" aria-label="TODOリスト" hidden>

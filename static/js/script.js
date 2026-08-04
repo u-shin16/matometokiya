@@ -99,6 +99,10 @@ const els = {
   noteListBtn:        document.getElementById("noteListBtn"),
   noteListPanel:      document.getElementById("noteListPanel"),
   noteListItems:      document.getElementById("noteListItems"),
+  noteGridBtn:        document.getElementById("noteGridBtn"),
+  noteGridOverlay:    document.getElementById("noteGridOverlay"),
+  noteGridItems:      document.getElementById("noteGridItems"),
+  noteGridClose:      document.getElementById("noteGridClose"),
   noteTodoBtn:        document.getElementById("noteTodoBtn"),
   noteTodoPanel:      document.getElementById("noteTodoPanel"),
   noteTodoItems:      document.getElementById("noteTodoItems"),
@@ -6156,6 +6160,66 @@ async function openRootNoteFromList(noteId) {
   await saveCurrentEditorNow();
   selectNote(noteId);
   closeNoteListPanel();
+  closeNoteGridOverlay();
+}
+
+// Safari/Chromeのタブ一覧のように、親メモをカード形式で並べて一目で探せるようにする。
+// 既存の「親メモ一覧」（縦一列のリスト）とは別の表示方法として追加した。
+function renderNoteGrid() {
+  if (!els.noteGridItems) return;
+  els.noteGridItems.innerHTML = "";
+  const roots = getRootNotesForList();
+  const activeRootId = getSelectedRootNoteId();
+
+  if (roots.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "note-grid-empty";
+    empty.textContent = "親メモはまだありません。";
+    els.noteGridItems.appendChild(empty);
+    return;
+  }
+
+  roots.forEach(note => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = `note-grid-card${note.id === activeRootId ? " is-active" : ""}`;
+    card.dataset.id = note.id;
+
+    const title = document.createElement("span");
+    title.className = "note-grid-card-title";
+    title.textContent = note.title || "無題";
+    card.appendChild(title);
+
+    const preview = document.createElement("span");
+    preview.className = "note-grid-card-preview";
+    preview.textContent = contentToPlainText(note.content).slice(0, 160);
+    card.appendChild(preview);
+
+    const date = document.createElement("span");
+    date.className = "note-grid-card-date";
+    date.textContent = formatListDate(note.updated_at);
+    card.appendChild(date);
+
+    card.addEventListener("click", () => openRootNoteFromList(note.id));
+    els.noteGridItems.appendChild(card);
+  });
+}
+
+function openNoteGridOverlay() {
+  if (!els.noteGridOverlay) return;
+  closeNoteListPanel();
+  closeMemoFormatPanel();
+  closeMemoSettingsPanel();
+  closeNoteTodoPanel();
+  renderNoteGrid();
+  els.noteGridOverlay.hidden = false;
+  els.noteGridBtn?.setAttribute("aria-expanded", "true");
+}
+
+function closeNoteGridOverlay() {
+  if (!els.noteGridOverlay || els.noteGridOverlay.hidden) return;
+  els.noteGridOverlay.hidden = true;
+  els.noteGridBtn?.setAttribute("aria-expanded", "false");
 }
 
 async function startNoteListRename(noteId) {
@@ -12959,6 +13023,11 @@ document.addEventListener("keydown", e => {
     closeNoteListPanel();
     return;
   }
+  if (e.key === "Escape" && !els.noteGridOverlay?.hidden) {
+    e.preventDefault();
+    closeNoteGridOverlay();
+    return;
+  }
   if (e.key === "Escape" && !els.noteTodoPanel?.hidden) {
     e.preventDefault();
     closeNoteTodoPanel();
@@ -13053,6 +13122,15 @@ els.noteListBtn?.addEventListener("click", e => {
   e.stopPropagation();
   if (els.noteListPanel?.hidden) openNoteListPanel();
   else closeNoteListPanel();
+});
+els.noteGridBtn?.addEventListener("click", e => {
+  e.stopPropagation();
+  if (els.noteGridOverlay?.hidden) openNoteGridOverlay();
+  else closeNoteGridOverlay();
+});
+els.noteGridClose?.addEventListener("click", closeNoteGridOverlay);
+els.noteGridOverlay?.addEventListener("click", e => {
+  if (e.target === els.noteGridOverlay) closeNoteGridOverlay();
 });
 els.noteListItems?.addEventListener("click", e => {
   const item = e.target.closest(".mindmap-list-item");
