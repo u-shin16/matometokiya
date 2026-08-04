@@ -6107,19 +6107,6 @@ function renderNoteGrid() {
     const actions = document.createElement("div");
     actions.className = "note-grid-card-actions";
 
-    const renameBtn = document.createElement("button");
-    renameBtn.type = "button";
-    renameBtn.className = "note-grid-card-icon-btn";
-    renameBtn.dataset.action = "rename";
-    const renameBlocked = !canEditNoteTitle(note);
-    renameBtn.disabled = renameBlocked;
-    renameBtn.title = renameBlocked
-      ? "共同作業中、親メモの名前を変更できるのはホストだけです"
-      : "名前を変更";
-    renameBtn.setAttribute("aria-label", `「${note.title || "無題"}」の名前を変更`);
-    renameBtn.textContent = "✏️";
-    actions.appendChild(renameBtn);
-
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "note-grid-card-icon-btn danger";
@@ -6149,60 +6136,6 @@ function closeNoteGridOverlay() {
   if (!els.noteGridOverlay || els.noteGridOverlay.hidden) return;
   els.noteGridOverlay.hidden = true;
   updateNoteListButton(false);
-}
-
-async function startNoteGridRename(noteId) {
-  const note = getNotes().find(item => item.id === noteId);
-  const item = els.noteGridItems?.querySelector(`[data-id="${noteId}"]`);
-  if (!note || !item || item.classList.contains("is-editing")) return;
-  if (blockRootRenameForGuest(note)) return;
-  if (!await ensureNoteAccess(noteId)) return;
-  const openBtn = item.querySelector(".note-grid-card-open");
-
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = "mindmap-list-rename";
-  input.maxLength = 120;
-  input.value = note.title || "無題";
-
-  let finished = false;
-  const finish = async commit => {
-    if (finished) return;
-    finished = true;
-    if (commit) {
-      try {
-        await updateNote(noteId, { title: input.value.trim() || "無題" }, false);
-        renderTree();
-        if (state.selectedId === noteId) renderEditor();
-        renderNoteGrid();
-        showToast("名前を変更しました。");
-        return;
-      } catch (e) {
-        showToast(e.message);
-      }
-    }
-    item.classList.remove("is-editing");
-    input.remove();
-    openBtn.hidden = false;
-  };
-
-  input.addEventListener("blur", () => { void finish(true); });
-  input.addEventListener("keydown", e => {
-    e.stopPropagation();
-    if (e.key === "Enter") {
-      e.preventDefault();
-      input.blur();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      void finish(false);
-    }
-  });
-
-  item.classList.add("is-editing");
-  openBtn.hidden = true;
-  openBtn.insertAdjacentElement("afterend", input);
-  input.focus();
-  input.select();
 }
 
 async function deleteRootNoteFromGrid(noteId) {
@@ -9783,61 +9716,6 @@ async function renameMindMapAndSync(id, title) {
   if (map.sync_enabled) await syncLinkedNotesFromMindMap(map);
 }
 
-function startMindMapListRename(id) {
-  if (isMindMapPresentationMode()) return;
-  if (!canEditMindMapTitle()) {
-    showToast("共同作業中、マインドマップの名前を変更できるのはホストだけです。");
-    return;
-  }
-  const item = els.mindMapGridItems?.querySelector(`[data-id="${id}"]`);
-  const entry = state.mindMapList.find(m => m.id === id);
-  if (!item || !entry || item.classList.contains("is-editing")) return;
-  const openBtn = item.querySelector(".note-grid-card-open");
-
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = "mindmap-list-rename";
-  input.maxLength = 80;
-  input.value = entry.title;
-
-  let finished = false;
-  const finish = commit => {
-    if (finished) return;
-    finished = true;
-    if (commit) {
-      const title = (input.value.trim() || "新しいマインドマップ").slice(0, 80);
-      entry.title = title;
-      entry.updated_at = nowIso();
-      const titleEl = openBtn.querySelector(".note-grid-card-title");
-      if (titleEl) titleEl.textContent = title;
-      const dateEl = openBtn.querySelector(".note-grid-card-date");
-      if (dateEl) dateEl.textContent = formatListDate(entry.updated_at);
-      if (state.mindMap?.id === id) els.mindMapTitleInput.value = title;
-      renameMindMapAndSync(id, title).catch(e => showToast(e.message));
-    }
-    item.classList.remove("is-editing");
-    input.remove();
-    openBtn.hidden = false;
-  };
-  input.addEventListener("blur", () => finish(true));
-  input.addEventListener("keydown", e => {
-    e.stopPropagation();
-    if (e.key === "Enter") {
-      e.preventDefault();
-      finish(true);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      finish(false);
-    }
-  });
-
-  item.classList.add("is-editing");
-  openBtn.hidden = true;
-  openBtn.insertAdjacentElement("afterend", input);
-  input.focus();
-  input.select();
-}
-
 // Safari/Chromeのタブ一覧のように、マインドマップもカード形式で並べて一目で探せるようにする。
 // 縦一列のリストだった「マインドマップ一覧」を置き換える表示方法（親メモのグリッドと同じ形）。
 function renderMindMapList() {
@@ -9886,19 +9764,6 @@ function renderMindMapList() {
     const actions = document.createElement("div");
     actions.className = "note-grid-card-actions";
     actions.hidden = presentationMode;
-
-    const renameBtn = document.createElement("button");
-    renameBtn.type = "button";
-    renameBtn.className = "note-grid-card-icon-btn";
-    renameBtn.dataset.action = "rename";
-    const renameBlocked = !canEditMindMapTitle();
-    renameBtn.disabled = renameBlocked;
-    renameBtn.title = renameBlocked
-      ? "共同作業中、マインドマップの名前を変更できるのはホストだけです"
-      : "名前を変更";
-    renameBtn.setAttribute("aria-label", "名前を変更");
-    renameBtn.textContent = "✏️";
-    actions.appendChild(renameBtn);
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
@@ -10732,10 +10597,7 @@ els.mindMapGridItems?.addEventListener("click", e => {
   const id = item.dataset.id;
   const action = e.target.closest("[data-action]")?.dataset.action;
   if (isMindMapPresentationMode() && action && action !== "switch") return;
-  if (action === "rename") {
-    e.stopPropagation();
-    startMindMapListRename(id);
-  } else if (action === "delete") {
+  if (action === "delete") {
     e.stopPropagation();
     deleteMindMap(id);
   } else {
@@ -13068,10 +12930,7 @@ els.noteGridItems?.addEventListener("click", e => {
   if (!item || item.classList.contains("is-editing")) return;
   const noteId = item.dataset.id;
   const action = e.target.closest("[data-action]")?.dataset.action;
-  if (action === "rename") {
-    e.stopPropagation();
-    void startNoteGridRename(noteId);
-  } else if (action === "delete") {
+  if (action === "delete") {
     e.stopPropagation();
     void deleteRootNoteFromGrid(noteId);
   } else if (action === "open") {
