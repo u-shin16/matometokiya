@@ -1,6 +1,16 @@
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const MEMO_DEFAULT_TEXT_COLOR = "#111827";
+const MEMO_NO_HIGHLIGHT = "";
+const MEMO_HIGHLIGHT_COLOR_PALETTE = [
+  { label: "黄色", value: "#fef08a" },
+  { label: "緑", value: "#bbf7d0" },
+  { label: "青", value: "#bfdbfe" },
+  { label: "赤", value: "#fecaca" },
+  { label: "紫", value: "#e9d5ff" },
+  { label: "ピンク", value: "#fbcfe8" },
+  { label: "オレンジ", value: "#fed7aa" },
+];
 const MEMO_URL_RE = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
 const MEMO_URL_TRAILING_CHARS = ".,!?;:、。！？；：";
 const MEMO_URL_TRAILING_PAIRS = {
@@ -64,6 +74,7 @@ const state = {
   pendingMediaCaretFigure: null,
   memoFormatRange: null,
   memoTextColor:   MEMO_DEFAULT_TEXT_COLOR,
+  memoHighlightColor: MEMO_NO_HIGHLIGHT,
   memoStrikeActive: false,
   memoHeadingLevel: "normal",
   isApplyingMemoFormat: false,
@@ -280,6 +291,9 @@ const els = {
   memoTextColorBtn: document.getElementById("memoTextColorBtn"),
   memoTextColorLabel: document.getElementById("memoTextColorLabel"),
   memoTextColorPalette: document.getElementById("memoTextColorPalette"),
+  memoHighlightBtn: document.getElementById("memoHighlightBtn"),
+  memoHighlightLabel: document.getElementById("memoHighlightLabel"),
+  memoHighlightPalette: document.getElementById("memoHighlightPalette"),
   memoStrikeBtn:    document.getElementById("memoStrikeBtn"),
   memoSubheadingBtn: document.getElementById("memoSubheadingBtn"),
   memoHeadingBtn:   document.getElementById("memoHeadingBtn"),
@@ -5081,13 +5095,13 @@ function updateEmptyState() {
 }
 
 function setMemoFormatEnabled(enabled) {
-  [els.memoFormatToggleBtn, els.memoTextColorBtn, els.memoStrikeBtn, els.memoSubheadingBtn, els.memoHeadingBtn]
+  [els.memoFormatToggleBtn, els.memoTextColorBtn, els.memoHighlightBtn, els.memoStrikeBtn, els.memoSubheadingBtn, els.memoHeadingBtn]
     .filter(Boolean)
     .forEach(button => { button.disabled = !enabled; });
   if (!enabled) {
     closeMemoFormatPanel();
     state.memoFormatRange = null;
-    setMemoFormatUi({ strike: false, headingLevel: "normal" });
+    setMemoFormatUi({ strike: false, headingLevel: "normal", highlight: MEMO_NO_HIGHLIGHT });
   }
 }
 
@@ -5122,6 +5136,7 @@ function setMemoFormatPanelOpen(open) {
     positionMemoFormatPanel();
   } else {
     closeMemoTextColorPalette();
+    closeMemoHighlightPalette();
   }
   requestAnimationFrame(positionMemoSettingsPanel);
 }
@@ -5132,6 +5147,7 @@ function closeMemoFormatPanel() {
   els.memoFormatToggleBtn.classList.remove("active");
   els.memoFormatToggleBtn.setAttribute("aria-expanded", "false");
   closeMemoTextColorPalette();
+  closeMemoHighlightPalette();
 }
 
 function openMemoSettingsPanel() {
@@ -5227,6 +5243,71 @@ function updateMemoColorSwatchSelection(color) {
   });
 }
 
+function closeMemoHighlightPalette() {
+  if (!els.memoHighlightPalette || !els.memoHighlightBtn) return;
+  els.memoHighlightPalette.hidden = true;
+  els.memoHighlightBtn.classList.remove("is-open");
+  els.memoHighlightBtn.setAttribute("aria-expanded", "false");
+}
+
+function setMemoHighlightPaletteOpen(open) {
+  if (!els.memoHighlightPalette || !els.memoHighlightBtn || els.memoHighlightBtn.disabled) return;
+  els.memoHighlightPalette.hidden = !open;
+  els.memoHighlightBtn.classList.toggle("is-open", open);
+  els.memoHighlightBtn.setAttribute("aria-expanded", String(open));
+  if (open) positionMemoFormatPanel();
+}
+
+function getMemoHighlightPaletteOption(color) {
+  const normalized = normalizeMindMapColor(color);
+  return MEMO_HIGHLIGHT_COLOR_PALETTE.find(option => option.value === normalized) ||
+    { label: "なし", value: MEMO_NO_HIGHLIGHT };
+}
+
+function setMemoHighlightPreview(color) {
+  const option = getMemoHighlightPaletteOption(color);
+  state.memoHighlightColor = option.value;
+  els.memoHighlightBtn?.style.setProperty("--memo-current-color", option.value || "transparent");
+  if (els.memoHighlightLabel) els.memoHighlightLabel.textContent = option.label;
+  updateMemoHighlightSwatchSelection(option.value);
+}
+
+function createMemoHighlightSwatch(option) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "memo-color-swatch";
+  button.dataset.color = option.value;
+  button.title = option.label;
+  button.setAttribute("aria-label", option.label);
+  button.style.setProperty("--memo-swatch-color", option.value);
+  button.addEventListener("click", e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const nextHighlight = state.memoHighlightColor === option.value ? MEMO_NO_HIGHLIGHT : option.value;
+    applyMemoTextStyle({ highlight: nextHighlight });
+  });
+  return button;
+}
+
+function renderMemoHighlightPalette() {
+  if (!els.memoHighlightPalette) return;
+  els.memoHighlightPalette.innerHTML = "";
+  MEMO_HIGHLIGHT_COLOR_PALETTE.forEach(option => {
+    els.memoHighlightPalette.appendChild(createMemoHighlightSwatch(option));
+  });
+  setMemoHighlightPreview(MEMO_NO_HIGHLIGHT);
+}
+
+function updateMemoHighlightSwatchSelection(color) {
+  if (!els.memoHighlightPalette) return;
+  const selected = getMemoHighlightPaletteOption(color).value;
+  els.memoHighlightPalette.querySelectorAll(".memo-color-swatch").forEach(button => {
+    const active = button.dataset.color === selected && Boolean(selected);
+    button.classList.toggle("is-selected", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
 function setMemoToggleActive(button, active) {
   if (!button) return;
   button.classList.toggle("is-active", Boolean(active));
@@ -5237,11 +5318,13 @@ function normalizeMemoHeadingLevel(level) {
   return ["normal", "subheading", "heading"].includes(level) ? level : "normal";
 }
 
-function setMemoFormatUi({ color = state.memoTextColor, strike = state.memoStrikeActive, headingLevel = state.memoHeadingLevel } = {}) {
+function setMemoFormatUi({ color = state.memoTextColor, highlight = state.memoHighlightColor, strike = state.memoStrikeActive, headingLevel = state.memoHeadingLevel } = {}) {
   setMemoTextColorPreview(color);
+  setMemoHighlightPreview(highlight);
   state.memoStrikeActive = Boolean(strike);
   state.memoHeadingLevel = normalizeMemoHeadingLevel(headingLevel);
   setMemoToggleActive(els.memoTextColorBtn, state.memoTextColor !== MEMO_DEFAULT_TEXT_COLOR);
+  setMemoToggleActive(els.memoHighlightBtn, Boolean(state.memoHighlightColor));
   setMemoToggleActive(els.memoStrikeBtn, state.memoStrikeActive);
   setMemoToggleActive(els.memoSubheadingBtn, state.memoHeadingLevel === "subheading");
   setMemoToggleActive(els.memoHeadingBtn, state.memoHeadingLevel === "heading");
@@ -5277,6 +5360,13 @@ function getMemoPaletteColorFromCss(value) {
   return nearest?.value || MEMO_DEFAULT_TEXT_COLOR;
 }
 
+function getMemoHighlightColorFromCss(value) {
+  const hex = cssColorToHex(value);
+  if (!hex) return MEMO_NO_HIGHLIGHT;
+  const match = MEMO_HIGHLIGHT_COLOR_PALETTE.find(option => option.value === hex);
+  return match?.value || MEMO_NO_HIGHLIGHT;
+}
+
 function nodeIsInMemoEditor(node) {
   if (!node) return false;
   if (node === els.contentInput) return true;
@@ -5300,7 +5390,7 @@ function getCurrentMemoSelectionRange() {
 
 function resetMemoFormatUiSelection() {
   state.memoFormatRange = null;
-  setMemoFormatUi({ color: MEMO_DEFAULT_TEXT_COLOR, strike: false, headingLevel: "normal" });
+  setMemoFormatUi({ color: MEMO_DEFAULT_TEXT_COLOR, highlight: MEMO_NO_HIGHLIGHT, strike: false, headingLevel: "normal" });
 }
 
 function saveMemoFormatSelection() {
@@ -5371,6 +5461,7 @@ function getMemoFormatStateFromRange(range) {
   if (!element || !els.contentInput.contains(element)) {
     return {
       color: state.memoTextColor,
+      highlight: state.memoHighlightColor,
       strike: state.memoStrikeActive,
       headingLevel: state.memoHeadingLevel,
     };
@@ -5378,6 +5469,7 @@ function getMemoFormatStateFromRange(range) {
 
   const colorElement = element.closest?.("[style*='color']") || element;
   const computed = window.getComputedStyle(colorElement);
+  const highlightElement = element.closest?.("[style*='background-color']");
   const decoration = window.getComputedStyle(element).textDecorationLine || "";
   const headingElement = element.closest?.(".memo-text-heading, .memo-text-subheading, .memo-text-normal");
   const headingLevel = headingElement?.classList.contains("memo-text-heading")
@@ -5385,6 +5477,9 @@ function getMemoFormatStateFromRange(range) {
     : (headingElement?.classList.contains("memo-text-subheading") ? "subheading" : "normal");
   return {
     color: getMemoPaletteColorFromCss(colorElement.style?.color || computed.color),
+    highlight: highlightElement
+      ? getMemoHighlightColorFromCss(highlightElement.style.backgroundColor)
+      : MEMO_NO_HIGHLIGHT,
     strike: getMemoStrikeStateFromRange(range, element) || decoration.includes("line-through"),
     headingLevel,
   };
@@ -5434,6 +5529,15 @@ function removeMemoColorStyles(root) {
   getMemoMatchingElements(root, "[style*='color'], .memo-text-white").forEach(element => {
     element.style.removeProperty("color");
     element.classList.remove("memo-text-white");
+    if (element.tagName === "SPAN" && element.className.trim() === "" && !element.getAttribute("style")) {
+      element.replaceWith(...element.childNodes);
+    }
+  });
+}
+
+function removeMemoHighlightStyles(root) {
+  getMemoMatchingElements(root, "[style*='background-color']").forEach(element => {
+    element.style.removeProperty("background-color");
     if (element.tagName === "SPAN" && element.className.trim() === "" && !element.getAttribute("style")) {
       element.replaceWith(...element.childNodes);
     }
@@ -5707,7 +5811,7 @@ function getMemoStrikeElementForRange(range) {
   return strikeElement && els.contentInput.contains(strikeElement) ? strikeElement : null;
 }
 
-function applyMemoTextStyle({ color = null, strike = null, headingLevel = null } = {}) {
+function applyMemoTextStyle({ color = null, highlight = null, strike = null, headingLevel = null } = {}) {
   if (!getSelectedNote()) {
     resetMemoFormatUiSelection();
     showToast("先にメモを選択してください。");
@@ -5729,6 +5833,7 @@ function applyMemoTextStyle({ color = null, strike = null, headingLevel = null }
   }
 
   const colorValue = color ? normalizeMindMapColor(color) : null;
+  const highlightValue = highlight ? normalizeMindMapColor(highlight) : null;
   if (!selectedFragmentHasText(range.cloneContents())) {
     resetMemoFormatUiSelection();
     showToast("装飾する文字を選択してください。");
@@ -5744,6 +5849,10 @@ function applyMemoTextStyle({ color = null, strike = null, headingLevel = null }
       removeMemoColorStyles(fragment);
       span.style.color = colorValue;
       span.classList.toggle("memo-text-white", colorValue === "#ffffff");
+    }
+    if (highlight !== null) {
+      removeMemoHighlightStyles(fragment);
+      if (highlightValue) span.style.backgroundColor = highlightValue;
     }
     if (strike !== null) {
       removeMemoStrikeClasses(fragment);
@@ -5763,6 +5872,7 @@ function applyMemoTextStyle({ color = null, strike = null, headingLevel = null }
     state.memoFormatRange = styledRange.cloneRange();
     setMemoFormatUi({
       color: colorValue || state.memoTextColor,
+      highlight: highlight !== null ? (highlightValue || MEMO_NO_HIGHLIGHT) : state.memoHighlightColor,
       strike: strike ?? state.memoStrikeActive,
       headingLevel: targetHeadingLevel ?? state.memoHeadingLevel,
     });
@@ -6478,7 +6588,7 @@ function renderEditor() {
     setLargeEditorOpen(false);
     if (els.noteToMindMapBtn) els.noteToMindMapBtn.disabled = true;
     updateMemoTodoButton();
-    setMemoFormatUi({ color: MEMO_DEFAULT_TEXT_COLOR, strike: false, headingLevel: "normal" });
+    setMemoFormatUi({ color: MEMO_DEFAULT_TEXT_COLOR, highlight: MEMO_NO_HIGHLIGHT, strike: false, headingLevel: "normal" });
     setMemoFormatEnabled(false);
     updateEmptyState();
     updateUndoButton();
@@ -6505,7 +6615,7 @@ function renderEditor() {
   }
   updateMemoTodoButton();
   setMemoFormatEnabled(!readOnly);
-  setMemoFormatUi({ color: MEMO_DEFAULT_TEXT_COLOR, strike: false, headingLevel: "normal" });
+  setMemoFormatUi({ color: MEMO_DEFAULT_TEXT_COLOR, highlight: MEMO_NO_HIGHLIGHT, strike: false, headingLevel: "normal" });
   els.contentInput.dataset.placeholder = "ここにメモを書いてください";
   els.contentInput.contentEditable = readOnly ? "false" : "true";
   els.titleInput.placeholder = "タイトル";
@@ -12629,7 +12739,10 @@ document.addEventListener("click", e => {
   if (!els.memoSettingsPanel?.hidden && !clickedMemoSettings) {
     closeMemoSettingsPanel();
   }
-  if (!e.target.closest(".memo-color-control")) closeMemoTextColorPalette();
+  const clickedTextColorControl = els.memoTextColorBtn?.contains(e.target) || els.memoTextColorPalette?.contains(e.target);
+  const clickedHighlightControl = els.memoHighlightBtn?.contains(e.target) || els.memoHighlightPalette?.contains(e.target);
+  if (!clickedTextColorControl) closeMemoTextColorPalette();
+  if (!clickedHighlightControl) closeMemoHighlightPalette();
   if (!e.target.closest(".mindmap-color-current")) closeMindMapColorControls();
   const mindMapMenuOpen = !els.mindMapContextMenu.hidden ||
     Boolean(els.mindMapCanvasContextMenu && !els.mindMapCanvasContextMenu.hidden) ||
@@ -12889,6 +13002,7 @@ els.checkBtn.addEventListener("click", () => {
   toggleCheckedNote(state.selectedId);
 });
 renderMemoTextColorPalette();
+renderMemoHighlightPalette();
 setMemoFormatEnabled(false);
 els.memoFormatToggleBtn?.addEventListener("pointerdown", e => {
   e.preventDefault();
@@ -12902,16 +13016,24 @@ els.memoFormatBar?.addEventListener("pointerdown", e => {
 });
 els.memoTextColorBtn?.addEventListener("click", e => {
   e.stopPropagation();
+  closeMemoHighlightPalette();
   setMemoTextColorPaletteOpen(Boolean(els.memoTextColorPalette?.hidden));
+});
+els.memoHighlightBtn?.addEventListener("click", e => {
+  e.stopPropagation();
+  closeMemoTextColorPalette();
+  setMemoHighlightPaletteOpen(Boolean(els.memoHighlightPalette?.hidden));
 });
 els.memoStrikeBtn?.addEventListener("click", e => {
   e.stopPropagation();
   closeMemoTextColorPalette();
+  closeMemoHighlightPalette();
   applyMemoTextStyle({ strike: !getMemoStrikeForAction() });
 });
 els.memoSubheadingBtn?.addEventListener("click", e => {
   e.stopPropagation();
   closeMemoTextColorPalette();
+  closeMemoHighlightPalette();
   const currentLevel = getMemoHeadingLevelForAction();
   const nextLevel = currentLevel === "subheading" ? "normal" : "subheading";
   applyMemoTextStyle({ headingLevel: nextLevel });
@@ -12919,6 +13041,7 @@ els.memoSubheadingBtn?.addEventListener("click", e => {
 els.memoHeadingBtn?.addEventListener("click", e => {
   e.stopPropagation();
   closeMemoTextColorPalette();
+  closeMemoHighlightPalette();
   const currentLevel = getMemoHeadingLevelForAction();
   const nextLevel = currentLevel === "heading" ? "normal" : "heading";
   applyMemoTextStyle({ headingLevel: nextLevel });
