@@ -6152,6 +6152,9 @@ function closeNoteGridOverlay() {
 }
 
 const NOTE_HISTORY_LIMIT = 50;
+// この機能を導入した日時より前のupdated_atは対象外にする（実装前の古いデータが
+// 大量に履歴へ出てくるのを防ぐため）。日付を動的に計算せず固定値にすることが重要。
+const NOTE_HISTORY_LAUNCH_AT = "2026-08-05T00:00:00";
 
 // 履歴は「開いた」だけでは追加されない。updated_atはupdateNote等、実際に
 // 内容・タイトル・親子関係などを変更したときだけ更新されるため、これを
@@ -6167,7 +6170,7 @@ function renderNoteHistory() {
   if (!els.noteHistoryItems) return;
   els.noteHistoryItems.innerHTML = "";
   const entries = getNotes()
-    .filter(note => note.updated_at)
+    .filter(note => note.updated_at && note.updated_at >= NOTE_HISTORY_LAUNCH_AT)
     .sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")))
     .slice(0, NOTE_HISTORY_LIMIT);
 
