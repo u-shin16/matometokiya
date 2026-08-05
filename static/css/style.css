@@ -2237,6 +2237,31 @@ body.has-large-editor-open .note-head {
   padding: 32px 0;
 }
 
+@media (max-width: 520px) {
+  .note-grid-overlay {
+    padding: 8px;
+  }
+
+  .note-grid-dialog {
+    padding: 16px;
+    border-radius: 16px;
+  }
+
+  .note-grid-items {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 10px;
+  }
+
+  .note-grid-card {
+    min-height: 120px;
+    padding: 8px;
+  }
+
+  .note-grid-card-preview {
+    -webkit-line-clamp: 3;
+  }
+}
+
 /* ── 共通設定画面 ───────────────────────────────────────── */
 
 .app-management-overlay {
