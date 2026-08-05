@@ -2135,8 +2135,10 @@ body.has-large-editor-open .note-head {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  height: 100%;
-  min-height: 140px;
+  /* 行の高さ（CSS Gridのstretch）に頼ると、隣のカードの内容量やブラウザに
+     よってゴミ箱の位置がずれることがあるため、内容量に関係なく常に同じ
+     固定の高さにする（2行タイトル+4行プレビューが収まる高さ）。 */
+  height: 212px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -2277,7 +2279,7 @@ body.has-large-editor-open .note-head {
   }
 
   .note-grid-card {
-    min-height: 120px;
+    height: 190px;
     padding: 8px;
   }
 
