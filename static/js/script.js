@@ -7036,6 +7036,10 @@ function selectNote(id) {
     return;
   }
   state.selectedId = id;
+  // 折りたたまれた親の下にある子メモは、親メモ一覧・履歴・子メモポップアップ
+  // などツリーの外から選んだ場合そもそもツリーに描画されないため、
+  // 選択行が見つからずスクロールも効かない。祖先を先に開いておく。
+  getNoteAncestorChain(id).slice(0, -1).forEach(ancestor => state.expanded.add(ancestor.id));
   renderTree();
   renderEditor();
   closeMobileMenu();
