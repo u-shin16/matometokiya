@@ -107,6 +107,7 @@ const els = {
   noteHistoryClearBtn: document.getElementById("noteHistoryClearBtn"),
   noteTodoBtn:        document.getElementById("noteTodoBtn"),
   noteTodoPanel:      document.getElementById("noteTodoPanel"),
+  noteTodoClose:      document.getElementById("noteTodoClose"),
   noteTodoItems:      document.getElementById("noteTodoItems"),
   noteTodoCount:      document.getElementById("noteTodoCount"),
   collabStatusBtn:        document.getElementById("collabStatusBtn"),
@@ -6480,17 +6481,6 @@ function renderTodoList() {
   updateTodoButton();
 }
 
-function positionNoteTodoPanel() {
-  if (!els.noteTodoPanel || !els.noteTodoBtn || els.noteTodoPanel.hidden) return;
-  const rect = els.noteTodoBtn.getBoundingClientRect();
-  const edge = 8;
-  const width = els.noteTodoPanel.offsetWidth;
-  const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge));
-  els.noteTodoPanel.style.top = `${rect.bottom + 6}px`;
-  els.noteTodoPanel.style.left = `${left}px`;
-  els.noteTodoPanel.style.right = "auto";
-}
-
 function updateNoteTodoButton(open) {
   const isOpen = Boolean(open);
   els.noteTodoBtn?.setAttribute("aria-expanded", String(isOpen));
@@ -6503,15 +6493,17 @@ function openNoteTodoPanel() {
   closeMemoFormatPanel();
   closeMemoSettingsPanel();
   closeNoteGridOverlay();
+  closeNoteHistoryOverlay();
   renderTodoList();
   els.noteTodoPanel.hidden = false;
+  document.body.classList.add("has-management-open");
   updateNoteTodoButton(true);
-  positionNoteTodoPanel();
 }
 
 function closeNoteTodoPanel() {
-  if (!els.noteTodoPanel) return;
+  if (!els.noteTodoPanel || els.noteTodoPanel.hidden) return;
   els.noteTodoPanel.hidden = true;
+  document.body.classList.remove("has-management-open");
   updateNoteTodoButton(false);
 }
 
@@ -12869,9 +12861,6 @@ document.addEventListener("click", e => {
     els.memoFormatToggleBtn?.contains(e.target)
   );
   if (!clickedMemoFormat) closeMemoFormatPanel();
-  if (!els.noteTodoPanel?.hidden && !els.noteTodoPanel.contains(e.target) && !els.noteTodoBtn?.contains(e.target)) {
-    closeNoteTodoPanel();
-  }
   const clickedCollabStatus = Boolean(
     els.collabStatusPanel?.contains(e.target) ||
     els.collabStatusBtn?.contains(e.target) ||
@@ -13111,6 +13100,10 @@ els.noteTodoBtn?.addEventListener("click", e => {
   e.stopPropagation();
   if (els.noteTodoPanel?.hidden) openNoteTodoPanel();
   else closeNoteTodoPanel();
+});
+els.noteTodoClose?.addEventListener("click", closeNoteTodoPanel);
+els.noteTodoPanel?.addEventListener("click", e => {
+  if (e.target === els.noteTodoPanel) closeNoteTodoPanel();
 });
 els.noteTodoItems?.addEventListener("click", e => {
   const item = e.target.closest(".mindmap-list-item");

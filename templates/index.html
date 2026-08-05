@@ -135,9 +135,14 @@
       </section>
     </div>
 
-    <div id="noteTodoPanel" class="context-menu mindmap-list-panel note-list-panel" role="dialog" aria-label="TODOリスト" hidden>
-      <p class="mindmap-list-header">TODOリスト</p>
-      <ul id="noteTodoItems" class="mindmap-list-items"></ul>
+    <div id="noteTodoPanel" class="note-grid-overlay" hidden>
+      <section id="noteTodoDialog" class="note-grid-dialog" role="dialog" aria-modal="true" aria-labelledby="noteTodoTitle">
+        <div class="templates-head">
+          <p id="noteTodoTitle" class="templates-title">TODOリスト</p>
+          <button id="noteTodoClose" class="templates-close" type="button" title="閉じる" aria-label="TODOリストを閉じる">×</button>
+        </div>
+        <ul id="noteTodoItems" class="mindmap-list-items"></ul>
+      </section>
     </div>
 
     <div id="mobileMenuBackdrop" class="mobile-menu-backdrop" hidden></div>

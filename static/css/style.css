@@ -4012,6 +4012,7 @@ body.has-mindmap-memo-fullscreen {
   list-style: none;
   margin: 0;
   padding: 0;
+  overflow-y: auto;
 }
 
 .mindmap-list-item {
