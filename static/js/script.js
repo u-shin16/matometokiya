@@ -6053,6 +6053,14 @@ async function openRootNoteFromList(noteId) {
   closeNoteGridOverlay();
 }
 
+// カードのプレビューには親メモ自身の本文ではなく、直下の子メモのタイトル一覧を表示する
+// （親メモは分類用の入れ物なだけのことが多く、本文より子メモの中身が分かる方が探しやすいため）。
+// 子メモが無ければ何も表示しない。
+function getChildNoteTitlesPreview(noteId) {
+  const children = orderTreeChildren(noteId, getNotes().filter(n => n.parent_id === noteId));
+  return children.map(child => child.title || "無題").join("\n");
+}
+
 // Safari/Chromeのタブ一覧のように、親メモをカード形式で並べて一目で探せるようにする。
 // 縦一列のリストだった「親メモ一覧」を置き換える表示方法。
 function renderNoteGrid() {
@@ -6095,7 +6103,7 @@ function renderNoteGrid() {
 
     const preview = document.createElement("span");
     preview.className = "note-grid-card-preview";
-    preview.textContent = contentToPlainText(note.content).slice(0, 160);
+    preview.textContent = getChildNoteTitlesPreview(note.id);
     openBtn.appendChild(preview);
 
     const date = document.createElement("span");
