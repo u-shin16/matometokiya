@@ -7274,7 +7274,19 @@ async function saveCurrentEditorNow() {
 // ── Note CRUD ─────────────────────────────────────────────────────────────────
 
 async function loadNotes() {
-  const snap = await notesCollection().get();
+  // 個人メモには共同編集のようなonSnapshotの常時リスナーが無く、この一度きりの
+  // get()だけが頼り。デフォルトのget()はオフライン判定時にローカルキャッシュを
+  // 返すことがあり、モバイル回線が不安定なタイミングだとキャッシュが空のまま
+  // 「メモが何もない」状態で固定されてしまう（再ログインで直るのはロード処理が
+  // 最初からやり直されるため）。まずサーバーから確実に取得し、本当にオフラインで
+  // 失敗した時だけキャッシュにフォールバックする。
+  let snap;
+  try {
+    snap = await notesCollection().get({ source: "server" });
+  } catch (err) {
+    console.warn("[loadNotes] サーバーから取得できなかったためキャッシュを使用します", err);
+    snap = await notesCollection().get();
+  }
   state.data = {
     notes: snap.docs.map(d => ({ ...d.data(), id: d.id, locked: Boolean(d.data().locked) })),
   };
