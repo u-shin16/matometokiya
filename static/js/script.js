@@ -104,6 +104,7 @@ const els = {
   noteHistoryOverlay: document.getElementById("noteHistoryOverlay"),
   noteHistoryItems:   document.getElementById("noteHistoryItems"),
   noteHistoryClose:   document.getElementById("noteHistoryClose"),
+  noteHistoryClearBtn: document.getElementById("noteHistoryClearBtn"),
   noteTodoBtn:        document.getElementById("noteTodoBtn"),
   noteTodoPanel:      document.getElementById("noteTodoPanel"),
   noteTodoItems:      document.getElementById("noteTodoItems"),
@@ -3399,8 +3400,7 @@ function makeId() {
   return [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-function nowIso() {
-  const d   = new Date();
+function nowIso(d = new Date()) {
   const pad = n => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
          `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
@@ -6152,9 +6152,45 @@ function closeNoteGridOverlay() {
 }
 
 const NOTE_HISTORY_LIMIT = 50;
+const NOTE_HISTORY_DAYS = 3;
 // この機能を導入した日時より前のupdated_atは対象外にする（実装前の古いデータが
 // 大量に履歴へ出てくるのを防ぐため）。日付を動的に計算せず固定値にすることが重要。
 const NOTE_HISTORY_LAUNCH_AT = "2026-08-05T00:00:00";
+const NOTE_HISTORY_CLEAR_STORAGE_PREFIX = "matome_note_history_cleared_at:";
+
+function noteHistoryClearStorageKey(uid = state.uid) {
+  return uid ? `${NOTE_HISTORY_CLEAR_STORAGE_PREFIX}${uid}` : "";
+}
+
+function getNoteHistoryClearedAt() {
+  const key = noteHistoryClearStorageKey();
+  if (!key) return "";
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function setNoteHistoryClearedAt(value) {
+  const key = noteHistoryClearStorageKey();
+  if (!key) return;
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // localStorageが使えない環境では諦める（履歴機能自体は動き続ける）
+  }
+}
+
+// 常に「直近3日分」だけを表示するため、実装日時・全履歴削除の実行日時・
+// 3日前の時刻のうち、一番新しいものを下限として使う。
+function getNoteHistoryCutoff() {
+  const rollingWindowStart = nowIso(new Date(Date.now() - NOTE_HISTORY_DAYS * 24 * 60 * 60 * 1000));
+  // nowIsoは秒までしか持たないため、「全履歴を削除」した直後・同じ秒に編集した分は
+  // 厳密には判定できない。1件だけ一瞬残る可能性はあるが、次の編集で自然に解消するため許容する。
+  return [NOTE_HISTORY_LAUNCH_AT, getNoteHistoryClearedAt(), rollingWindowStart]
+    .reduce((max, value) => (value && value > max ? value : max), "");
+}
 
 // 履歴は「開いた」だけでは追加されない。updated_atはupdateNote等、実際に
 // 内容・タイトル・親子関係などを変更したときだけ更新されるため、これを
@@ -6166,11 +6202,18 @@ async function openNoteFromHistory(noteId) {
   closeNoteHistoryOverlay();
 }
 
+function clearNoteHistory() {
+  setNoteHistoryClearedAt(nowIso());
+  renderNoteHistory();
+  showToast("履歴を削除しました。");
+}
+
 function renderNoteHistory() {
   if (!els.noteHistoryItems) return;
   els.noteHistoryItems.innerHTML = "";
+  const cutoff = getNoteHistoryCutoff();
   const entries = getNotes()
-    .filter(note => note.updated_at && note.updated_at >= NOTE_HISTORY_LAUNCH_AT)
+    .filter(note => note.updated_at && note.updated_at >= cutoff)
     .sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")))
     .slice(0, NOTE_HISTORY_LIMIT);
 
@@ -13036,6 +13079,10 @@ els.noteHistoryBtn?.addEventListener("click", e => {
   else closeNoteHistoryOverlay();
 });
 els.noteHistoryClose?.addEventListener("click", closeNoteHistoryOverlay);
+els.noteHistoryClearBtn?.addEventListener("click", e => {
+  e.stopPropagation();
+  clearNoteHistory();
+});
 els.noteHistoryOverlay?.addEventListener("click", e => {
   if (e.target === els.noteHistoryOverlay) closeNoteHistoryOverlay();
 });

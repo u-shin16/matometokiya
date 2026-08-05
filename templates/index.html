@@ -126,7 +126,10 @@
       <section id="noteHistoryDialog" class="note-grid-dialog" role="dialog" aria-modal="true" aria-labelledby="noteHistoryTitle">
         <div class="templates-head">
           <p id="noteHistoryTitle" class="templates-title">メモの履歴</p>
-          <button id="noteHistoryClose" class="templates-close" type="button" title="閉じる" aria-label="メモの履歴を閉じる">×</button>
+          <div class="note-grid-header-actions">
+            <button id="noteHistoryClearBtn" class="templates-close" type="button" title="全履歴を削除" aria-label="全履歴を削除">全履歴を削除</button>
+            <button id="noteHistoryClose" class="templates-close" type="button" title="閉じる" aria-label="メモの履歴を閉じる">×</button>
+          </div>
         </div>
         <div id="noteHistoryItems" class="note-grid-items"></div>
       </section>

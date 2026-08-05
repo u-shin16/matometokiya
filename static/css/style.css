@@ -2050,6 +2050,12 @@ body.has-large-editor-open .note-head {
   gap: 12px;
 }
 
+.note-grid-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .templates-title {
   margin: 0;
   font-size: 18px;
