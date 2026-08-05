@@ -2145,6 +2145,13 @@ body.has-large-editor-open .note-head {
   animation: dialogIn 0.14s ease-out both;
 }
 
+#quickMemoDialog {
+  min-height: min(640px, 85vh);
+  /* 親クラスは見出し+一覧の2段（auto 1fr）前提だが、ここは
+     見出し+入力フォーム+一覧の3段になるので、一覧側が伸縮するよう組み直す */
+  grid-template-rows: auto auto 1fr;
+}
+
 .quick-memo-form {
   display: flex;
   align-items: flex-end;
