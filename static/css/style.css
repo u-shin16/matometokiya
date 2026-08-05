@@ -2195,6 +2195,14 @@ body.has-large-editor-open .note-head {
   font-size: 11px;
 }
 
+.note-grid-card-path {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .note-grid-card-actions {
   display: flex;
   justify-content: flex-end;

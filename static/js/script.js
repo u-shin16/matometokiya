@@ -100,6 +100,10 @@ const els = {
   noteGridOverlay:    document.getElementById("noteGridOverlay"),
   noteGridItems:      document.getElementById("noteGridItems"),
   noteGridClose:      document.getElementById("noteGridClose"),
+  noteHistoryBtn:     document.getElementById("noteHistoryBtn"),
+  noteHistoryOverlay: document.getElementById("noteHistoryOverlay"),
+  noteHistoryItems:   document.getElementById("noteHistoryItems"),
+  noteHistoryClose:   document.getElementById("noteHistoryClose"),
   noteTodoBtn:        document.getElementById("noteTodoBtn"),
   noteTodoPanel:      document.getElementById("noteTodoPanel"),
   noteTodoItems:      document.getElementById("noteTodoItems"),
@@ -6132,6 +6136,7 @@ function renderNoteGrid() {
 
 function openNoteGridOverlay() {
   if (!els.noteGridOverlay) return;
+  closeNoteHistoryOverlay();
   closeMemoFormatPanel();
   closeMemoSettingsPanel();
   closeNoteTodoPanel();
@@ -6144,6 +6149,90 @@ function closeNoteGridOverlay() {
   if (!els.noteGridOverlay || els.noteGridOverlay.hidden) return;
   els.noteGridOverlay.hidden = true;
   updateNoteListButton(false);
+}
+
+const NOTE_HISTORY_LIMIT = 50;
+
+// 履歴は「開いた」だけでは追加されない。updated_atはupdateNote等、実際に
+// 内容・タイトル・親子関係などを変更したときだけ更新されるため、これを
+// そのまま「最近操作したメモ」の判定に使う。親メモ・子メモの区別なく対象にする。
+async function openNoteFromHistory(noteId) {
+  if (!await ensureNoteAccess(noteId)) return;
+  await saveCurrentEditorNow();
+  selectNote(noteId);
+  closeNoteHistoryOverlay();
+}
+
+function renderNoteHistory() {
+  if (!els.noteHistoryItems) return;
+  els.noteHistoryItems.innerHTML = "";
+  const entries = getNotes()
+    .filter(note => note.updated_at)
+    .sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")))
+    .slice(0, NOTE_HISTORY_LIMIT);
+
+  if (entries.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "note-grid-empty";
+    empty.textContent = "履歴はまだありません。";
+    els.noteHistoryItems.appendChild(empty);
+    return;
+  }
+
+  entries.forEach(note => {
+    const card = document.createElement("div");
+    card.className = `note-grid-card${note.id === state.selectedId ? " is-active" : ""}`;
+    card.dataset.id = note.id;
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "note-grid-card-open";
+    openBtn.dataset.action = "open";
+
+    const ancestors = getNoteAncestorChain(note.id).slice(0, -1);
+    if (ancestors.length > 0) {
+      const path = document.createElement("span");
+      path.className = "note-grid-card-path";
+      path.textContent = ancestors.map(a => a.title || "無題").join(" > ");
+      openBtn.appendChild(path);
+    }
+
+    const title = document.createElement("span");
+    title.className = "note-grid-card-title";
+    title.textContent = note.title || "無題";
+    openBtn.appendChild(title);
+
+    const preview = document.createElement("span");
+    preview.className = "note-grid-card-preview";
+    preview.textContent = contentToPlainText(note.content).slice(0, 160);
+    openBtn.appendChild(preview);
+
+    const date = document.createElement("span");
+    date.className = "note-grid-card-date";
+    date.textContent = formatListDate(note.updated_at);
+    openBtn.appendChild(date);
+    card.appendChild(openBtn);
+
+    card.addEventListener("click", () => openNoteFromHistory(note.id));
+    els.noteHistoryItems.appendChild(card);
+  });
+}
+
+function openNoteHistoryOverlay() {
+  if (!els.noteHistoryOverlay) return;
+  closeNoteGridOverlay();
+  closeMemoFormatPanel();
+  closeMemoSettingsPanel();
+  closeNoteTodoPanel();
+  renderNoteHistory();
+  els.noteHistoryOverlay.hidden = false;
+  els.noteHistoryBtn?.setAttribute("aria-expanded", "true");
+}
+
+function closeNoteHistoryOverlay() {
+  if (!els.noteHistoryOverlay || els.noteHistoryOverlay.hidden) return;
+  els.noteHistoryOverlay.hidden = true;
+  els.noteHistoryBtn?.setAttribute("aria-expanded", "false");
 }
 
 async function deleteRootNoteFromGrid(noteId) {
@@ -12829,6 +12918,11 @@ document.addEventListener("keydown", e => {
     closeNoteGridOverlay();
     return;
   }
+  if (e.key === "Escape" && !els.noteHistoryOverlay?.hidden) {
+    e.preventDefault();
+    closeNoteHistoryOverlay();
+    return;
+  }
   if (e.key === "Escape" && !els.noteTodoPanel?.hidden) {
     e.preventDefault();
     closeNoteTodoPanel();
@@ -12932,6 +13026,15 @@ els.noteListBtn?.addEventListener("click", e => {
 els.noteGridClose?.addEventListener("click", closeNoteGridOverlay);
 els.noteGridOverlay?.addEventListener("click", e => {
   if (e.target === els.noteGridOverlay) closeNoteGridOverlay();
+});
+els.noteHistoryBtn?.addEventListener("click", e => {
+  e.stopPropagation();
+  if (els.noteHistoryOverlay?.hidden) openNoteHistoryOverlay();
+  else closeNoteHistoryOverlay();
+});
+els.noteHistoryClose?.addEventListener("click", closeNoteHistoryOverlay);
+els.noteHistoryOverlay?.addEventListener("click", e => {
+  if (e.target === els.noteHistoryOverlay) closeNoteHistoryOverlay();
 });
 els.noteGridItems?.addEventListener("click", e => {
   const item = e.target.closest(".note-grid-card");
