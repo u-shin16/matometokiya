@@ -100,6 +100,7 @@ const els = {
   noteGridOverlay:    document.getElementById("noteGridOverlay"),
   noteGridItems:      document.getElementById("noteGridItems"),
   noteGridClose:      document.getElementById("noteGridClose"),
+  quickMemoBtn:       document.getElementById("quickMemoBtn"),
   noteChildrenPopover:      document.getElementById("noteChildrenPopover"),
   noteChildrenPopoverTitle: document.getElementById("noteChildrenPopoverTitle"),
   noteChildrenPopoverItems: document.getElementById("noteChildrenPopoverItems"),
@@ -1894,6 +1895,12 @@ function updateCollabUI() {
   // 共同作業中はホスト/ゲスト選択と合言葉入力フォームがまぎらわしいので隠す。
   // ルームに入っていない時だけ、新規参加用のフォームを表示する。
   if (els.appCollabForm) els.appCollabForm.hidden = isCollabActive();
+  if (els.quickMemoBtn) {
+    els.quickMemoBtn.disabled = isCollabActive();
+    els.quickMemoBtn.title = isCollabActive()
+      ? "共同作業中は新しい親メモを追加できません"
+      : "親を選ばず新しいメモを作成";
+  }
   if (els.newRootBtn) {
     els.newRootBtn.disabled = isCollabActive();
     els.newRootBtn.title = isCollabActive()
@@ -13161,6 +13168,10 @@ els.noteListBtn?.addEventListener("click", e => {
   else closeNoteGridOverlay();
 });
 els.noteGridClose?.addEventListener("click", closeNoteGridOverlay);
+els.quickMemoBtn?.addEventListener("click", async () => {
+  await createNote(null);
+  closeNoteGridOverlay();
+});
 els.noteGridOverlay?.addEventListener("click", e => {
   if (e.target === els.noteGridOverlay) closeNoteGridOverlay();
 });

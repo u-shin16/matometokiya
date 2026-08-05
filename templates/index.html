@@ -116,7 +116,10 @@
       <section id="noteGridDialog" class="note-grid-dialog" role="dialog" aria-modal="true" aria-labelledby="noteGridTitle">
         <div class="templates-head">
           <p id="noteGridTitle" class="templates-title">親メモ一覧</p>
-          <button id="noteGridClose" class="templates-close" type="button" title="閉じる" aria-label="親メモ一覧を閉じる">×</button>
+          <div class="note-grid-header-actions">
+            <button id="quickMemoBtn" class="templates-close" type="button" title="親を選ばず新しいメモを作成" aria-label="クイックメモを作成">＋クイックメモ</button>
+            <button id="noteGridClose" class="templates-close" type="button" title="閉じる" aria-label="親メモ一覧を閉じる">×</button>
+          </div>
         </div>
         <div id="noteGridItems" class="note-grid-items"></div>
       </section>
