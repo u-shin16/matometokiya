@@ -2232,10 +2232,13 @@ body.has-large-editor-open .note-head {
 .note-grid-card-more {
   align-self: flex-start;
   border: 0;
-  padding: 0;
+  /* タップ領域が文字ぴったりだと実機で指が当たらないことがあるため、
+     見た目より広めの当たり判定を確保する */
+  margin: -6px -8px;
+  padding: 6px 8px;
   background: transparent;
   color: var(--primary);
-  font-size: 11px;
+  font-size: 12px;
   text-decoration: underline;
   cursor: pointer;
 }
