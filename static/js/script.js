@@ -6134,20 +6134,22 @@ function renderNoteGrid() {
     preview.textContent = children.map(child => child.title || "無題").join("\n");
     openBtn.appendChild(preview);
 
-    if (hasMore) {
-      const more = document.createElement("button");
-      more.type = "button";
-      more.className = "note-grid-card-more";
-      more.dataset.action = "expand";
-      more.textContent = `他${moreCount}件`;
-      openBtn.appendChild(more);
-    }
-
     const date = document.createElement("span");
     date.className = "note-grid-card-date";
     date.textContent = formatListDate(note.updated_at);
     openBtn.appendChild(date);
     card.appendChild(openBtn);
+
+    if (hasMore) {
+      // openBtnは<button>なので、その中に<button>をネストすると実機タッチで
+      // 反応しないことがあるため、カード直下の兄弟要素として置く。
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "note-grid-card-more";
+      more.dataset.action = "expand";
+      more.textContent = `他${moreCount}件`;
+      card.appendChild(more);
+    }
 
     const actions = document.createElement("div");
     actions.className = "note-grid-card-actions";
