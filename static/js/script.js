@@ -6233,11 +6233,20 @@ function showNoteChildrenPopover(anchorEl, parentId) {
   const popover = els.noteChildrenPopover;
   popover.hidden = false;
   const rect = anchorEl.getBoundingClientRect();
-  popover.style.left = `${rect.left}px`;
-  popover.style.top = `${rect.bottom + 4}px`;
   const pw = popover.offsetWidth, ph = popover.offsetHeight;
-  if (rect.left + pw > window.innerWidth) popover.style.left = `${window.innerWidth - pw - 6}px`;
-  if (rect.bottom + 4 + ph > window.innerHeight) popover.style.top = `${rect.top - ph - 4}px`;
+  // 画面の狭いモバイルだと「下に置く→はみ出るので上に反転」の両方が入り切らず、
+  // 反転先が画面外（負の座標）になってボタンは反応するのに何も見えない、という
+  // ことがあるため、最終的に必ず画面内に収まるようclampする。
+  let left = rect.left;
+  if (left + pw > window.innerWidth) left = window.innerWidth - pw - 6;
+  left = Math.max(6, left);
+
+  let top = rect.bottom + 4;
+  if (top + ph > window.innerHeight) top = rect.top - ph - 4;
+  top = Math.min(Math.max(6, top), window.innerHeight - ph - 6);
+
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
 }
 
 function hideNoteChildrenPopover() {
