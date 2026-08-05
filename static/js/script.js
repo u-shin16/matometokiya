@@ -6133,6 +6133,30 @@ function renderNoteGrid() {
     const titleRow = document.createElement("span");
     titleRow.className = "note-grid-card-title-row";
 
+    // サイドバーのツリー表示（ピン留め・鍵・チェック済み）と同じ記号・条件で揃える。
+    if (note.pinned) {
+      const pinIcon = document.createElement("span");
+      pinIcon.className = "tree-pin";
+      pinIcon.textContent = "📌";
+      pinIcon.title = "ピン留め中";
+      titleRow.appendChild(pinIcon);
+    }
+    if (note.locked) {
+      const lockedClosed = !state.unlockedNoteIds.has(note.id);
+      const lockIcon = document.createElement("span");
+      lockIcon.className = "tree-lock";
+      lockIcon.textContent = lockedClosed ? "🔒" : "🔓";
+      lockIcon.title = lockedClosed ? "鍵付きメモ" : "このセッションでは開いています";
+      titleRow.appendChild(lockIcon);
+    }
+    if (note.checked) {
+      const checkIcon = document.createElement("span");
+      checkIcon.className = "tree-check";
+      checkIcon.textContent = "✅";
+      checkIcon.title = "チェック済み";
+      titleRow.appendChild(checkIcon);
+    }
+
     const titleLine = document.createElement("span");
     titleLine.className = "note-grid-card-title";
     titleLine.textContent = note.title || "無題";
