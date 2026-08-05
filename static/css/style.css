@@ -2208,6 +2208,22 @@ body.has-large-editor-open .note-head {
   white-space: pre-line;
 }
 
+.note-grid-card.has-more .note-grid-card-preview {
+  /* バッジ分の1行を確保するため、通常より表示行数を1行減らす */
+  -webkit-line-clamp: 3;
+}
+
+.note-grid-card-more {
+  align-self: flex-start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .note-grid-card-date {
   color: var(--muted);
   font-size: 11px;
@@ -2285,6 +2301,10 @@ body.has-large-editor-open .note-head {
 
   .note-grid-card-preview {
     -webkit-line-clamp: 3;
+  }
+
+  .note-grid-card.has-more .note-grid-card-preview {
+    -webkit-line-clamp: 2;
   }
 }
 

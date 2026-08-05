@@ -100,6 +100,10 @@ const els = {
   noteGridOverlay:    document.getElementById("noteGridOverlay"),
   noteGridItems:      document.getElementById("noteGridItems"),
   noteGridClose:      document.getElementById("noteGridClose"),
+  noteChildrenOverlay: document.getElementById("noteChildrenOverlay"),
+  noteChildrenItems:  document.getElementById("noteChildrenItems"),
+  noteChildrenTitle:  document.getElementById("noteChildrenTitle"),
+  noteChildrenClose:  document.getElementById("noteChildrenClose"),
   noteHistoryBtn:     document.getElementById("noteHistoryBtn"),
   noteHistoryOverlay: document.getElementById("noteHistoryOverlay"),
   noteHistoryItems:   document.getElementById("noteHistoryItems"),
@@ -6060,10 +6064,21 @@ async function openRootNoteFromList(noteId) {
 
 // カードのプレビューには親メモ自身の本文ではなく、直下の子メモのタイトル一覧を表示する
 // （親メモは分類用の入れ物なだけのことが多く、本文より子メモの中身が分かる方が探しやすいため）。
-// 子メモが無ければ何も表示しない。
-function getChildNoteTitlesPreview(noteId) {
-  const children = orderTreeChildren(noteId, getNotes().filter(n => n.parent_id === noteId));
-  return children.map(child => child.title || "無題").join("\n");
+function getChildNotesForCard(noteId) {
+  return orderTreeChildren(noteId, getNotes().filter(n => n.parent_id === noteId));
+}
+
+// プレビューは-webkit-line-clampで見た目上4行（モバイルは3行）に収まるが、
+// それより子メモが多い場合は何件省略されているか分からず中途半端に見えるため、
+// 「他◯件」のバッジを出す。バッジを出す分、プレビューの表示行数を1行減らして
+// カードの固定高さ（.note-grid-card）に収まるようにする。
+const NOTE_GRID_PREVIEW_LINES = 4;
+const NOTE_GRID_PREVIEW_LINES_MOBILE = 3;
+
+function getNoteGridPreviewLimit() {
+  return window.matchMedia("(max-width: 520px)").matches
+    ? NOTE_GRID_PREVIEW_LINES_MOBILE
+    : NOTE_GRID_PREVIEW_LINES;
 }
 
 // Safari/Chromeのタブ一覧のように、親メモをカード形式で並べて一目で探せるようにする。
@@ -6084,8 +6099,13 @@ function renderNoteGrid() {
 
   roots.forEach(note => {
     const syncDisplayMapId = getNoteSyncDisplayMapId(note);
+    const children = getChildNotesForCard(note.id);
+    const previewLimit = getNoteGridPreviewLimit();
+    const hasMore = children.length > previewLimit;
+    const moreCount = hasMore ? children.length - (previewLimit - 1) : 0;
+
     const card = document.createElement("div");
-    card.className = `note-grid-card${note.id === activeRootId ? " is-active" : ""}`;
+    card.className = `note-grid-card${note.id === activeRootId ? " is-active" : ""}${hasMore ? " has-more" : ""}`;
     card.dataset.id = note.id;
     if (syncDisplayMapId) applySyncPairStyle(card, syncDisplayMapId);
 
@@ -6112,8 +6132,17 @@ function renderNoteGrid() {
 
     const preview = document.createElement("span");
     preview.className = "note-grid-card-preview";
-    preview.textContent = getChildNoteTitlesPreview(note.id);
+    preview.textContent = children.map(child => child.title || "無題").join("\n");
     openBtn.appendChild(preview);
+
+    if (hasMore) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "note-grid-card-more";
+      more.dataset.action = "expand";
+      more.textContent = `他${moreCount}件`;
+      openBtn.appendChild(more);
+    }
 
     const date = document.createElement("span");
     date.className = "note-grid-card-date";
@@ -6142,6 +6171,7 @@ function renderNoteGrid() {
 function openNoteGridOverlay() {
   if (!els.noteGridOverlay) return;
   closeNoteHistoryOverlay();
+  closeNoteChildrenOverlay();
   closeMemoFormatPanel();
   closeMemoSettingsPanel();
   closeNoteTodoPanel();
@@ -6156,6 +6186,66 @@ function closeNoteGridOverlay() {
   els.noteGridOverlay.hidden = true;
   document.body.classList.remove("has-management-open");
   updateNoteListButton(false);
+}
+
+// 「親メモ一覧」カードのプレビューで省略された子メモを、全件クリックできる形で見るための一覧。
+async function openChildNoteFromOverlay(noteId) {
+  if (!await ensureNoteAccess(noteId)) return;
+  await saveCurrentEditorNow();
+  selectNote(noteId);
+  closeNoteChildrenOverlay();
+}
+
+function renderNoteChildren(parentId) {
+  if (!els.noteChildrenItems) return;
+  els.noteChildrenItems.innerHTML = "";
+  const parent = getNotes().find(n => n.id === parentId);
+  if (els.noteChildrenTitle) {
+    els.noteChildrenTitle.textContent = `「${parent?.title || "無題"}」の子メモ`;
+  }
+  const children = getChildNotesForCard(parentId);
+
+  children.forEach(child => {
+    const card = document.createElement("div");
+    card.className = `note-grid-card${child.id === state.selectedId ? " is-active" : ""}`;
+    card.dataset.id = child.id;
+    card.addEventListener("click", () => openChildNoteFromOverlay(child.id));
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "note-grid-card-open";
+
+    const title = document.createElement("span");
+    title.className = "note-grid-card-title";
+    title.textContent = child.title || "無題";
+    openBtn.appendChild(title);
+
+    const date = document.createElement("span");
+    date.className = "note-grid-card-date";
+    date.textContent = formatListDate(child.updated_at);
+    openBtn.appendChild(date);
+
+    card.appendChild(openBtn);
+    els.noteChildrenItems.appendChild(card);
+  });
+}
+
+function openNoteChildrenOverlay(parentId) {
+  if (!els.noteChildrenOverlay) return;
+  closeNoteGridOverlay();
+  closeNoteHistoryOverlay();
+  closeMemoFormatPanel();
+  closeMemoSettingsPanel();
+  closeNoteTodoPanel();
+  renderNoteChildren(parentId);
+  els.noteChildrenOverlay.hidden = false;
+  document.body.classList.add("has-management-open");
+}
+
+function closeNoteChildrenOverlay() {
+  if (!els.noteChildrenOverlay || els.noteChildrenOverlay.hidden) return;
+  els.noteChildrenOverlay.hidden = true;
+  document.body.classList.remove("has-management-open");
 }
 
 const NOTE_HISTORY_LIMIT = 50;
@@ -6274,6 +6364,7 @@ function renderNoteHistory() {
 function openNoteHistoryOverlay() {
   if (!els.noteHistoryOverlay) return;
   closeNoteGridOverlay();
+  closeNoteChildrenOverlay();
   closeMemoFormatPanel();
   closeMemoSettingsPanel();
   closeNoteTodoPanel();
@@ -6498,6 +6589,7 @@ function openNoteTodoPanel() {
   closeMemoSettingsPanel();
   closeNoteGridOverlay();
   closeNoteHistoryOverlay();
+  closeNoteChildrenOverlay();
   renderTodoList();
   els.noteTodoPanel.hidden = false;
   document.body.classList.add("has-management-open");
@@ -12970,6 +13062,11 @@ document.addEventListener("keydown", e => {
     closeNoteGridOverlay();
     return;
   }
+  if (e.key === "Escape" && !els.noteChildrenOverlay?.hidden) {
+    e.preventDefault();
+    closeNoteChildrenOverlay();
+    return;
+  }
   if (e.key === "Escape" && !els.noteHistoryOverlay?.hidden) {
     e.preventDefault();
     closeNoteHistoryOverlay();
@@ -13079,6 +13176,10 @@ els.noteGridClose?.addEventListener("click", closeNoteGridOverlay);
 els.noteGridOverlay?.addEventListener("click", e => {
   if (e.target === els.noteGridOverlay) closeNoteGridOverlay();
 });
+els.noteChildrenClose?.addEventListener("click", closeNoteChildrenOverlay);
+els.noteChildrenOverlay?.addEventListener("click", e => {
+  if (e.target === els.noteChildrenOverlay) closeNoteChildrenOverlay();
+});
 els.noteHistoryBtn?.addEventListener("click", e => {
   e.stopPropagation();
   if (els.noteHistoryOverlay?.hidden) openNoteHistoryOverlay();
@@ -13100,6 +13201,9 @@ els.noteGridItems?.addEventListener("click", e => {
   if (action === "delete") {
     e.stopPropagation();
     void deleteRootNoteFromGrid(noteId);
+  } else if (action === "expand") {
+    e.stopPropagation();
+    openNoteChildrenOverlay(noteId);
   } else if (action === "open") {
     void openRootNoteFromList(noteId);
   }
