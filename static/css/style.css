@@ -2174,7 +2174,16 @@ body.has-large-editor-open .note-head {
   cursor: pointer;
 }
 
+.note-grid-card-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .note-grid-card-title {
+  min-width: 0;
+  flex: 1 1 auto;
   font-size: 14px;
   font-weight: 800;
   line-height: 1.4;

@@ -6094,17 +6094,21 @@ function renderNoteGrid() {
     openBtn.className = "note-grid-card-open";
     openBtn.dataset.action = "open";
 
+    const titleRow = document.createElement("span");
+    titleRow.className = "note-grid-card-title-row";
+
     const titleLine = document.createElement("span");
     titleLine.className = "note-grid-card-title";
     titleLine.textContent = note.title || "無題";
+    titleRow.appendChild(titleLine);
     if (syncDisplayMapId) {
       const mapTitle = state.mindMapList.find(map => map.id === syncDisplayMapId)?.title;
-      titleLine.appendChild(createSyncPairBadge(
+      titleRow.appendChild(createSyncPairBadge(
         syncDisplayMapId,
         mapTitle ? `マインドマップ「${mapTitle}」と同期中` : "マインドマップと同期中",
       ));
     }
-    openBtn.appendChild(titleLine);
+    openBtn.appendChild(titleRow);
 
     const preview = document.createElement("span");
     preview.className = "note-grid-card-preview";
@@ -9881,18 +9885,22 @@ function renderMindMapList() {
     openBtn.className = "note-grid-card-open";
     openBtn.dataset.action = "switch";
 
+    const titleRow = document.createElement("span");
+    titleRow.className = "note-grid-card-title-row";
+
     const title = document.createElement("span");
     title.className = "note-grid-card-title";
     title.textContent = entry.title || "新しいマインドマップ";
+    titleRow.appendChild(title);
     if (entry.sync_enabled && entry.source_note_id) {
-      title.appendChild(createSyncPairBadge(
+      titleRow.appendChild(createSyncPairBadge(
         entry.id,
         entry.source_note_title
           ? `メモ「${entry.source_note_title}」と同期中`
           : "メモと同期中",
       ));
     }
-    openBtn.appendChild(title);
+    openBtn.appendChild(titleRow);
 
     const date = document.createElement("span");
     date.className = "note-grid-card-date";
