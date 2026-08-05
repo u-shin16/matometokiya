@@ -1674,6 +1674,22 @@ body.has-large-editor-open .note-head {
   opacity: 0.45;
 }
 
+.note-children-popover {
+  /* .note-grid-overlay(z-index:11500)より上に出す必要がある */
+  z-index: 11600;
+  max-width: 260px;
+}
+
+.note-children-popover #noteChildrenPopoverItems {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.note-children-popover .ctx-item {
+  white-space: normal;
+  word-break: break-word;
+}
+
 .ctx-item-synced {
   font-size: 11px;
   opacity: 0.5;

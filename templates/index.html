@@ -122,14 +122,9 @@
       </section>
     </div>
 
-    <div id="noteChildrenOverlay" class="note-grid-overlay" hidden>
-      <section id="noteChildrenDialog" class="note-grid-dialog" role="dialog" aria-modal="true" aria-labelledby="noteChildrenTitle">
-        <div class="templates-head">
-          <p id="noteChildrenTitle" class="templates-title">子メモ一覧</p>
-          <button id="noteChildrenClose" class="templates-close" type="button" title="閉じる" aria-label="子メモ一覧を閉じる">×</button>
-        </div>
-        <div id="noteChildrenItems" class="note-grid-items"></div>
-      </section>
+    <div id="noteChildrenPopover" class="context-menu note-children-popover" hidden>
+      <p id="noteChildrenPopoverTitle" class="ctx-section-label"></p>
+      <div id="noteChildrenPopoverItems"></div>
     </div>
 
     <div id="noteHistoryOverlay" class="note-grid-overlay" hidden>
