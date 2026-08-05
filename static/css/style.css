@@ -2135,6 +2135,7 @@ body.has-large-editor-open .note-head {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  height: 100%;
   min-height: 140px;
   padding: 10px;
   border: 1px solid var(--line);
