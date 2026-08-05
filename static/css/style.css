@@ -4772,6 +4772,13 @@ body.has-mindmap-memo-fullscreen {
     gap: 5px;
   }
 
+  /* iOSはinput/textareaのfont-sizeが16px未満だとフォーカス時に画面を
+     勝手に拡大してしまうため、スマホではAI生成欄などの13pxを16pxに引き上げる。 */
+  .mindmap-field input,
+  .mindmap-field textarea {
+    font-size: 16px;
+  }
+
   .mindmap-node {
     width: 150px;
     min-height: 50px;
