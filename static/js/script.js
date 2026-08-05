@@ -27,6 +27,7 @@ const state = {
   mindMapTemplates:   [],
   todos:              [],
   quickMemos:         [],
+  quickMemoEditingId: null,
   mindMap:         null,
   mindMapList:     [],
   mindMapLoaded:   false,
@@ -106,6 +107,7 @@ const els = {
   quickMemoClose:     document.getElementById("quickMemoClose"),
   quickMemoInput:     document.getElementById("quickMemoInput"),
   quickMemoSaveBtn:   document.getElementById("quickMemoSaveBtn"),
+  quickMemoCancelEditBtn: document.getElementById("quickMemoCancelEditBtn"),
   quickMemoItems:     document.getElementById("quickMemoItems"),
   noteChildrenPopover:      document.getElementById("noteChildrenPopover"),
   noteChildrenPopoverTitle: document.getElementById("noteChildrenPopoverTitle"),
@@ -6298,6 +6300,15 @@ function renderQuickMemoList() {
     const actions = document.createElement("div");
     actions.className = "note-grid-card-actions";
 
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "note-grid-card-icon-btn";
+    editBtn.dataset.action = "edit";
+    editBtn.title = "編集";
+    editBtn.setAttribute("aria-label", "クイックメモを編集");
+    editBtn.textContent = "✏️";
+    actions.appendChild(editBtn);
+
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "note-grid-card-icon-btn danger";
@@ -6315,22 +6326,53 @@ function renderQuickMemoList() {
 async function saveQuickMemo() {
   const text = els.quickMemoInput?.value.trim();
   if (!text) return;
-  const memo = { id: makeId(), text, created_at: nowIso() };
   try {
-    await quickMemosCollection().doc(memo.id).set(memo);
-    state.quickMemos.unshift(memo);
+    if (state.quickMemoEditingId) {
+      const id = state.quickMemoEditingId;
+      await quickMemosCollection().doc(id).update({ text });
+      const memo = state.quickMemos.find(m => m.id === id);
+      if (memo) memo.text = text;
+      cancelQuickMemoEdit();
+    } else {
+      const memo = { id: makeId(), text, created_at: nowIso() };
+      await quickMemosCollection().doc(memo.id).set(memo);
+      state.quickMemos.unshift(memo);
+      els.quickMemoInput.value = "";
+    }
     renderQuickMemoList();
-    els.quickMemoInput.value = "";
     els.quickMemoInput.focus();
   } catch (e) {
     showToast(e.message);
   }
 }
 
+function editQuickMemo(id) {
+  const memo = state.quickMemos.find(m => m.id === id);
+  if (!memo || !els.quickMemoInput) return;
+  state.quickMemoEditingId = id;
+  els.quickMemoInput.value = memo.text;
+  els.quickMemoInput.focus();
+  updateQuickMemoFormMode();
+}
+
+function cancelQuickMemoEdit() {
+  state.quickMemoEditingId = null;
+  if (els.quickMemoInput) els.quickMemoInput.value = "";
+  updateQuickMemoFormMode();
+}
+
+function updateQuickMemoFormMode() {
+  const editing = !!state.quickMemoEditingId;
+  const label = els.quickMemoSaveBtn?.querySelector(".btn-label");
+  if (label) label.textContent = editing ? "更新" : "保存";
+  if (els.quickMemoCancelEditBtn) els.quickMemoCancelEditBtn.hidden = !editing;
+}
+
 async function deleteQuickMemo(id) {
   try {
     await quickMemosCollection().doc(id).delete();
     state.quickMemos = state.quickMemos.filter(memo => memo.id !== id);
+    if (state.quickMemoEditingId === id) cancelQuickMemoEdit();
     renderQuickMemoList();
   } catch (e) {
     showToast(e.message);
@@ -6347,6 +6389,7 @@ async function openQuickMemoOverlay() {
   closeNoteTodoPanel();
   els.quickMemoOverlay.hidden = false;
   document.body.classList.add("has-management-open");
+  cancelQuickMemoEdit();
   renderQuickMemoList();
   await loadQuickMemos();
   renderQuickMemoList();
@@ -6357,6 +6400,7 @@ function closeQuickMemoOverlay() {
   if (!els.quickMemoOverlay || els.quickMemoOverlay.hidden) return;
   els.quickMemoOverlay.hidden = true;
   document.body.classList.remove("has-management-open");
+  cancelQuickMemoEdit();
 }
 
 const NOTE_HISTORY_LIMIT = 50;
@@ -13316,10 +13360,13 @@ els.quickMemoInput?.addEventListener("keydown", e => {
     void saveQuickMemo();
   }
 });
+els.quickMemoCancelEditBtn?.addEventListener("click", cancelQuickMemoEdit);
 els.quickMemoItems?.addEventListener("click", e => {
   const item = e.target.closest(".note-grid-card");
   const action = e.target.closest("[data-action]")?.dataset.action;
-  if (item && action === "delete") void deleteQuickMemo(item.dataset.id);
+  if (!item) return;
+  if (action === "delete") void deleteQuickMemo(item.dataset.id);
+  else if (action === "edit") editQuickMemo(item.dataset.id);
 });
 els.noteHistoryBtn?.addEventListener("click", e => {
   e.stopPropagation();
