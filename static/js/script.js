@@ -6142,12 +6142,14 @@ function openNoteGridOverlay() {
   closeNoteTodoPanel();
   renderNoteGrid();
   els.noteGridOverlay.hidden = false;
+  document.body.classList.add("has-management-open");
   updateNoteListButton(true);
 }
 
 function closeNoteGridOverlay() {
   if (!els.noteGridOverlay || els.noteGridOverlay.hidden) return;
   els.noteGridOverlay.hidden = true;
+  document.body.classList.remove("has-management-open");
   updateNoteListButton(false);
 }
 
@@ -6272,12 +6274,14 @@ function openNoteHistoryOverlay() {
   closeNoteTodoPanel();
   renderNoteHistory();
   els.noteHistoryOverlay.hidden = false;
+  document.body.classList.add("has-management-open");
   els.noteHistoryBtn?.setAttribute("aria-expanded", "true");
 }
 
 function closeNoteHistoryOverlay() {
   if (!els.noteHistoryOverlay || els.noteHistoryOverlay.hidden) return;
   els.noteHistoryOverlay.hidden = true;
+  document.body.classList.remove("has-management-open");
   els.noteHistoryBtn?.setAttribute("aria-expanded", "false");
 }
 
@@ -9933,12 +9937,14 @@ function openMindMapListPanel() {
   if (!els.mindMapGridOverlay) return;
   renderMindMapList();
   els.mindMapGridOverlay.hidden = false;
+  document.body.classList.add("has-management-open");
   els.mindMapListBtn.setAttribute("aria-expanded", "true");
 }
 
 function closeMindMapListPanel() {
   if (!els.mindMapGridOverlay || els.mindMapGridOverlay.hidden) return;
   els.mindMapGridOverlay.hidden = true;
+  document.body.classList.remove("has-management-open");
   els.mindMapListBtn.setAttribute("aria-expanded", "false");
 }
 
@@ -10877,7 +10883,10 @@ function resetMindMapState() {
     setButtonContent(els.mindMapLargeBtn, "⛶", "大画面");
   }
   els.mindMapOverlay.hidden = true;
-  if (els.mindMapGridOverlay) els.mindMapGridOverlay.hidden = true;
+  if (els.mindMapGridOverlay && !els.mindMapGridOverlay.hidden) {
+    els.mindMapGridOverlay.hidden = true;
+    document.body.classList.remove("has-management-open");
+  }
   els.mindMapContextMenu.hidden = true;
   if (els.mindMapLinkContextMenu) els.mindMapLinkContextMenu.hidden = true;
   els.mindMapLinks.innerHTML = "";
