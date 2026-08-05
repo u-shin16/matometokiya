@@ -26,6 +26,7 @@ const state = {
   templatePreviewId:  null,
   mindMapTemplates:   [],
   todos:              [],
+  quickMemos:         [],
   mindMap:         null,
   mindMapList:     [],
   mindMapLoaded:   false,
@@ -101,6 +102,11 @@ const els = {
   noteGridItems:      document.getElementById("noteGridItems"),
   noteGridClose:      document.getElementById("noteGridClose"),
   quickMemoBtn:       document.getElementById("quickMemoBtn"),
+  quickMemoOverlay:   document.getElementById("quickMemoOverlay"),
+  quickMemoClose:     document.getElementById("quickMemoClose"),
+  quickMemoInput:     document.getElementById("quickMemoInput"),
+  quickMemoSaveBtn:   document.getElementById("quickMemoSaveBtn"),
+  quickMemoItems:     document.getElementById("quickMemoItems"),
   noteChildrenPopover:      document.getElementById("noteChildrenPopover"),
   noteChildrenPopoverTitle: document.getElementById("noteChildrenPopoverTitle"),
   noteChildrenPopoverItems: document.getElementById("noteChildrenPopoverItems"),
@@ -1895,12 +1901,6 @@ function updateCollabUI() {
   // 共同作業中はホスト/ゲスト選択と合言葉入力フォームがまぎらわしいので隠す。
   // ルームに入っていない時だけ、新規参加用のフォームを表示する。
   if (els.appCollabForm) els.appCollabForm.hidden = isCollabActive();
-  if (els.quickMemoBtn) {
-    els.quickMemoBtn.disabled = isCollabActive();
-    els.quickMemoBtn.title = isCollabActive()
-      ? "共同作業中は新しい親メモを追加できません"
-      : "親を選ばず新しいメモを作成";
-  }
   if (els.newRootBtn) {
     els.newRootBtn.disabled = isCollabActive();
     els.newRootBtn.title = isCollabActive()
@@ -3492,6 +3492,14 @@ function notesCollection() {
 
 function templatesCollection() {
   return db.collection("users").doc(state.uid).collection("templates");
+}
+
+// クイックメモは既存のnotesツリー（parent_id階層）とは完全に別のデータとして持つ。
+// 「階層を気にせずサッと書き残したい」という要望に対して、通常メモと同じ木構造に
+// 混ぜると結局同じ手間になってしまうため、あえて別コレクションにしている。
+// 共同作業中は個人用として無効化しているため、collabRoomsへの同期は行わない。
+function quickMemosCollection() {
+  return db.collection("users").doc(state.uid).collection("quick_memos");
 }
 
 function mindMapTemplatesCollection() {
@@ -6180,6 +6188,7 @@ function openNoteGridOverlay() {
   if (!els.noteGridOverlay) return;
   closeNoteHistoryOverlay();
   hideNoteChildrenPopover();
+  closeQuickMemoOverlay();
   closeMemoFormatPanel();
   closeMemoSettingsPanel();
   closeNoteTodoPanel();
@@ -6234,6 +6243,111 @@ function showNoteChildrenPopover(anchorEl, parentId) {
 function hideNoteChildrenPopover() {
   if (!els.noteChildrenPopover || els.noteChildrenPopover.hidden) return;
   els.noteChildrenPopover.hidden = true;
+}
+
+// ── クイックメモ ──────────────────────────────────────────────────────────
+// 通常メモの木構造（parent_id）とは無関係の、フラットな書き捨てメモ一覧。
+
+async function loadQuickMemos() {
+  const snap = await quickMemosCollection().get();
+  state.quickMemos = snap.docs
+    .map(d => ({ ...d.data(), id: d.id }))
+    .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+}
+
+function renderQuickMemoList() {
+  if (!els.quickMemoItems) return;
+  els.quickMemoItems.innerHTML = "";
+
+  if (state.quickMemos.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "note-grid-empty";
+    empty.textContent = "クイックメモはまだありません。";
+    els.quickMemoItems.appendChild(empty);
+    return;
+  }
+
+  state.quickMemos.forEach(memo => {
+    const card = document.createElement("div");
+    card.className = "note-grid-card";
+    card.dataset.id = memo.id;
+
+    const body = document.createElement("span");
+    body.className = "note-grid-card-open";
+
+    const preview = document.createElement("span");
+    preview.className = "note-grid-card-preview";
+    preview.textContent = memo.text || "";
+    body.appendChild(preview);
+
+    const date = document.createElement("span");
+    date.className = "note-grid-card-date";
+    date.textContent = formatListDate(memo.created_at);
+    body.appendChild(date);
+    card.appendChild(body);
+
+    const actions = document.createElement("div");
+    actions.className = "note-grid-card-actions";
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "note-grid-card-icon-btn danger";
+    deleteBtn.dataset.action = "delete";
+    deleteBtn.title = "削除";
+    deleteBtn.setAttribute("aria-label", "クイックメモを削除");
+    deleteBtn.textContent = "🗑";
+    actions.appendChild(deleteBtn);
+    card.appendChild(actions);
+
+    els.quickMemoItems.appendChild(card);
+  });
+}
+
+async function saveQuickMemo() {
+  const text = els.quickMemoInput?.value.trim();
+  if (!text) return;
+  const memo = { id: makeId(), text, created_at: nowIso() };
+  try {
+    await quickMemosCollection().doc(memo.id).set(memo);
+    state.quickMemos.unshift(memo);
+    renderQuickMemoList();
+    els.quickMemoInput.value = "";
+    els.quickMemoInput.focus();
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+async function deleteQuickMemo(id) {
+  try {
+    await quickMemosCollection().doc(id).delete();
+    state.quickMemos = state.quickMemos.filter(memo => memo.id !== id);
+    renderQuickMemoList();
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+async function openQuickMemoOverlay() {
+  if (!els.quickMemoOverlay) return;
+  closeNoteGridOverlay();
+  closeNoteHistoryOverlay();
+  hideNoteChildrenPopover();
+  closeMemoFormatPanel();
+  closeMemoSettingsPanel();
+  closeNoteTodoPanel();
+  els.quickMemoOverlay.hidden = false;
+  document.body.classList.add("has-management-open");
+  renderQuickMemoList();
+  await loadQuickMemos();
+  renderQuickMemoList();
+  els.quickMemoInput?.focus();
+}
+
+function closeQuickMemoOverlay() {
+  if (!els.quickMemoOverlay || els.quickMemoOverlay.hidden) return;
+  els.quickMemoOverlay.hidden = true;
+  document.body.classList.remove("has-management-open");
 }
 
 const NOTE_HISTORY_LIMIT = 50;
@@ -6353,6 +6467,7 @@ function openNoteHistoryOverlay() {
   if (!els.noteHistoryOverlay) return;
   closeNoteGridOverlay();
   hideNoteChildrenPopover();
+  closeQuickMemoOverlay();
   closeMemoFormatPanel();
   closeMemoSettingsPanel();
   closeNoteTodoPanel();
@@ -6578,6 +6693,7 @@ function openNoteTodoPanel() {
   closeNoteGridOverlay();
   closeNoteHistoryOverlay();
   hideNoteChildrenPopover();
+  closeQuickMemoOverlay();
   renderTodoList();
   els.noteTodoPanel.hidden = false;
   document.body.classList.add("has-management-open");
@@ -13057,6 +13173,11 @@ document.addEventListener("keydown", e => {
     hideNoteChildrenPopover();
     return;
   }
+  if (e.key === "Escape" && !els.quickMemoOverlay?.hidden) {
+    e.preventDefault();
+    closeQuickMemoOverlay();
+    return;
+  }
   if (e.key === "Escape" && !els.noteGridOverlay?.hidden) {
     e.preventDefault();
     closeNoteGridOverlay();
@@ -13168,12 +13289,28 @@ els.noteListBtn?.addEventListener("click", e => {
   else closeNoteGridOverlay();
 });
 els.noteGridClose?.addEventListener("click", closeNoteGridOverlay);
-els.quickMemoBtn?.addEventListener("click", async () => {
-  await createNote(null);
-  closeNoteGridOverlay();
-});
 els.noteGridOverlay?.addEventListener("click", e => {
   if (e.target === els.noteGridOverlay) closeNoteGridOverlay();
+});
+els.quickMemoBtn?.addEventListener("click", () => {
+  if (els.quickMemoOverlay?.hidden) void openQuickMemoOverlay();
+  else closeQuickMemoOverlay();
+});
+els.quickMemoClose?.addEventListener("click", closeQuickMemoOverlay);
+els.quickMemoOverlay?.addEventListener("click", e => {
+  if (e.target === els.quickMemoOverlay) closeQuickMemoOverlay();
+});
+els.quickMemoSaveBtn?.addEventListener("click", () => void saveQuickMemo());
+els.quickMemoInput?.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    void saveQuickMemo();
+  }
+});
+els.quickMemoItems?.addEventListener("click", e => {
+  const item = e.target.closest(".note-grid-card");
+  const action = e.target.closest("[data-action]")?.dataset.action;
+  if (item && action === "delete") void deleteQuickMemo(item.dataset.id);
 });
 els.noteHistoryBtn?.addEventListener("click", e => {
   e.stopPropagation();

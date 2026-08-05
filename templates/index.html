@@ -116,6 +116,25 @@
       </div>
     </header>
 
+    <div id="quickMemoOverlay" class="note-grid-overlay" hidden>
+      <section id="quickMemoDialog" class="note-grid-dialog" role="dialog" aria-modal="true" aria-labelledby="quickMemoTitle">
+        <div class="templates-head">
+          <p id="quickMemoTitle" class="templates-title">クイックメモ</p>
+          <button id="quickMemoClose" class="templates-close" type="button" title="閉じる" aria-label="クイックメモを閉じる">×</button>
+        </div>
+        <div class="quick-memo-form">
+          <label class="mindmap-field">
+            <span>階層を気にせずサッと書き残せます</span>
+            <textarea id="quickMemoInput" rows="3" placeholder="思いついたことをそのまま書く（Ctrl / ⌘ + Enterで保存）" maxlength="2000"></textarea>
+          </label>
+          <button id="quickMemoSaveBtn" class="icon-btn" type="button">
+            <span class="btn-label">保存</span>
+          </button>
+        </div>
+        <div id="quickMemoItems" class="note-grid-items"></div>
+      </section>
+    </div>
+
     <div id="noteGridOverlay" class="note-grid-overlay" hidden>
       <section id="noteGridDialog" class="note-grid-dialog" role="dialog" aria-modal="true" aria-labelledby="noteGridTitle">
         <div class="templates-head">

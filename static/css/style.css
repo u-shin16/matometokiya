@@ -2139,6 +2139,21 @@ body.has-large-editor-open .note-head {
   animation: dialogIn 0.14s ease-out both;
 }
 
+.quick-memo-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.quick-memo-form .mindmap-field {
+  flex: 1;
+}
+
+.quick-memo-form textarea {
+  resize: vertical;
+}
+
 .note-grid-items {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -2324,6 +2339,11 @@ body.has-large-editor-open .note-head {
 
   .note-grid-card.has-more .note-grid-card-preview {
     -webkit-line-clamp: 2;
+  }
+
+  .quick-memo-form {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 
