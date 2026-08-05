@@ -1674,9 +1674,15 @@ body.has-large-editor-open .note-head {
   opacity: 0.45;
 }
 
-.note-children-popover {
-  /* .note-grid-overlay(z-index:11500)より上に出す必要がある */
+.note-children-popover.context-menu {
+  /* .note-grid-overlay(z-index:11500)より上に出す必要がある。
+     .context-menuには@media (max-width:860px)でz-index:11300を入れる
+     上書きルールがあり、単純な.note-children-popover単体の指定だと
+     モバイル幅ではそちらに負けて裏に隠れてしまうため、詳細度を上げてある。 */
   z-index: 11600;
+}
+
+.note-children-popover {
   max-width: 260px;
 }
 
