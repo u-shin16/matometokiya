@@ -6331,15 +6331,6 @@ function renderQuickMemoList() {
     const actions = document.createElement("div");
     actions.className = "note-grid-card-actions";
 
-    const editBtn = document.createElement("button");
-    editBtn.type = "button";
-    editBtn.className = "note-grid-card-icon-btn";
-    editBtn.dataset.action = "edit";
-    editBtn.title = "編集";
-    editBtn.setAttribute("aria-label", "クイックメモを編集");
-    editBtn.textContent = "✏️";
-    actions.appendChild(editBtn);
-
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "note-grid-card-icon-btn danger";
