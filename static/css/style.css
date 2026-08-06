@@ -2861,6 +2861,19 @@ body.has-management-open {
   text-align: center;
 }
 
+.app-account-claude-code .app-account-action-btn {
+  /* このボックス自体がvar(--primary-soft)背景のため、通常のホバー色だと
+     背景に溶け込んで見えなくなる。ボックス内だけ濃い色にする。 */
+  background: var(--panel);
+}
+
+.app-account-claude-code .app-account-action-btn:hover,
+.app-account-claude-code .app-account-action-btn:focus-visible {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
 .app-account-claude-code-title {
   font-size: 11px;
   font-weight: 700;
