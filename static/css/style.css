@@ -2153,15 +2153,13 @@ body.has-large-editor-open .note-head {
 }
 
 #quickMemoDialog.is-editing {
-  /* 一覧からメモを選んだ時は全画面にして、省略されがちな内容を
-     ちゃんと読み書きできるようにする。 */
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100dvh;
+  /* 一覧からメモを選んだ時は大画面にして、省略されがちな内容を
+     ちゃんと読み書きできるようにする（画面全体を覆う全画面ではなく、
+     背景が見える大きめのダイアログのまま）。 */
+  width: min(1000px, 95vw);
+  height: min(85vh, 85dvh);
   max-height: none;
   min-height: 0;
-  border-radius: 0;
   grid-template-rows: auto 1fr;
 }
 
