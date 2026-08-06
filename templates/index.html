@@ -154,8 +154,12 @@
       <div id="noteChildrenPopoverItems"></div>
     </div>
 
-    <div id="quickMemoMovePopover" class="context-menu note-children-popover" hidden>
-      <p class="ctx-section-label">移動先を選択</p>
+    <div id="quickMemoMovePopover" class="context-menu note-children-popover quick-memo-move-popover" hidden>
+      <div class="quick-memo-move-popover-head">
+        <button id="quickMemoMoveBackBtn" class="quick-memo-move-back-btn" type="button" hidden>◀ 戻る</button>
+        <p id="quickMemoMoveBreadcrumb" class="ctx-section-label">ルート一覧</p>
+      </div>
+      <button id="quickMemoMoveHereBtn" class="ctx-item quick-memo-move-here-btn" type="button">この階層に移動</button>
       <div id="quickMemoMovePopoverItems"></div>
     </div>
 

@@ -112,6 +112,9 @@ const els = {
   quickMemoMoveBtn:       document.getElementById("quickMemoMoveBtn"),
   quickMemoMovePopover:   document.getElementById("quickMemoMovePopover"),
   quickMemoMovePopoverItems: document.getElementById("quickMemoMovePopoverItems"),
+  quickMemoMoveBackBtn:   document.getElementById("quickMemoMoveBackBtn"),
+  quickMemoMoveBreadcrumb: document.getElementById("quickMemoMoveBreadcrumb"),
+  quickMemoMoveHereBtn:   document.getElementById("quickMemoMoveHereBtn"),
   quickMemoItems:     document.getElementById("quickMemoItems"),
   noteChildrenPopover:      document.getElementById("noteChildrenPopover"),
   noteChildrenPopoverTitle: document.getElementById("noteChildrenPopoverTitle"),
@@ -6440,36 +6443,67 @@ function deriveQuickMemoTitle(text) {
 }
 
 // 「ファイルを移動する」ような感覚で、選んだクイックメモを通常の階層メモ
-// （notesツリー）側へ移すための移動先候補一覧。ルート直下か、既存の
-// 親メモ（ルートメモ）のどれかの子として移動できる。
+// （notesツリー）側へ移すための移動先候補。フォルダを潜るのと同じ要領で、
+// メモをクリックするとその子メモ一覧へ潜り、「この階層に移動」でその時点の
+// 階層（ルート、またはどこまでも潜った先の子メモの下）へ移動する。
+let quickMemoMoveStack = []; // [{id, title}, ...]（先頭がルート側、末尾が現在地）
+
+function currentQuickMemoMoveParentId() {
+  return quickMemoMoveStack.length ? quickMemoMoveStack[quickMemoMoveStack.length - 1].id : null;
+}
+
 function showQuickMemoMovePopover() {
   if (!els.quickMemoMovePopover || !els.quickMemoMoveBtn || !state.quickMemoEditingId) return;
   hideNoteChildrenPopover();
+  quickMemoMoveStack = [];
+  renderQuickMemoMovePopover();
+  els.quickMemoMovePopover.hidden = false;
+  positionPopoverNearAnchor(els.quickMemoMovePopover, els.quickMemoMoveBtn);
+}
+
+function renderQuickMemoMovePopover() {
+  if (!els.quickMemoMovePopoverItems) return;
+  const parentId = currentQuickMemoMoveParentId();
+  const current = quickMemoMoveStack[quickMemoMoveStack.length - 1];
+
+  if (els.quickMemoMoveBreadcrumb) {
+    els.quickMemoMoveBreadcrumb.textContent = current ? `「${current.title}」の中` : "ルート一覧";
+  }
+  if (els.quickMemoMoveBackBtn) els.quickMemoMoveBackBtn.hidden = quickMemoMoveStack.length === 0;
+  if (els.quickMemoMoveHereBtn) {
+    els.quickMemoMoveHereBtn.textContent = current ? `「${current.title}」に移動` : "ルート直下へ移動";
+  }
+
   els.quickMemoMovePopoverItems.innerHTML = "";
-
-  const rootOption = document.createElement("button");
-  rootOption.type = "button";
-  rootOption.className = "ctx-item";
-  rootOption.textContent = "ルート直下へ移動";
-  rootOption.addEventListener("click", () => void moveQuickMemoToHierarchy(null));
-  els.quickMemoMovePopoverItems.appendChild(rootOption);
-
-  getRootNotesForList().forEach(note => {
+  const children = parentId ? getChildNotesForCard(parentId) : getRootNotesForList();
+  children.forEach(note => {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "ctx-item";
-    item.textContent = note.title || "無題";
-    item.addEventListener("click", () => void moveQuickMemoToHierarchy(note.id));
+    const hasKids = getChildNotesForCard(note.id).length > 0;
+    item.textContent = (note.title || "無題") + (hasKids ? " ▸" : "");
+    item.addEventListener("click", () => {
+      quickMemoMoveStack.push({ id: note.id, title: note.title || "無題" });
+      renderQuickMemoMovePopover();
+    });
     els.quickMemoMovePopoverItems.appendChild(item);
   });
 
-  els.quickMemoMovePopover.hidden = false;
-  positionPopoverNearAnchor(els.quickMemoMovePopover, els.quickMemoMoveBtn);
+  // 潜るたびに大きさが変わるので、その都度アンカーへ位置を合わせ直す。
+  if (els.quickMemoMovePopover && !els.quickMemoMovePopover.hidden) {
+    positionPopoverNearAnchor(els.quickMemoMovePopover, els.quickMemoMoveBtn);
+  }
+}
+
+function quickMemoMoveGoBack() {
+  quickMemoMoveStack.pop();
+  renderQuickMemoMovePopover();
 }
 
 function hideQuickMemoMovePopover() {
   if (!els.quickMemoMovePopover || els.quickMemoMovePopover.hidden) return;
   els.quickMemoMovePopover.hidden = true;
+  quickMemoMoveStack = [];
 }
 
 async function moveQuickMemoToHierarchy(parentId) {
@@ -13535,6 +13569,12 @@ els.quickMemoMoveBtn?.addEventListener("click", () => {
   if (els.quickMemoMovePopover?.hidden) showQuickMemoMovePopover();
   else hideQuickMemoMovePopover();
 });
+els.quickMemoMoveBackBtn?.addEventListener("click", quickMemoMoveGoBack);
+els.quickMemoMoveHereBtn?.addEventListener("click", () => void moveQuickMemoToHierarchy(currentQuickMemoMoveParentId()));
+// 一覧内クリックで中身を作り直す（潜る操作）ため、クリックされた要素が
+// document到達前にDOMから外れてしまい、「外側クリック」判定に誤って
+// 引っかかってポップアップが閉じてしまう。ここで伝播を止めて防ぐ。
+els.quickMemoMovePopover?.addEventListener("click", e => e.stopPropagation());
 els.quickMemoItems?.addEventListener("click", e => {
   const item = e.target.closest(".note-grid-card");
   const action = e.target.closest("[data-action]")?.dataset.action;

@@ -1696,6 +1696,44 @@ body.has-large-editor-open .note-head {
   word-break: break-word;
 }
 
+.quick-memo-move-popover {
+  min-width: 220px;
+}
+
+.quick-memo-move-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+}
+
+.quick-memo-move-popover-head .ctx-section-label {
+  padding: 6px 0 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-memo-move-back-btn {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.quick-memo-move-here-btn {
+  font-weight: 700;
+  color: var(--primary);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+
 .ctx-item-synced {
   font-size: 11px;
   opacity: 0.5;
