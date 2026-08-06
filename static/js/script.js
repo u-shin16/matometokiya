@@ -3190,7 +3190,21 @@ function showSyncedDeleteConfirm(message, currentOnlyLabel) {
 function resolveConfirm(result) {
   els.confirmOverlay.classList.remove("open");
   document.getElementById("confirmExtra").hidden = true;
+  document.getElementById("confirmCancel").textContent = "キャンセル";
   if (_confirmResolve) { const r = _confirmResolve; _confirmResolve = null; r(result); }
+}
+
+function showQuickMemoCloseConfirm() {
+  document.getElementById("confirmMsg").textContent = "保存されていない変更があります。";
+  document.getElementById("confirmCancel").textContent = "編集に戻る";
+  document.getElementById("confirmOk").textContent = "保存して閉じる";
+  const extra = document.getElementById("confirmExtra");
+  extra.textContent = "保存せず閉じる";
+  extra.hidden = false;
+  _confirmExtraResult = "discard";
+  els.confirmOverlay.classList.add("open");
+  requestAnimationFrame(() => document.getElementById("confirmOk").focus());
+  return new Promise(r => { _confirmResolve = r; });
 }
 
 (function initConfirmModal() {
@@ -6430,6 +6444,22 @@ function closeQuickMemoOverlay() {
   els.quickMemoOverlay.hidden = true;
   document.body.classList.remove("has-management-open");
   cancelQuickMemoEdit();
+}
+
+// 選択中のメモを編集していて未保存の変更がある状態で閉じようとした時だけ、
+// 保存して閉じる／保存せず閉じる／編集に戻る、を選べるようにする。
+async function attemptCloseQuickMemoOverlay() {
+  if (state.quickMemoEditingId) {
+    const memo = state.quickMemos.find(m => m.id === state.quickMemoEditingId);
+    const hasUnsavedChanges = memo && els.quickMemoInput && els.quickMemoInput.value !== memo.text;
+    if (hasUnsavedChanges) {
+      const result = await showQuickMemoCloseConfirm();
+      if (result === false) return; // 編集に戻る
+      if (result === true) await saveQuickMemo(); // 保存して閉じる
+      // result === "discard" の場合は何もせず、保存せずそのまま閉じる
+    }
+  }
+  closeQuickMemoOverlay();
 }
 
 const NOTE_HISTORY_LIMIT = 50;
@@ -13269,7 +13299,7 @@ document.addEventListener("keydown", e => {
   }
   if (e.key === "Escape" && !els.quickMemoOverlay?.hidden) {
     e.preventDefault();
-    closeQuickMemoOverlay();
+    void attemptCloseQuickMemoOverlay();
     return;
   }
   if (e.key === "Escape" && !els.noteGridOverlay?.hidden) {
@@ -13390,9 +13420,9 @@ els.quickMemoBtn?.addEventListener("click", () => {
   if (els.quickMemoOverlay?.hidden) void openQuickMemoOverlay();
   else closeQuickMemoOverlay();
 });
-els.quickMemoClose?.addEventListener("click", closeQuickMemoOverlay);
+els.quickMemoClose?.addEventListener("click", () => void attemptCloseQuickMemoOverlay());
 els.quickMemoOverlay?.addEventListener("click", e => {
-  if (e.target === els.quickMemoOverlay) closeQuickMemoOverlay();
+  if (e.target === els.quickMemoOverlay) void attemptCloseQuickMemoOverlay();
 });
 els.quickMemoSaveBtn?.addEventListener("click", () => void saveQuickMemo());
 els.quickMemoInput?.addEventListener("keydown", e => {
