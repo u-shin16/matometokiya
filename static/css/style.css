@@ -2167,6 +2167,12 @@ body.has-large-editor-open .note-head {
   display: none;
 }
 
+#quickMemoDialog.is-editing #quickMemoClose {
+  /* 大画面編集時は「キャンセル」「保存」ボタンで操作が完結するため、
+     未保存確認を挟む×ボタンは紛らわしいので出さない。 */
+  display: none;
+}
+
 #quickMemoDialog.is-editing .quick-memo-form {
   flex: 1;
   min-height: 0;
