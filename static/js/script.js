@@ -13411,7 +13411,10 @@ els.quickMemoItems?.addEventListener("click", e => {
   const action = e.target.closest("[data-action]")?.dataset.action;
   if (!item) return;
   if (action === "delete") void deleteQuickMemo(item.dataset.id);
-  else if (action === "edit") editQuickMemo(item.dataset.id);
+  // カード本文をクリックした場合もdata-actionが付かないため、編集ボタンと同じ
+  // 扱いにする。プレビューは省略表示なので、これで全文を入力欄に読み込んで
+  // 見られるようにする（そのまま何もせず閉じても内容が消えるわけではない）。
+  else editQuickMemo(item.dataset.id);
 });
 els.noteHistoryBtn?.addEventListener("click", e => {
   e.stopPropagation();
