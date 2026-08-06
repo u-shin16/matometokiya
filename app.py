@@ -834,32 +834,18 @@ def _revoke_user_tokens(uid: str) -> None:
 
 
 def start_claude_connect(uid: str) -> dict:
-    """このユーザー用に新しいAPIトークンを発行し、短い引き換えコードを発行する。
-    既存のトークンがあれば、この時点で失効させる（1ユーザー1組のトークンにする）。"""
+    """短い引き換えコードだけを発行する。実際のAPIトークンの発行・登録や
+    「連携済み」への反映は、コードが実際に引き換えられた時点
+    （exchange_pairing_code）まで行わない。コードを生成しただけの時点で
+    connected扱いにしてしまうと、Claude Code側にまだコードを渡していない
+    のに画面上は「連携済み」と表示され、利用者が誤って古いトークンのまま
+    連携完了だと勘違いする（実際には未引き換え＝旧トークンは失効済み）
+    という不具合が起きるため。"""
     db = get_firestore_client()
-
-    _revoke_user_tokens(uid)
 
     read_token = secrets.token_urlsafe(32)
     write_token = secrets.token_urlsafe(32)
-    read_hash = hashlib.sha256(read_token.encode("utf-8")).hexdigest()
-    write_hash = hashlib.sha256(write_token.encode("utf-8")).hexdigest()
     now = datetime.now(timezone.utc)
-
-    db.collection("api_tokens").document(read_hash).set(
-        {"uid": uid, "type": _API_TOKEN_TYPE_READ, "created_at": now}
-    )
-    db.collection("api_tokens").document(write_hash).set(
-        {"uid": uid, "type": _API_TOKEN_TYPE_WRITE, "created_at": now}
-    )
-    db.collection("users").document(uid).set(
-        {
-            "claude_connected_at": now,
-            "claude_read_token_hash": read_hash,
-            "claude_write_token_hash": write_hash,
-        },
-        merge=True,
-    )
 
     code = _generate_pairing_code()
     for _ in range(5):
@@ -882,7 +868,8 @@ def start_claude_connect(uid: str) -> dict:
 
 
 def exchange_pairing_code(code: str) -> dict | None:
-    """コードを使い捨てで引き換え、対応するトークンを返す。無効・期限切れならNoneを返す。"""
+    """コードを使い捨てで引き換え、実際にAPIトークンを発行・登録してから返す。
+    無効・期限切れならNoneを返す。"""
     db = get_firestore_client()
     doc_ref = db.collection("pairing_codes").document(code)
     doc = doc_ref.get()
@@ -900,10 +887,35 @@ def exchange_pairing_code(code: str) -> dict | None:
     if expires_at < datetime.now(timezone.utc):
         return None
 
+    uid = data.get("uid")
     read_token = data.get("read_token")
     write_token = data.get("write_token")
-    if not read_token or not write_token:
+    if not uid or not read_token or not write_token:
         return None
+
+    # このコードが実際に引き換えられた今の時点で初めて、トークンを有効化し
+    # 「連携済み」にする。古いトークンがあればここで失効させる
+    # （1ユーザー1組のトークンにする）。
+    _revoke_user_tokens(uid)
+
+    read_hash = hashlib.sha256(read_token.encode("utf-8")).hexdigest()
+    write_hash = hashlib.sha256(write_token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+
+    db.collection("api_tokens").document(read_hash).set(
+        {"uid": uid, "type": _API_TOKEN_TYPE_READ, "created_at": now}
+    )
+    db.collection("api_tokens").document(write_hash).set(
+        {"uid": uid, "type": _API_TOKEN_TYPE_WRITE, "created_at": now}
+    )
+    db.collection("users").document(uid).set(
+        {
+            "claude_connected_at": now,
+            "claude_read_token_hash": read_hash,
+            "claude_write_token_hash": write_hash,
+        },
+        merge=True,
+    )
 
     return {"read_token": read_token, "write_token": write_token}
 

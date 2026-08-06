@@ -381,7 +381,11 @@ class ClaudeConnectLogicTests(unittest.TestCase):
         self._patcher.start()
         self.addCleanup(self._patcher.stop)
 
-    def test_start_creates_token_hashes_and_pairing_code(self):
+    def test_start_only_creates_pairing_code_not_yet_connected(self):
+        # コードを発行しただけの時点では、まだ誰も引き換えていないので
+        # 「連携済み」にはならない（トークンも未登録）。これを保証しないと、
+        # 発行しただけで画面が「連携済み」と表示され、実際には古いトークンの
+        # ままなのに利用者が勘違いする不具合が再発する。
         result = app_module.start_claude_connect("uid-1")
 
         self.assertEqual(len(result["code"]), app_module._CLAUDE_PAIRING_CODE_LENGTH)
@@ -393,9 +397,19 @@ class ClaudeConnectLogicTests(unittest.TestCase):
         self.assertIn("read_token", pairing)
         self.assertIn("write_token", pairing)
 
+        self.assertNotIn("users", self.fake_db._collections)
+        self.assertNotIn("api_tokens", self.fake_db._collections)
+
+    def test_exchange_marks_connected_and_creates_token_hashes(self):
+        result = app_module.start_claude_connect("uid-1")
+        exchanged = app_module.exchange_pairing_code(result["code"])
+        self.assertIsNotNone(exchanged)
+
         user_doc = self.fake_db._collections["users"]["uid-1"]
+        self.assertIn("claude_connected_at", user_doc)
         self.assertIn("claude_read_token_hash", user_doc)
         self.assertIn("claude_write_token_hash", user_doc)
+        self.assertEqual(len(self.fake_db._collections["api_tokens"]), 2)
 
     def test_exchange_returns_tokens_and_is_single_use(self):
         result = app_module.start_claude_connect("uid-1")
@@ -436,7 +450,8 @@ class ClaudeConnectLogicTests(unittest.TestCase):
         )
 
     def test_revoke_deletes_token_hashes(self):
-        app_module.start_claude_connect("uid-1")
+        result = app_module.start_claude_connect("uid-1")
+        app_module.exchange_pairing_code(result["code"])
         self.assertEqual(len(self.fake_db._collections["api_tokens"]), 2)
 
         app_module._revoke_user_tokens("uid-1")
