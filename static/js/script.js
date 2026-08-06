@@ -109,6 +109,9 @@ const els = {
   quickMemoInput:     document.getElementById("quickMemoInput"),
   quickMemoSaveBtn:   document.getElementById("quickMemoSaveBtn"),
   quickMemoCancelEditBtn: document.getElementById("quickMemoCancelEditBtn"),
+  quickMemoMoveBtn:       document.getElementById("quickMemoMoveBtn"),
+  quickMemoMovePopover:   document.getElementById("quickMemoMovePopover"),
+  quickMemoMovePopoverItems: document.getElementById("quickMemoMovePopoverItems"),
   quickMemoItems:     document.getElementById("quickMemoItems"),
   noteChildrenPopover:      document.getElementById("noteChildrenPopover"),
   noteChildrenPopoverTitle: document.getElementById("noteChildrenPopoverTitle"),
@@ -6263,6 +6266,26 @@ async function openChildNoteFromPopover(noteId) {
   hideNoteChildrenPopover();
 }
 
+// 小さいポップアップ（.context-menu系）をアンカー要素の近くに、必ず画面内に
+// 収まるよう配置する共通処理。狭いモバイル画面だと「下に置く→はみ出るので
+// 上に反転」の両方が入り切らず、反転先が画面外（負の座標）になって
+// ボタンは反応するのに何も見えない、ということがあるため最後にclampする。
+function positionPopoverNearAnchor(popover, anchorEl) {
+  const rect = anchorEl.getBoundingClientRect();
+  const pw = popover.offsetWidth, ph = popover.offsetHeight;
+
+  let left = rect.left;
+  if (left + pw > window.innerWidth) left = window.innerWidth - pw - 6;
+  left = Math.max(6, left);
+
+  let top = rect.bottom + 4;
+  if (top + ph > window.innerHeight) top = rect.top - ph - 4;
+  top = Math.min(Math.max(6, top), window.innerHeight - ph - 6);
+
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+}
+
 function showNoteChildrenPopover(anchorEl, parentId) {
   if (!els.noteChildrenPopover || !anchorEl) return;
   const parent = getNotes().find(n => n.id === parentId);
@@ -6278,23 +6301,8 @@ function showNoteChildrenPopover(anchorEl, parentId) {
     els.noteChildrenPopoverItems.appendChild(item);
   });
 
-  const popover = els.noteChildrenPopover;
-  popover.hidden = false;
-  const rect = anchorEl.getBoundingClientRect();
-  const pw = popover.offsetWidth, ph = popover.offsetHeight;
-  // 画面の狭いモバイルだと「下に置く→はみ出るので上に反転」の両方が入り切らず、
-  // 反転先が画面外（負の座標）になってボタンは反応するのに何も見えない、という
-  // ことがあるため、最終的に必ず画面内に収まるようclampする。
-  let left = rect.left;
-  if (left + pw > window.innerWidth) left = window.innerWidth - pw - 6;
-  left = Math.max(6, left);
-
-  let top = rect.bottom + 4;
-  if (top + ph > window.innerHeight) top = rect.top - ph - 4;
-  top = Math.min(Math.max(6, top), window.innerHeight - ph - 6);
-
-  popover.style.left = `${left}px`;
-  popover.style.top = `${top}px`;
+  els.noteChildrenPopover.hidden = false;
+  positionPopoverNearAnchor(els.noteChildrenPopover, anchorEl);
 }
 
 function hideNoteChildrenPopover() {
@@ -6403,6 +6411,10 @@ function updateQuickMemoFormMode() {
   const label = els.quickMemoSaveBtn?.querySelector(".btn-label");
   if (label) label.textContent = editing ? "更新" : "保存";
   if (els.quickMemoCancelEditBtn) els.quickMemoCancelEditBtn.hidden = !editing;
+  // 「移動する」は保存済みの既存メモを選んでいる時だけ意味があるので、
+  // 新規作成中は出さない。
+  if (els.quickMemoMoveBtn) els.quickMemoMoveBtn.hidden = !editing;
+  if (!editing) hideQuickMemoMovePopover();
   // 一覧からメモを選んだ時は、プレビューでは省略されがちな内容を
   // ちゃんと読み書きできるよう全画面表示にする。新規作成中はそのまま
   // 一覧と並べて見せておく。
@@ -6417,6 +6429,85 @@ async function deleteQuickMemo(id) {
     state.quickMemos = state.quickMemos.filter(memo => memo.id !== id);
     if (state.quickMemoEditingId === id) cancelQuickMemoEdit();
     renderQuickMemoList();
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+function deriveQuickMemoTitle(text) {
+  const firstLine = String(text || "").split("\n").map(l => l.trim()).find(l => l) || "";
+  return firstLine.slice(0, 40) || "無題";
+}
+
+// 「ファイルを移動する」ような感覚で、選んだクイックメモを通常の階層メモ
+// （notesツリー）側へ移すための移動先候補一覧。ルート直下か、既存の
+// 親メモ（ルートメモ）のどれかの子として移動できる。
+function showQuickMemoMovePopover() {
+  if (!els.quickMemoMovePopover || !els.quickMemoMoveBtn || !state.quickMemoEditingId) return;
+  hideNoteChildrenPopover();
+  els.quickMemoMovePopoverItems.innerHTML = "";
+
+  const rootOption = document.createElement("button");
+  rootOption.type = "button";
+  rootOption.className = "ctx-item";
+  rootOption.textContent = "ルート直下へ移動";
+  rootOption.addEventListener("click", () => void moveQuickMemoToHierarchy(null));
+  els.quickMemoMovePopoverItems.appendChild(rootOption);
+
+  getRootNotesForList().forEach(note => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "ctx-item";
+    item.textContent = note.title || "無題";
+    item.addEventListener("click", () => void moveQuickMemoToHierarchy(note.id));
+    els.quickMemoMovePopoverItems.appendChild(item);
+  });
+
+  els.quickMemoMovePopover.hidden = false;
+  positionPopoverNearAnchor(els.quickMemoMovePopover, els.quickMemoMoveBtn);
+}
+
+function hideQuickMemoMovePopover() {
+  if (!els.quickMemoMovePopover || els.quickMemoMovePopover.hidden) return;
+  els.quickMemoMovePopover.hidden = true;
+}
+
+async function moveQuickMemoToHierarchy(parentId) {
+  const memoId = state.quickMemoEditingId;
+  const memo = state.quickMemos.find(m => m.id === memoId);
+  if (!memo) return;
+  hideQuickMemoMovePopover();
+  if (blockIfGuestReadOnly()) return;
+  if (parentId === null && blockNewRootMemoInCollab()) return;
+  if (parentId && !await ensureNoteAccess(parentId)) return;
+
+  try {
+    const ts = nowIso();
+    const note = {
+      id:          makeId(),
+      parent_id:   parentId,
+      title:       deriveQuickMemoTitle(memo.text),
+      content:     contentToHtml(memo.text),
+      created_at:  ts,
+      updated_at:  ts,
+      source_file: null,
+      media:       [],
+      pinned:      false,
+      checked:     false,
+      checked_at:  null,
+      locked:      false,
+      order:       nextOrderForNewNote(parentId),
+    };
+    await notesCollection().doc(note.id).set(note);
+    appendNotesIfMissing([note]);
+    if (parentId) state.expanded.add(parentId);
+
+    await quickMemosCollection().doc(memoId).delete();
+    state.quickMemos = state.quickMemos.filter(m => m.id !== memoId);
+
+    closeQuickMemoOverlay();
+    selectNote(note.id);
+    showToast("階層メモへ移動しました。");
   } catch (e) {
     showToast(e.message);
   }
@@ -13191,6 +13282,9 @@ document.addEventListener("click", e => {
   if (!els.noteChildrenPopover?.hidden && !els.noteChildrenPopover.contains(e.target) && !e.target.closest(".note-grid-card-more")) {
     hideNoteChildrenPopover();
   }
+  if (!els.quickMemoMovePopover?.hidden && !els.quickMemoMovePopover.contains(e.target) && e.target !== els.quickMemoMoveBtn) {
+    hideQuickMemoMovePopover();
+  }
   const clickedMemoFormat = Boolean(
     els.memoFormatBar?.contains(e.target) ||
     els.memoFormatToggleBtn?.contains(e.target)
@@ -13295,6 +13389,11 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && !els.noteChildrenPopover?.hidden) {
     e.preventDefault();
     hideNoteChildrenPopover();
+    return;
+  }
+  if (e.key === "Escape" && !els.quickMemoMovePopover?.hidden) {
+    e.preventDefault();
+    hideQuickMemoMovePopover();
     return;
   }
   if (e.key === "Escape" && !els.quickMemoOverlay?.hidden) {
@@ -13432,6 +13531,10 @@ els.quickMemoInput?.addEventListener("keydown", e => {
   }
 });
 els.quickMemoCancelEditBtn?.addEventListener("click", cancelQuickMemoEdit);
+els.quickMemoMoveBtn?.addEventListener("click", () => {
+  if (els.quickMemoMovePopover?.hidden) showQuickMemoMovePopover();
+  else hideQuickMemoMovePopover();
+});
 els.quickMemoItems?.addEventListener("click", e => {
   const item = e.target.closest(".note-grid-card");
   const action = e.target.closest("[data-action]")?.dataset.action;

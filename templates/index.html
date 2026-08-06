@@ -128,6 +128,7 @@
             <textarea id="quickMemoInput" rows="7" placeholder="思いついたことをそのまま書く（Ctrl / ⌘ + Enterで保存）" maxlength="2000"></textarea>
           </label>
           <div class="quick-memo-form-actions">
+            <button id="quickMemoMoveBtn" class="templates-close" type="button" hidden>移動する</button>
             <button id="quickMemoCancelEditBtn" class="templates-close" type="button" hidden>キャンセル</button>
             <button id="quickMemoSaveBtn" class="quick-memo-save-btn" type="button">
               <span class="btn-label">保存</span>
@@ -151,6 +152,11 @@
     <div id="noteChildrenPopover" class="context-menu note-children-popover" hidden>
       <p id="noteChildrenPopoverTitle" class="ctx-section-label"></p>
       <div id="noteChildrenPopoverItems"></div>
+    </div>
+
+    <div id="quickMemoMovePopover" class="context-menu note-children-popover" hidden>
+      <p class="ctx-section-label">移動先を選択</p>
+      <div id="quickMemoMovePopoverItems"></div>
     </div>
 
     <div id="noteHistoryOverlay" class="note-grid-overlay" hidden>
