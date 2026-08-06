@@ -2166,6 +2166,7 @@ body.has-large-editor-open .note-head {
 
 .quick-memo-form textarea {
   resize: vertical;
+  min-height: 160px;
 }
 
 .quick-memo-save-btn {
