@@ -293,6 +293,7 @@ const els = {
   claudeConnectCode:     document.getElementById("claudeConnectCode"),
   claudeConnectMessage:  document.getElementById("claudeConnectMessage"),
   claudeConnectCopyBtn:  document.getElementById("claudeConnectCopyBtn"),
+  claudeConnectRefreshBtn: document.getElementById("claudeConnectRefreshBtn"),
   claudeConnectStartBtn: document.getElementById("claudeConnectStartBtn"),
   claudeConnectRevokeBtn: document.getElementById("claudeConnectRevokeBtn"),
   appCreatorInfoBtn: document.getElementById("appCreatorInfoBtn"),
@@ -14140,6 +14141,7 @@ if (auth) {
   els.claudeConnectStartBtn?.addEventListener("click", handleClaudeConnectStart);
   els.claudeConnectRevokeBtn?.addEventListener("click", handleClaudeConnectRevoke);
   els.claudeConnectCopyBtn?.addEventListener("click", handleClaudeConnectCopy);
+  els.claudeConnectRefreshBtn?.addEventListener("click", () => void refreshClaudeConnectStatus());
   els.authVerifyResendBtn.addEventListener("click", handleResendVerification);
   els.authVerifyRefreshBtn.addEventListener("click", handleRefreshStatus);
   els.authVerifyLogoutBtn.addEventListener("click", handleLogout);
