@@ -791,17 +791,31 @@ def fetch_incomplete_todos_for_uid(uid: str, project: str | None = None) -> list
 
 
 def mark_todo_done_for_uid(uid: str, todo_id: str) -> bool:
-    """指定Todoをdone=Trueにする。対象が存在しなければFalseを返す。"""
+    """指定Todoをdone=Trueにする。対象が存在しなければFalseを返す。
+    このTodoの元になっているメモ自体にも、アプリの画面上でチェック済みだと
+    分かるようchecked/checked_atを立てる（Todo側だけdoneにしても、メモの
+    チェックマークは連動しておらず利用者から見て完了したように見えない
+    ため）。"""
+    db = get_firestore_client()
     todo_ref = (
-        get_firestore_client()
-        .collection("users")
+        db.collection("users")
         .document(uid)
         .collection("todos")
         .document(todo_id)
     )
-    if not todo_ref.get().exists:
+    todo_doc = todo_ref.get()
+    if not todo_doc.exists:
         return False
     todo_ref.update({"done": True})
+
+    note_id = (todo_doc.to_dict() or {}).get("note_id")
+    if note_id:
+        note_ref = db.collection("users").document(uid).collection("notes").document(str(note_id))
+        if note_ref.get().exists:
+            note_ref.update({
+                "checked": True,
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+            })
     return True
 
 

@@ -22,7 +22,8 @@ class _FakeSnapshot:
 
 
 class _FakeDocRef:
-    def __init__(self, store, key):
+    def __init__(self, client, store, key):
+        self._client = client
         self._store = store
         self._key = key
 
@@ -41,13 +42,19 @@ class _FakeDocRef:
     def delete(self):
         self._store.pop(self._key, None)
 
+    def collection(self, name):
+        # サブコレクションも、名前だけで区別するフラットな入れ物にする
+        # （既存のusers/api_tokens/pairing_codesと同じ簡略化）。
+        return self._client.collection(name)
+
 
 class _FakeCollection:
-    def __init__(self, store):
+    def __init__(self, client, store):
+        self._client = client
         self._store = store
 
     def document(self, key):
-        return _FakeDocRef(self._store, key)
+        return _FakeDocRef(self._client, self._store, key)
 
 
 class FakeFirestoreClient:
@@ -57,7 +64,7 @@ class FakeFirestoreClient:
         self._collections: dict[str, dict] = {}
 
     def collection(self, name):
-        return _FakeCollection(self._collections.setdefault(name, {}))
+        return _FakeCollection(self, self._collections.setdefault(name, {}))
 
 
 class TodoPayloadTests(unittest.TestCase):
@@ -457,6 +464,50 @@ class ClaudeConnectLogicTests(unittest.TestCase):
         app_module._revoke_user_tokens("uid-1")
 
         self.assertEqual(len(self.fake_db._collections["api_tokens"]), 0)
+
+
+class MarkTodoDoneLogicTests(unittest.TestCase):
+    """mark_todo_done_for_uidが、Todo自体だけでなく元メモにもチェックを
+    付けることを、フェイクのFirestoreで検証する。"""
+
+    def setUp(self):
+        self.fake_db = FakeFirestoreClient()
+        self._patcher = patch.object(
+            app_module, "get_firestore_client", return_value=self.fake_db
+        )
+        self._patcher.start()
+        self.addCleanup(self._patcher.stop)
+
+        self.fake_db.collection("users").document("uid-1").collection(
+            "todos"
+        ).document("todo-1").set({"note_id": "note-1", "done": False})
+        self.fake_db.collection("users").document("uid-1").collection(
+            "notes"
+        ).document("note-1").set({"title": "対象メモ", "checked": False})
+
+    def test_marks_note_checked_when_todo_has_note_id(self):
+        found = app_module.mark_todo_done_for_uid("uid-1", "todo-1")
+        self.assertTrue(found)
+
+        todo = self.fake_db._collections["todos"]["todo-1"]
+        self.assertTrue(todo["done"])
+
+        note = self.fake_db._collections["notes"]["note-1"]
+        self.assertTrue(note["checked"])
+        self.assertIsNotNone(note.get("checked_at"))
+
+    def test_returns_false_for_unknown_todo(self):
+        found = app_module.mark_todo_done_for_uid("uid-1", "no-such-todo")
+        self.assertFalse(found)
+
+    def test_does_not_error_when_note_id_missing_or_note_deleted(self):
+        self.fake_db.collection("users").document("uid-1").collection(
+            "todos"
+        ).document("todo-2").set({"done": False})  # note_idなし
+
+        found = app_module.mark_todo_done_for_uid("uid-1", "todo-2")
+        self.assertTrue(found)
+        self.assertTrue(self.fake_db._collections["todos"]["todo-2"]["done"])
 
 
 class ClaudeConnectApiTests(unittest.TestCase):
