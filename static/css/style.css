@@ -2861,16 +2861,35 @@ body.has-management-open {
   text-align: center;
 }
 
+.app-account-claude-code-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+}
+
 .app-account-claude-code-label {
   font-size: 11px;
   color: var(--muted);
+  margin-top: 10px;
 }
 
 .app-account-claude-code-value {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   margin: 4px 0;
+}
+
+.app-account-claude-code-message {
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: normal;
+  color: var(--text);
+  margin: 4px 0;
+  word-break: break-word;
 }
 
 .app-account-claude-help {

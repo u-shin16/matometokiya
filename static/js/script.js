@@ -290,6 +290,7 @@ const els = {
   appAccountDeleteBtn: document.getElementById("appAccountDeleteBtn"),
   claudeConnectStatus:   document.getElementById("claudeConnectStatus"),
   claudeConnectCodeBox:  document.getElementById("claudeConnectCodeBox"),
+  claudeConnectCode:     document.getElementById("claudeConnectCode"),
   claudeConnectMessage:  document.getElementById("claudeConnectMessage"),
   claudeConnectCopyBtn:  document.getElementById("claudeConnectCopyBtn"),
   claudeConnectStartBtn: document.getElementById("claudeConnectStartBtn"),
@@ -1189,6 +1190,7 @@ async function handleClaudeConnectStart() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "連携の開始に失敗しました。");
+    if (els.claudeConnectCode) els.claudeConnectCode.textContent = data.code;
     els.claudeConnectMessage.textContent = buildClaudeConnectMessage(data.code);
     els.claudeConnectCodeBox.hidden = false;
     els.claudeConnectStatus.textContent = "コードを発行しました。10分以内にClaude Codeへ貼り付けてください。";
