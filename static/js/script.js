@@ -6400,6 +6400,8 @@ function updateQuickMemoFormMode() {
 }
 
 async function deleteQuickMemo(id) {
+  const ok = await showConfirm("このクイックメモを削除しますか？");
+  if (!ok) return;
   try {
     await quickMemosCollection().doc(id).delete();
     state.quickMemos = state.quickMemos.filter(memo => memo.id !== id);
