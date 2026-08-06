@@ -104,6 +104,7 @@ const els = {
   noteGridClose:      document.getElementById("noteGridClose"),
   quickMemoBtn:       document.getElementById("quickMemoBtn"),
   quickMemoOverlay:   document.getElementById("quickMemoOverlay"),
+  quickMemoDialog:    document.getElementById("quickMemoDialog"),
   quickMemoClose:     document.getElementById("quickMemoClose"),
   quickMemoInput:     document.getElementById("quickMemoInput"),
   quickMemoSaveBtn:   document.getElementById("quickMemoSaveBtn"),
@@ -6388,6 +6389,10 @@ function updateQuickMemoFormMode() {
   const label = els.quickMemoSaveBtn?.querySelector(".btn-label");
   if (label) label.textContent = editing ? "更新" : "保存";
   if (els.quickMemoCancelEditBtn) els.quickMemoCancelEditBtn.hidden = !editing;
+  // 一覧からメモを選んだ時は、プレビューでは省略されがちな内容を
+  // ちゃんと読み書きできるよう全画面表示にする。新規作成中はそのまま
+  // 一覧と並べて見せておく。
+  els.quickMemoDialog?.classList.toggle("is-editing", editing);
 }
 
 async function deleteQuickMemo(id) {

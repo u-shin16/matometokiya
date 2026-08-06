@@ -2152,6 +2152,40 @@ body.has-large-editor-open .note-head {
   grid-template-rows: auto auto 1fr;
 }
 
+#quickMemoDialog.is-editing {
+  /* 一覧からメモを選んだ時は全画面にして、省略されがちな内容を
+     ちゃんと読み書きできるようにする。 */
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-height: none;
+  min-height: 0;
+  border-radius: 0;
+  grid-template-rows: auto 1fr;
+}
+
+#quickMemoDialog.is-editing #quickMemoItems {
+  display: none;
+}
+
+#quickMemoDialog.is-editing .quick-memo-form {
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+  align-items: stretch;
+}
+
+#quickMemoDialog.is-editing .quick-memo-form .mindmap-field {
+  min-height: 0;
+  grid-template-rows: auto 1fr;
+}
+
+#quickMemoDialog.is-editing .quick-memo-form textarea {
+  height: 100%;
+  min-height: 0;
+}
+
 .quick-memo-form {
   display: flex;
   align-items: flex-end;
