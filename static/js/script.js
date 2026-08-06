@@ -1158,7 +1158,11 @@ function applyClaudeConnectState(connected) {
 
 function setClaudeConnectConnected(connected) {
   applyClaudeConnectState(connected);
-  if (els.claudeConnectCodeBox) els.claudeConnectCodeBox.hidden = true;
+  // 連携済みになった時だけコード表示を消す。以前はconnectedの値に関わらず
+  // 常に消していたため、コード発行後に「連携できたか確認する」を押すと
+  // （まだ連携できていない＝connected:falseでも）コード表示が消えてしまい、
+  // 「押すたびに画面が変わる・コードを取り直す羽目になる」不具合になっていた。
+  if (connected && els.claudeConnectCodeBox) els.claudeConnectCodeBox.hidden = true;
 }
 
 async function refreshClaudeConnectStatus() {
