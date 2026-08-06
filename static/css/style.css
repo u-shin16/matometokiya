@@ -2171,7 +2171,6 @@ body.has-large-editor-open .note-head {
   flex: 1;
   min-height: 0;
   margin-bottom: 0;
-  align-items: stretch;
 }
 
 #quickMemoDialog.is-editing .quick-memo-form .mindmap-field {
@@ -2186,9 +2185,15 @@ body.has-large-editor-open .note-head {
 
 .quick-memo-form {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.quick-memo-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .quick-memo-form .mindmap-field {
