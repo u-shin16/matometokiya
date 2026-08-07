@@ -1394,15 +1394,12 @@ body.has-large-editor-open .note-head {
 }
 
 /* 画像は display:block のため、前後のキャレットアンカーは画像と同じ行には
-   並ばず必ず単独の行になる。ここに常に画像と同じ高さ(--media-caret-height)を
-   与えると、キャレットが実際に置かれていない時も画像の上下に大きな空白行が
-   できてしまう。実際にキャレットがある(is-active-media-caret)時だけ画像の
-   高さに合わせ、それ以外は通常の1行分の高さにとどめる。
+   並ばず必ず単独の行になる。以前はここに画像と同じ高さ(--media-caret-height)
+   を与えていたが、大きい画像だとキャレットの縦棒までバカでかくなってしまう
+   ため廃止。アクティブ時も通常の1行分の高さにとどめる。
    margin の負値で画像と重なっているため、キャレットバーが画像の背景に
    隠れないよう手前に出す */
 .media-caret-anchor.is-active-media-caret {
-  min-height: var(--media-caret-height, 1.8em);
-  line-height: var(--media-caret-height, 1.8em);
   z-index: 1;
 }
 
@@ -1412,7 +1409,7 @@ body.has-large-editor-open .note-head {
   top: 0;
   left: 50%;
   width: 1.5px;
-  height: var(--media-caret-height, 1.8em);
+  height: 1.8em;
   background: currentColor;
   border-radius: 1px;
   transform: translateX(-50%);
