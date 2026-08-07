@@ -13831,7 +13831,21 @@ function centerCaretInEditor() {
   const range = selection.getRangeAt(0);
   if (range.startContainer !== els.contentInput && !els.contentInput.contains(range.startContainer)) return;
 
-  const rect = range.getClientRects()[0] || range.getBoundingClientRect();
+  // 画像の左右のキャレットを切り替えただけでメモがガクッと動いて見えないよう、
+  // 画像のキャレット（左右どちらでも）にいる間は常に「左のキャレット」の
+  // 位置を基準にセンタリングする。
+  let rect;
+  const activeAnchor = els.contentInput.querySelector(".media-caret-anchor.is-active-media-caret");
+  if (activeAnchor) {
+    const next = getMediaBoundarySibling(activeAnchor, "nextSibling");
+    const prev = getMediaBoundarySibling(activeAnchor, "previousSibling");
+    const figure = isInlineMediaFigure(next) ? next : (isInlineMediaFigure(prev) ? prev : null);
+    if (figure) {
+      const beforeAnchor = getMediaBoundarySibling(figure, "previousSibling");
+      rect = (isMediaCaretAnchor(beforeAnchor) ? beforeAnchor : figure).getBoundingClientRect();
+    }
+  }
+  if (!rect) rect = range.getClientRects()[0] || range.getBoundingClientRect();
   if (!rect || (!rect.width && !rect.height && !rect.top && !rect.left)) return;
 
   const containerRect = els.contentInput.getBoundingClientRect();
