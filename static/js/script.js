@@ -13817,6 +13817,26 @@ els.contentInput.addEventListener("compositionend",   () => { _isComposing = fal
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "Enter") {
+    // 画像の左（前）のキャレットでEnterを押した時は、上の行末で改行したい。
+    // 右（後）側は現状のままでよいのでここでは触らない。
+    const anchor = els.contentInput.querySelector(".media-caret-anchor.is-active-media-caret");
+    if (anchor && isInlineMediaFigure(getMediaBoundarySibling(anchor, "nextSibling"))) {
+      redirectMediaCaretTyping();
+    }
+    return;
+  }
+  if (e.key === "ArrowLeft" && !e.shiftKey) {
+    // 画像の右（後）のキャレットで左矢印を押したら、同じ画像の左（前）の
+    // キャレットへ移動する。
+    const anchor = els.contentInput.querySelector(".media-caret-anchor.is-active-media-caret");
+    const prevFigure = anchor ? getMediaBoundarySibling(anchor, "previousSibling") : null;
+    if (isInlineMediaFigure(prevFigure)) {
+      e.preventDefault();
+      placeCaretBesideFigure(prevFigure, "before");
+    }
+    return;
+  }
   if (e.key.length !== 1) return;
   redirectMediaCaretTyping();
 });
