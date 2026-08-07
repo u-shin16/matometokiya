@@ -330,6 +330,7 @@ const els = {
   mediaBtn:         document.getElementById("mediaBtn"),
   mediaInput:       document.getElementById("mediaInput"),
   deleteBtn:        document.getElementById("deleteBtn"),
+  moveToQuickMemoBtn: document.getElementById("moveToQuickMemoBtn"),
   largeEditorBtn:   document.getElementById("largeEditorBtn"),
   editorArea:       document.getElementById("editorArea"),
   toast:            document.getElementById("toast"),
@@ -6542,6 +6543,47 @@ async function moveQuickMemoToHierarchy(parentId) {
     closeQuickMemoOverlay();
     selectNote(note.id);
     showToast("階層メモへ移動しました。");
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+// 逆方向：選択中の階層メモをクイックメモへ移動する。クイックメモは
+// フラットなテキストのみのため、子メモがあるものや画像・動画が含まれる
+// ものは（サイレントに失われてしまうため）移動できないようにする。
+async function moveSelectedNoteToQuickMemo() {
+  const note = getSelectedNote();
+  if (!note) return;
+  if (blockIfGuestReadOnly()) return;
+
+  if (getChildNotesForCard(note.id).length > 0) {
+    showToast("子メモがあるメモはクイックメモへ移動できません。");
+    return;
+  }
+  if (/<(img|video|figure)\b/i.test(note.content || "")) {
+    showToast("画像・動画が含まれるメモはクイックメモへ移動できません。");
+    return;
+  }
+  if (!await ensureNoteAccess(note.id)) return;
+
+  const ok = await showConfirm(`「${note.title || "無題"}」をクイックメモへ移動しますか？`, "移動");
+  if (!ok) return;
+
+  try {
+    await saveCurrentEditorNow();
+    const parentId = note.parent_id;
+    const bodyText = contentToPlainText(note.content);
+    const text = bodyText ? `${note.title || "無題"}\n${bodyText}` : (note.title || "無題");
+
+    const memo = { id: makeId(), text, created_at: nowIso() };
+    await quickMemosCollection().doc(memo.id).set(memo);
+    state.quickMemos.unshift(memo);
+
+    if (note.linked_mindmap_id) await unlinkMindMap(note.linked_mindmap_id);
+    await deleteNoteDocuments([note.id]);
+    removeDeletedNotesFromState([note.id], parentId);
+
+    showToast("クイックメモへ移動しました。");
   } catch (e) {
     showToast(e.message);
   }
@@ -14025,6 +14067,10 @@ els.noteAiPrompt?.addEventListener("keydown", e => {
 els.deleteBtn.addEventListener("click", () => {
   closeMemoSettingsPanel();
   deleteSelectedNote();
+});
+els.moveToQuickMemoBtn?.addEventListener("click", () => {
+  closeMemoSettingsPanel();
+  moveSelectedNoteToQuickMemo();
 });
 els.largeEditorBtn.addEventListener("click", () => {
   closeMemoSettingsPanel();

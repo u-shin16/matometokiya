@@ -1719,7 +1719,8 @@ body.has-large-editor-open .note-head {
   max-width: 260px;
 }
 
-.note-children-popover #noteChildrenPopoverItems {
+.note-children-popover #noteChildrenPopoverItems,
+#quickMemoMovePopoverItems {
   max-height: 240px;
   overflow-y: auto;
 }
