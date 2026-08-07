@@ -11626,20 +11626,25 @@ function syncMediaCaretAnchor(anchor) {
 
 function clearActiveMediaCaret(root = els.contentInput) {
   root.querySelectorAll(".media-caret-anchor.is-active-media-caret")
-    .forEach(anchor => anchor.classList.remove("is-active-media-caret"));
+    .forEach(anchor => anchor.classList.remove("is-active-media-caret", "caret-shown-on-figure"));
   root.querySelectorAll(".inline-media-figure.has-left-caret, .inline-media-figure.has-right-caret")
     .forEach(figure => figure.classList.remove("has-left-caret", "has-right-caret"));
 }
 
 // キャレットが画像のすぐ前（このアンカーの次が画像）にある時は画像の左端に、
 // すぐ後ろ（このアンカーの前が画像）にある時は画像の右端に、画像の高さいっぱいの
-// キャレットを重ねて表示する。前後に置かれる小さいキャレット自体（画像の上下の
-// 行に出るもの）はこれまで通りで、それとは別に画像側にも目印を出す。
+// キャレットを重ねて表示する。この時アンカー自身の小さいキャレット表示は隠し、
+// 画像側の目印だけが見えるようにする（両方同時に出て二重に見えるのを防ぐ）。
 function updateAdjacentMediaCaretSide(anchor) {
   const prev = getMediaBoundarySibling(anchor, "previousSibling");
   const next = getMediaBoundarySibling(anchor, "nextSibling");
-  if (isInlineMediaFigure(next)) next.classList.add("has-left-caret");
-  else if (isInlineMediaFigure(prev)) prev.classList.add("has-right-caret");
+  if (isInlineMediaFigure(next)) {
+    next.classList.add("has-left-caret");
+    anchor.classList.add("caret-shown-on-figure");
+  } else if (isInlineMediaFigure(prev)) {
+    prev.classList.add("has-right-caret");
+    anchor.classList.add("caret-shown-on-figure");
+  }
 }
 
 function setActiveMediaCaret(anchor) {

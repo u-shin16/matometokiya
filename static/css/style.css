@@ -1440,6 +1440,13 @@ body.has-large-editor-open .note-head {
   animation: mediaCaretBlink 1s steps(1, end) infinite;
 }
 
+/* 画像に隣接するアンカーがアクティブな時は、画像側の高さいっぱいの
+   キャレット（has-left-caret/has-right-caret）だけを見せ、アンカー自身の
+   小さいキャレットは隠す。両方同時に出て二重に見えるのを防ぐ。 */
+.media-caret-anchor.is-active-media-caret.caret-shown-on-figure::after {
+  display: none;
+}
+
 @keyframes mediaCaretBlink {
   0%, 49% { opacity: 1; }
   50%, 100% { opacity: 0; }
