@@ -13818,11 +13818,17 @@ els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === "Enter") {
-    // 画像の左（前）のキャレットでEnterを押した時は、上の行末で改行したい。
+    // 画像の左（前）のキャレットでEnterを押した時は、上の行末で改行しつつも、
+    // キャレット自体は画像の左に留まったままにする（新しくできた空行の中へ
+    // キャレットが移ってしまわないように、改行後に画像の左へ戻す）。
     // 右（後）側は現状のままでよいのでここでは触らない。
     const anchor = els.contentInput.querySelector(".media-caret-anchor.is-active-media-caret");
-    if (anchor && isInlineMediaFigure(getMediaBoundarySibling(anchor, "nextSibling"))) {
+    const figure = anchor ? getMediaBoundarySibling(anchor, "nextSibling") : null;
+    if (isInlineMediaFigure(figure)) {
+      e.preventDefault();
       redirectMediaCaretTyping();
+      document.execCommand("insertParagraph");
+      placeCaretBesideFigure(figure, "before");
     }
     return;
   }
