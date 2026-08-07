@@ -1105,32 +1105,27 @@ body.has-large-editor-open .note-head {
   line-height: 0;             /* figure 内の余分な行高をリセット */
 }
 
-/* 画像を消すのに前後のキャレット＋Backspaceを使う必要がないよう、
-   角に小さい削除ボタンを常時重ねておく。 */
-.inline-media-delete-btn {
+/* 画像の直前・直後のキャレットがアクティブな時、画像の高さいっぱいの
+   キャレットを左端（直前側）・右端（直後側）に重ねて表示する。 */
+.inline-media-figure.has-left-caret::before,
+.inline-media-figure.has-right-caret::after {
+  content: "";
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: currentColor;
+  pointer-events: none;
   z-index: 2;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.55);
-  color: #fff;
-  font-size: 16px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  -webkit-user-drag: none;
+  animation: mediaCaretBlink 1s steps(1, end) infinite;
 }
 
-.inline-media-delete-btn:hover,
-.inline-media-delete-btn:focus-visible {
-  background: rgba(220, 38, 38, 0.85);
-  outline: none;
+.inline-media-figure.has-left-caret::before {
+  left: 0;
+}
+
+.inline-media-figure.has-right-caret::after {
+  right: 0;
 }
 
 /* 画像：幅いっぱいに広がり、縦は最大 70vh まで */

@@ -11531,20 +11531,6 @@ function lockInlineMediaDrag(root = els.contentInput) {
     figure.draggable = false;
     figure.setAttribute("draggable", "false");
     mediaFigureResizeObserver.observe(figure);
-    if (!figure.querySelector(":scope > .inline-media-delete-btn")) {
-      const deleteBtn = document.createElement("button");
-      deleteBtn.type = "button";
-      deleteBtn.className = "inline-media-delete-btn";
-      deleteBtn.title = "画像を削除";
-      deleteBtn.setAttribute("aria-label", "画像を削除");
-      deleteBtn.textContent = "×";
-      deleteBtn.addEventListener("click", e => {
-        e.preventDefault();
-        e.stopPropagation();
-        deleteMediaFigure(figure);
-      });
-      figure.appendChild(deleteBtn);
-    }
   });
   root.querySelectorAll(".inline-media").forEach(media => {
     media.draggable = false;
@@ -11641,12 +11627,26 @@ function syncMediaCaretAnchor(anchor) {
 function clearActiveMediaCaret(root = els.contentInput) {
   root.querySelectorAll(".media-caret-anchor.is-active-media-caret")
     .forEach(anchor => anchor.classList.remove("is-active-media-caret"));
+  root.querySelectorAll(".inline-media-figure.has-left-caret, .inline-media-figure.has-right-caret")
+    .forEach(figure => figure.classList.remove("has-left-caret", "has-right-caret"));
+}
+
+// キャレットが画像のすぐ前（このアンカーの次が画像）にある時は画像の左端に、
+// すぐ後ろ（このアンカーの前が画像）にある時は画像の右端に、画像の高さいっぱいの
+// キャレットを重ねて表示する。前後に置かれる小さいキャレット自体（画像の上下の
+// 行に出るもの）はこれまで通りで、それとは別に画像側にも目印を出す。
+function updateAdjacentMediaCaretSide(anchor) {
+  const prev = getMediaBoundarySibling(anchor, "previousSibling");
+  const next = getMediaBoundarySibling(anchor, "nextSibling");
+  if (isInlineMediaFigure(next)) next.classList.add("has-left-caret");
+  else if (isInlineMediaFigure(prev)) prev.classList.add("has-right-caret");
 }
 
 function setActiveMediaCaret(anchor) {
   clearActiveMediaCaret();
   if (anchor && isEmptyMediaCaretAnchor(anchor) && syncMediaCaretAnchor(anchor)) {
     anchor.classList.add("is-active-media-caret");
+    updateAdjacentMediaCaretSide(anchor);
   }
 }
 
