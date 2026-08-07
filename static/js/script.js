@@ -12003,7 +12003,37 @@ function insertMediaElement(item) {
     } else {
       range.deleteContents();
       range.collapse(false);
-      range.insertNode(figure);
+      const containerNode = range.startContainer;
+      const containingBlock = containerNode.nodeType === Node.ELEMENT_NODE
+        ? containerNode.closest?.("div, p")
+        : containerNode.parentElement?.closest?.("div, p");
+      if (containingBlock && containingBlock.parentElement === els.contentInput) {
+        // 文中にカーソルがある状態で画像を挿入すると、そのままでは figure が
+        // 現在の行の div の中に入れ子になってしまい、前後のキャレット用アンカーも
+        // その行と同じ行に表示されてしまう。div を分割して figure を独立した
+        // ブロックとして配置し直す。
+        const afterRange = document.createRange();
+        afterRange.setStart(range.startContainer, range.startOffset);
+        afterRange.setEnd(containingBlock, containingBlock.childNodes.length);
+        const afterFragment = afterRange.extractContents();
+        // extractContents は分割位置がテキストノードの境界にちょうど一致する時、
+        // 中身が空のテキストノードを1つだけ残す／含めることがある。それを
+        // 「内容がある」と誤判定しないよう、実際に中身があるかどうかで見る。
+        const hasMeaningfulContent = node =>
+          node.nodeType === Node.ELEMENT_NODE ||
+          (node.nodeType === Node.TEXT_NODE && node.textContent.length > 0);
+        const blockWasEmptied = ![...containingBlock.childNodes].some(hasMeaningfulContent);
+        const afterHasContent = [...afterFragment.childNodes].some(hasMeaningfulContent);
+        containingBlock.insertAdjacentElement("afterend", figure);
+        if (afterHasContent) {
+          const afterBlock = document.createElement(containingBlock.tagName);
+          afterBlock.appendChild(afterFragment);
+          figure.insertAdjacentElement("afterend", afterBlock);
+        }
+        if (blockWasEmptied) containingBlock.remove();
+      } else {
+        range.insertNode(figure);
+      }
     }
   } else {
     els.contentInput.appendChild(figure);
