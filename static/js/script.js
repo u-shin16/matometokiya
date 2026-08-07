@@ -6590,6 +6590,7 @@ async function moveSelectedNoteToQuickMemo() {
     if (note.linked_mindmap_id) await unlinkMindMap(note.linked_mindmap_id);
     await deleteNoteDocuments([note.id]);
     removeDeletedNotesFromState([note.id], parentId);
+    selectNote(state.selectedId);
 
     showToast("クイックメモへ移動しました。");
   } catch (e) {
