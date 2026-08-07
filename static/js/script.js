@@ -13801,6 +13801,7 @@ els.contentInput.addEventListener("focus", () => {
   els.contentInput.classList.add("is-focused");
   updateMemoFormatUiFromSelection();
   setCollabPresence("content", { immediate: true });
+  updateContentEditorCenterPadding();
 });
 els.contentInput.addEventListener("click", () => {
   els.contentInput.classList.add("is-focused");
@@ -13812,6 +13813,49 @@ els.contentInput.addEventListener("blur", () => {
   clearActiveMediaCaret();
   setCollabPresence("viewing");
 });
+
+// キャレットが動くたびに、エディタ内で常に縦方向の中央に来るよう滑らかに
+// 自動スクロールする。selectionchange はタイピング・矢印キー・クリックなど
+// キャレットが動くあらゆる場合に発火するので、これ1箇所で網羅できる。
+let _centerCaretScheduled = false;
+function scheduleCenterCaretInEditor() {
+  if (_centerCaretScheduled) return;
+  _centerCaretScheduled = true;
+  requestAnimationFrame(() => {
+    _centerCaretScheduled = false;
+    centerCaretInEditor();
+  });
+}
+
+function centerCaretInEditor() {
+  if (!els.contentInput.classList.contains("is-focused")) return;
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return;
+  const range = selection.getRangeAt(0);
+  if (range.startContainer !== els.contentInput && !els.contentInput.contains(range.startContainer)) return;
+
+  const rect = range.getClientRects()[0] || range.getBoundingClientRect();
+  if (!rect || (!rect.width && !rect.height && !rect.top && !rect.left)) return;
+
+  const containerRect = els.contentInput.getBoundingClientRect();
+  const delta = (rect.top + rect.height / 2) - (containerRect.top + containerRect.height / 2);
+  if (Math.abs(delta) < 4) return;
+
+  const maxScrollTop = els.contentInput.scrollHeight - els.contentInput.clientHeight;
+  const nextScrollTop = Math.max(0, Math.min(maxScrollTop, els.contentInput.scrollTop + delta));
+  els.contentInput.scrollTo({ top: nextScrollTop, behavior: "smooth" });
+}
+
+document.addEventListener("selectionchange", scheduleCenterCaretInEditor);
+
+// 一番下の行にキャレットがある時も中央まで持ってこられるよう、下側に
+// エディタの半分の高さ分の余白を確保しておく（タイプライター的スクロール）。
+function updateContentEditorCenterPadding() {
+  const half = Math.round(els.contentInput.clientHeight / 2);
+  els.contentInput.style.paddingBottom = `${Math.max(24, half)}px`;
+}
+window.addEventListener("resize", updateContentEditorCenterPadding);
+updateContentEditorCenterPadding();
 els.contentInput.addEventListener("compositionstart", () => { _isComposing = true; redirectMediaCaretTyping(); });
 els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); tryApplyMemoStrikeShortcut(); tryApplyMemoColorShortcut(); tryApplyMemoHighlightShortcut(); tryApplyMemoClearFormatShortcut(); scheduleSave(); });
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
