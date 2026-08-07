@@ -13833,15 +13833,44 @@ els.contentInput.addEventListener("keydown", e => {
     return;
   }
   if (e.key === "ArrowLeft" && !e.shiftKey) {
-    // 画像の右（後）のキャレットで左矢印を押したら、同じ画像の左（前）の
-    // キャレットへ移動する。
     const anchor = els.contentInput.querySelector(".media-caret-anchor.is-active-media-caret");
-    const prevFigure = anchor ? getMediaBoundarySibling(anchor, "previousSibling") : null;
-    if (isInlineMediaFigure(prevFigure)) {
-      e.preventDefault();
-      placeCaretBesideFigure(prevFigure, "before");
+    if (anchor) {
+      const prevFigure = getMediaBoundarySibling(anchor, "previousSibling");
+      const nextFigure = getMediaBoundarySibling(anchor, "nextSibling");
+      if (isInlineMediaFigure(prevFigure)) {
+        // 画像の右（後）のキャレットで左矢印を押したら、同じ画像の左（前）の
+        // キャレットへ移動する。
+        e.preventDefault();
+        placeCaretBesideFigure(prevFigure, "before");
+        return;
+      }
+      if (isInlineMediaFigure(nextFigure)) {
+        // 画像の左（前）のキャレットでさらに左矢印を押した時、幅0の
+        // アンカーだとブラウザのデフォルト移動が1回では上の行まで
+        // 抜けてくれないことがあるため、明示的に上の行末へ移動する。
+        e.preventDefault();
+        redirectMediaCaretTyping();
+        return;
+      }
     }
-    return;
+  }
+  if (e.key === "Backspace") {
+    const anchor = els.contentInput.querySelector(".media-caret-anchor.is-active-media-caret");
+    const figure = anchor ? getMediaBoundarySibling(anchor, "nextSibling") : null;
+    if (isInlineMediaFigure(figure)) {
+      // 画像の左（前）のキャレットでBackspace: 直前が空行ならその空行だけを
+      // 消してキャレットは画像の左のままにする。直前に実際の文字がある
+      // 場合は文字を消さず、行末へキャレットを移動するだけにする。
+      e.preventDefault();
+      const prev = getMediaBoundarySibling(anchor, "previousSibling");
+      if (isEmptyContentBlock(prev)) {
+        prev.remove();
+        placeCaretBesideFigure(figure, "before");
+      } else {
+        redirectMediaCaretTyping();
+      }
+      return;
+    }
   }
   if (e.key.length !== 1) return;
   redirectMediaCaretTyping();
