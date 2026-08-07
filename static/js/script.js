@@ -11550,6 +11550,18 @@ function isEmptyMediaTextLine(node) {
     !node.querySelector("img, video");
 }
 
+// If the caret sits inside an empty paragraph created by pressing Enter
+// (a plain <div><br></div>, not one of our media-text-line/media-caret-anchor
+// spans), inserting media used to leave that stray <br> behind after the
+// figure, requiring a manual delete to clean up. Detect this case too.
+function isEmptyContentBlock(node) {
+  if (!node || node.parentElement !== els.contentInput) return false;
+  if (!/^(DIV|P)$/.test(node.tagName)) return false;
+  const children = [...node.childNodes];
+  if (children.length === 0) return true;
+  return children.length === 1 && children[0].nodeName === "BR";
+}
+
 function isMediaCaretAnchor(node) {
   return node?.classList?.contains("media-caret-anchor");
 }
@@ -11962,8 +11974,13 @@ function insertMediaElement(item) {
     const insertionPoint = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
       ? range.commonAncestorContainer.closest?.(".media-text-line, .media-caret-anchor")
       : range.commonAncestorContainer.parentElement?.closest?.(".media-text-line, .media-caret-anchor");
+    const emptyBlock = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? (isEmptyContentBlock(range.commonAncestorContainer) ? range.commonAncestorContainer : null)
+      : (isEmptyContentBlock(range.commonAncestorContainer.parentElement) ? range.commonAncestorContainer.parentElement : null);
     if (isEmptyMediaTextLine(insertionPoint) || isEmptyMediaCaretAnchor(insertionPoint)) {
       insertionPoint.replaceWith(figure);
+    } else if (emptyBlock) {
+      emptyBlock.replaceWith(figure);
     } else {
       range.deleteContents();
       range.collapse(false);
