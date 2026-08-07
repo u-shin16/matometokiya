@@ -13873,17 +13873,27 @@ els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
 els.contentInput.addEventListener("keydown", e => {
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === "Enter") {
-    // 画像の左（前）のキャレットでEnterを押した時は、上の行末で改行しつつも、
-    // キャレット自体は画像の左に留まったままにする（新しくできた空行の中へ
-    // キャレットが移ってしまわないように、改行後に画像の左へ戻す）。
-    // 右（後）側は現状のままでよいのでここでは触らない。
+    // 画像の左（前）／右（後）どちらのキャレットでEnterを押した時も、隣の
+    // 行との境界で改行しつつ、キャレット自体は画像の同じ側に留まったままに
+    // する（新しくできた空行の中へキャレットが移ってしまわないように、
+    // 改行後に同じ側へ戻す）。アンカーが display:block のため、ネイティブの
+    // Enter処理に任せると壊れた結果になることがあるので、常に自前で新しい
+    // 空行を1つ作って処理する。
     const anchor = els.contentInput.querySelector(".media-caret-anchor.is-active-media-caret");
-    const figure = anchor ? getMediaBoundarySibling(anchor, "nextSibling") : null;
-    if (isInlineMediaFigure(figure)) {
+    const nextFigure = anchor ? getMediaBoundarySibling(anchor, "nextSibling") : null;
+    const prevFigure = anchor ? getMediaBoundarySibling(anchor, "previousSibling") : null;
+    if (isInlineMediaFigure(nextFigure)) {
       e.preventDefault();
-      redirectMediaCaretTyping();
-      document.execCommand("insertParagraph");
-      placeCaretBesideFigure(figure, "before");
+      const blank = document.createElement("div");
+      blank.appendChild(document.createElement("br"));
+      anchor.insertAdjacentElement("beforebegin", blank);
+      placeCaretBesideFigure(nextFigure, "before");
+    } else if (isInlineMediaFigure(prevFigure)) {
+      e.preventDefault();
+      const blank = document.createElement("div");
+      blank.appendChild(document.createElement("br"));
+      anchor.insertAdjacentElement("afterend", blank);
+      placeCaretBesideFigure(prevFigure, "after");
     }
     return;
   }
