@@ -13824,6 +13824,16 @@ function scheduleCenterCaretInEditor() {
   });
 }
 
+function scrollRectToCenter(rect) {
+  if (!rect || (!rect.width && !rect.height && !rect.top && !rect.left)) return;
+  const containerRect = els.contentInput.getBoundingClientRect();
+  const delta = (rect.top + rect.height / 2) - (containerRect.top + containerRect.height / 2);
+  if (Math.abs(delta) < 4) return;
+  const maxScrollTop = els.contentInput.scrollHeight - els.contentInput.clientHeight;
+  const nextScrollTop = Math.max(0, Math.min(maxScrollTop, els.contentInput.scrollTop + delta));
+  els.contentInput.scrollTo({ top: nextScrollTop, behavior: "smooth" });
+}
+
 function centerCaretInEditor() {
   if (!els.contentInput.classList.contains("is-focused")) return;
   const selection = window.getSelection();
@@ -13846,15 +13856,14 @@ function centerCaretInEditor() {
     }
   }
   if (!rect) rect = range.getClientRects()[0] || range.getBoundingClientRect();
-  if (!rect || (!rect.width && !rect.height && !rect.top && !rect.left)) return;
-
-  const containerRect = els.contentInput.getBoundingClientRect();
-  const delta = (rect.top + rect.height / 2) - (containerRect.top + containerRect.height / 2);
-  if (Math.abs(delta) < 4) return;
-
-  const maxScrollTop = els.contentInput.scrollHeight - els.contentInput.clientHeight;
-  const nextScrollTop = Math.max(0, Math.min(maxScrollTop, els.contentInput.scrollTop + delta));
-  els.contentInput.scrollTo({ top: nextScrollTop, behavior: "smooth" });
+  // 作ったばかりの空行（<br>だけの中身）では、collapsed Rangeの矩形が
+  // (0,0,0,0) になることがあるため、その時は行要素自体の矩形で代用する。
+  if ((!rect || (!rect.width && !rect.height && !rect.top && !rect.left))) {
+    const container = range.startContainer;
+    const lineEl = container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement;
+    if (lineEl && lineEl !== els.contentInput) rect = lineEl.getBoundingClientRect();
+  }
+  scrollRectToCenter(rect);
 }
 
 document.addEventListener("selectionchange", scheduleCenterCaretInEditor);
@@ -13889,11 +13898,15 @@ els.contentInput.addEventListener("keydown", e => {
       anchor.insertAdjacentElement("beforebegin", blank);
       placeCaretBesideFigure(nextFigure, "before");
     } else if (isInlineMediaFigure(prevFigure)) {
+      // 右（後）側は左側と違い、そのまま下に文字を書き始める流れになる
+      // ことが多いので、キャレットを画像の右に留めず普通の改行として扱う。
+      // 新しくできた行へキャレットが移り、そのままスクロールもついてくる。
       e.preventDefault();
       const blank = document.createElement("div");
       blank.appendChild(document.createElement("br"));
       anchor.insertAdjacentElement("afterend", blank);
-      placeCaretBesideFigure(prevFigure, "after");
+      clearActiveMediaCaret();
+      placeCaretAtDivEdge(blank, "start");
     }
     return;
   }
