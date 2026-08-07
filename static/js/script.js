@@ -28,6 +28,9 @@ const state = {
   todos:              [],
   quickMemos:         [],
   quickMemoEditingId: null,
+  trashNotes:         [],
+  trashQuickMemos:    [],
+  trashLoaded:        false,
   mindMap:         null,
   mindMapList:     [],
   mindMapLoaded:   false,
@@ -116,6 +119,11 @@ const els = {
   quickMemoMoveBreadcrumb: document.getElementById("quickMemoMoveBreadcrumb"),
   quickMemoMoveHereBtn:   document.getElementById("quickMemoMoveHereBtn"),
   quickMemoItems:     document.getElementById("quickMemoItems"),
+  trashBtn:           document.getElementById("trashBtn"),
+  trashOverlay:       document.getElementById("trashOverlay"),
+  trashClose:         document.getElementById("trashClose"),
+  trashNoteItems:     document.getElementById("trashNoteItems"),
+  trashQuickMemoItems: document.getElementById("trashQuickMemoItems"),
   noteChildrenPopover:      document.getElementById("noteChildrenPopover"),
   noteChildrenPopoverTitle: document.getElementById("noteChildrenPopoverTitle"),
   noteChildrenPopoverItems: document.getElementById("noteChildrenPopoverItems"),
@@ -4957,6 +4965,20 @@ function snapshotDeletedNotes(noteId) {
   };
 }
 
+// メモ削除は完全には消さず deleted:true を立てるだけにして、ゴミ箱から
+// 復元・完全削除を選べるようにする。Firestore上はドキュメントが残るので、
+// 元に戻す（Ctrl/⌘+Z）はこれまで通り .set() での上書きで正しく機能する。
+async function softDeleteNotes(deleteIds) {
+  const ts = nowIso();
+  const ref = notesCollection();
+  const CHUNK = 450;
+  for (let i = 0; i < deleteIds.length; i += CHUNK) {
+    const batch = db.batch();
+    deleteIds.slice(i, i + CHUNK).forEach(id => batch.update(ref.doc(id), { deleted: true, deleted_at: ts }));
+    await batch.commit();
+  }
+}
+
 async function deleteNoteDocuments(deleteIds) {
   const ref = notesCollection();
   const CHUNK = 450;
@@ -4965,20 +4987,6 @@ async function deleteNoteDocuments(deleteIds) {
     deleteIds.slice(i, i + CHUNK).forEach(id => batch.delete(ref.doc(id)));
     await batch.commit();
   }
-}
-
-async function deleteNoteDocumentsWithMindMaps(deleteIds, mapIds) {
-  const uniqueMapIds = [...new Set(mapIds.filter(Boolean))];
-  if (deleteIds.length + uniqueMapIds.length <= 450) {
-    const batch = db.batch();
-    const noteRef = notesCollection();
-    deleteIds.forEach(id => batch.delete(noteRef.doc(id)));
-    uniqueMapIds.forEach(id => batch.delete(mindMapsCollection().doc(id)));
-    await batch.commit();
-    return;
-  }
-  await deleteNoteDocuments(deleteIds);
-  for (const id of uniqueMapIds) await mindMapsCollection().doc(id).delete();
 }
 
 function removeDeletedNotesFromState(deleteIds, preferredSelectionId = null) {
@@ -6429,7 +6437,7 @@ async function deleteQuickMemo(id) {
   const ok = await showConfirm("このクイックメモを削除しますか？");
   if (!ok) return;
   try {
-    await quickMemosCollection().doc(id).delete();
+    await quickMemosCollection().doc(id).update({ deleted: true, deleted_at: nowIso() });
     state.quickMemos = state.quickMemos.filter(memo => memo.id !== id);
     if (state.quickMemoEditingId === id) cancelQuickMemoEdit();
     renderQuickMemoList();
@@ -6584,6 +6592,268 @@ async function moveSelectedNoteToQuickMemo() {
     removeDeletedNotesFromState([note.id], parentId);
 
     showToast("クイックメモへ移動しました。");
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+// ── ゴミ箱 ────────────────────────────────────────────────────────────────
+// 削除は完全には消さず deleted:true を立てるだけにしているので、ここで
+// 一覧・復元・完全削除を行う。state.data.notes / state.quickMemos とは別の
+// state.trashNotes / state.trashQuickMemos に持たせ、開いた時だけ取得する
+// （通常の一覧・検索・元に戻す等の既存動作には一切影響しないようにする）。
+
+async function loadTrash() {
+  const [notesSnap, quickSnap] = await Promise.all([
+    notesCollection().get(),
+    quickMemosCollection().get(),
+  ]);
+  state.trashNotes = notesSnap.docs
+    .map(d => ({ ...d.data(), id: d.id }))
+    .filter(n => n.deleted);
+  state.trashQuickMemos = quickSnap.docs
+    .map(d => ({ ...d.data(), id: d.id }))
+    .filter(m => m.deleted);
+  state.trashLoaded = true;
+}
+
+// 子メモごとまとめてゴミ箱へ送っているので、一覧には親（＝トラッシュ内に
+// 親が見つからないもの）だけを出す。復元すれば子メモも一緒に戻る。
+function getTrashRootNotes() {
+  const ids = new Set(state.trashNotes.map(n => n.id));
+  return state.trashNotes
+    .filter(n => !ids.has(n.parent_id))
+    .sort((a, b) => String(b.deleted_at ?? "").localeCompare(String(a.deleted_at ?? "")));
+}
+
+function collectTrashSubtreeIds(noteId) {
+  const ids = new Set([noteId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const note of state.trashNotes) {
+      if (ids.has(note.parent_id) && !ids.has(note.id)) { ids.add(note.id); changed = true; }
+    }
+  }
+  return [...ids];
+}
+
+function trashNotePreviewText(note) {
+  const childCount = state.trashNotes.filter(n => n.parent_id === note.id).length;
+  const body = contentToPlainText(note.content || "");
+  return childCount ? `（子メモ${childCount}件を含む）\n${body}` : body;
+}
+
+function renderTrashOverlay() {
+  if (!els.trashNoteItems || !els.trashQuickMemoItems) return;
+
+  els.trashNoteItems.innerHTML = "";
+  const trashedNotes = getTrashRootNotes();
+  if (trashedNotes.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "note-grid-empty";
+    empty.textContent = "ゴミ箱に階層メモはありません。";
+    els.trashNoteItems.appendChild(empty);
+  } else {
+    trashedNotes.forEach(note => {
+      const card = document.createElement("div");
+      card.className = "note-grid-card";
+      card.dataset.id = note.id;
+
+      const body = document.createElement("button");
+      body.type = "button";
+      body.className = "note-grid-card-open";
+      body.dataset.action = "view";
+
+      const title = document.createElement("span");
+      title.className = "note-grid-card-title";
+      title.textContent = note.title || "無題";
+      body.appendChild(title);
+
+      const preview = document.createElement("span");
+      preview.className = "note-grid-card-preview";
+      preview.textContent = trashNotePreviewText(note);
+      body.appendChild(preview);
+
+      const date = document.createElement("span");
+      date.className = "note-grid-card-date";
+      date.textContent = `削除: ${formatListDate(note.deleted_at)}`;
+      body.appendChild(date);
+      card.appendChild(body);
+
+      const actions = document.createElement("div");
+      actions.className = "note-grid-card-actions";
+
+      const restoreBtn = document.createElement("button");
+      restoreBtn.type = "button";
+      restoreBtn.className = "note-grid-card-icon-btn";
+      restoreBtn.dataset.action = "restore";
+      restoreBtn.title = "復元";
+      restoreBtn.setAttribute("aria-label", `「${note.title || "無題"}」を復元`);
+      restoreBtn.textContent = "↩";
+      actions.appendChild(restoreBtn);
+
+      const purgeBtn = document.createElement("button");
+      purgeBtn.type = "button";
+      purgeBtn.className = "note-grid-card-icon-btn danger";
+      purgeBtn.dataset.action = "purge";
+      purgeBtn.title = "完全に削除";
+      purgeBtn.setAttribute("aria-label", `「${note.title || "無題"}」を完全に削除`);
+      purgeBtn.textContent = "🗑";
+      actions.appendChild(purgeBtn);
+
+      card.appendChild(actions);
+      els.trashNoteItems.appendChild(card);
+    });
+  }
+
+  els.trashQuickMemoItems.innerHTML = "";
+  const trashedQuickMemos = [...state.trashQuickMemos].sort(
+    (a, b) => String(b.deleted_at ?? "").localeCompare(String(a.deleted_at ?? "")),
+  );
+  if (trashedQuickMemos.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "note-grid-empty";
+    empty.textContent = "ゴミ箱にクイックメモはありません。";
+    els.trashQuickMemoItems.appendChild(empty);
+  } else {
+    trashedQuickMemos.forEach(memo => {
+      const card = document.createElement("div");
+      card.className = "note-grid-card";
+      card.dataset.id = memo.id;
+
+      const body = document.createElement("button");
+      body.type = "button";
+      body.className = "note-grid-card-open";
+      body.dataset.action = "view";
+
+      const preview = document.createElement("span");
+      preview.className = "note-grid-card-preview";
+      preview.textContent = memo.text || "";
+      body.appendChild(preview);
+
+      const date = document.createElement("span");
+      date.className = "note-grid-card-date";
+      date.textContent = `削除: ${formatListDate(memo.deleted_at)}`;
+      body.appendChild(date);
+      card.appendChild(body);
+
+      const actions = document.createElement("div");
+      actions.className = "note-grid-card-actions";
+
+      const restoreBtn = document.createElement("button");
+      restoreBtn.type = "button";
+      restoreBtn.className = "note-grid-card-icon-btn";
+      restoreBtn.dataset.action = "restore";
+      restoreBtn.title = "復元";
+      restoreBtn.setAttribute("aria-label", "クイックメモを復元");
+      restoreBtn.textContent = "↩";
+      actions.appendChild(restoreBtn);
+
+      const purgeBtn = document.createElement("button");
+      purgeBtn.type = "button";
+      purgeBtn.className = "note-grid-card-icon-btn danger";
+      purgeBtn.dataset.action = "purge";
+      purgeBtn.title = "完全に削除";
+      purgeBtn.setAttribute("aria-label", "クイックメモを完全に削除");
+      purgeBtn.textContent = "🗑";
+      actions.appendChild(purgeBtn);
+
+      card.appendChild(actions);
+      els.trashQuickMemoItems.appendChild(card);
+    });
+  }
+}
+
+async function openTrashOverlay() {
+  if (!els.trashOverlay) return;
+  closeNoteGridOverlay();
+  closeNoteHistoryOverlay();
+  closeQuickMemoOverlay();
+  hideNoteChildrenPopover();
+  closeMemoFormatPanel();
+  closeMemoSettingsPanel();
+  closeNoteTodoPanel();
+  els.trashOverlay.hidden = false;
+  document.body.classList.add("has-management-open");
+  els.trashBtn?.setAttribute("aria-expanded", "true");
+  try {
+    await loadTrash();
+  } catch (e) {
+    showToast(e.message);
+  }
+  renderTrashOverlay();
+}
+
+function closeTrashOverlay() {
+  if (!els.trashOverlay || els.trashOverlay.hidden) return;
+  els.trashOverlay.hidden = true;
+  document.body.classList.remove("has-management-open");
+  els.trashBtn?.setAttribute("aria-expanded", "false");
+}
+
+async function restoreTrashedNote(noteId) {
+  const ids = collectTrashSubtreeIds(noteId);
+  try {
+    const ref = notesCollection();
+    const batch = db.batch();
+    ids.forEach(id => batch.update(ref.doc(id), { deleted: false, deleted_at: null }));
+    await batch.commit();
+
+    const restored = state.trashNotes.filter(n => ids.includes(n.id))
+      .map(n => { const { deleted, deleted_at, ...rest } = n; return rest; });
+    appendNotesIfMissing(cloneData(restored));
+    state.trashNotes = state.trashNotes.filter(n => !ids.includes(n.id));
+
+    renderTree();
+    renderTrashOverlay();
+    showToast("復元しました。");
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+async function permanentlyDeleteTrashedNote(noteId) {
+  const note = state.trashNotes.find(n => n.id === noteId);
+  const ok = await showConfirm(`「${note?.title || "無題"}」を完全に削除しますか？元に戻せません。`, "完全に削除");
+  if (!ok) return;
+  const ids = collectTrashSubtreeIds(noteId);
+  try {
+    await deleteNoteDocuments(ids);
+    state.trashNotes = state.trashNotes.filter(n => !ids.includes(n.id));
+    renderTrashOverlay();
+    showToast("完全に削除しました。");
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+async function restoreTrashedQuickMemo(id) {
+  try {
+    await quickMemosCollection().doc(id).update({ deleted: false, deleted_at: null });
+    const memo = state.trashQuickMemos.find(m => m.id === id);
+    if (memo) {
+      const { deleted, deleted_at, ...rest } = memo;
+      state.quickMemos.unshift(rest);
+    }
+    state.trashQuickMemos = state.trashQuickMemos.filter(m => m.id !== id);
+
+    renderQuickMemoList();
+    renderTrashOverlay();
+    showToast("復元しました。");
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+async function permanentlyDeleteTrashedQuickMemo(id) {
+  const ok = await showConfirm("完全に削除しますか？元に戻せません。", "完全に削除");
+  if (!ok) return;
+  try {
+    await quickMemosCollection().doc(id).delete();
+    state.trashQuickMemos = state.trashQuickMemos.filter(m => m.id !== id);
+    renderTrashOverlay();
+    showToast("完全に削除しました。");
   } catch (e) {
     showToast(e.message);
   }
@@ -7755,8 +8025,11 @@ async function deleteSelectedNote() {
     const sourceMapIds = sourceMapsBeingRemoved.map(map => map.id);
     const sourceMapIdSet = new Set(sourceMapIds);
 
-    if (deleteLinkedMaps) await deleteNoteDocumentsWithMindMaps(deleteIds, sourceMapIds);
-    else await deleteNoteDocuments(deleteIds);
+    await softDeleteNotes(deleteIds);
+    if (deleteLinkedMaps) {
+      const uniqueMapIds = [...new Set(sourceMapIds.filter(Boolean))];
+      for (const id of uniqueMapIds) await mindMapsCollection().doc(id).delete();
+    }
     removeDeletedNotesFromState(deleteIds, parentId);
     if (deleteLinkedMaps) {
       const undoSnapshot = cloneData(deleteSnapshot);
@@ -10284,7 +10557,8 @@ async function deleteMindMap(id) {
     if (deleteLinkedNotes) {
       linkedNoteSnapshot = snapshotDeletedNotes(sourceNoteId);
       const deleteIds = linkedNoteSnapshot.notes.map(note => note.id);
-      await deleteNoteDocumentsWithMindMaps(deleteIds, [id]);
+      await softDeleteNotes(deleteIds);
+      await mindMapsCollection().doc(id).delete();
       removeDeletedNotesFromState(deleteIds, linkedSourceNote?.parent_id ?? null);
     } else {
       await unlinkMindMap(id);
@@ -13555,6 +13829,11 @@ document.addEventListener("keydown", e => {
     closeNoteHistoryOverlay();
     return;
   }
+  if (e.key === "Escape" && !els.trashOverlay?.hidden) {
+    e.preventDefault();
+    closeTrashOverlay();
+    return;
+  }
   if (e.key === "Escape" && !els.noteTodoPanel?.hidden) {
     e.preventDefault();
     closeNoteTodoPanel();
@@ -13694,6 +13973,28 @@ els.quickMemoItems?.addEventListener("click", e => {
   // 扱いにする。プレビューは省略表示なので、これで全文を入力欄に読み込んで
   // 見られるようにする（そのまま何もせず閉じても内容が消えるわけではない）。
   else editQuickMemo(item.dataset.id);
+});
+els.trashBtn?.addEventListener("click", () => {
+  if (els.trashOverlay?.hidden) void openTrashOverlay();
+  else closeTrashOverlay();
+});
+els.trashClose?.addEventListener("click", closeTrashOverlay);
+els.trashOverlay?.addEventListener("click", e => {
+  if (e.target === els.trashOverlay) closeTrashOverlay();
+});
+function handleTrashItemsClick(e, { restore, purge }) {
+  const item = e.target.closest(".note-grid-card");
+  if (!item) return;
+  const action = e.target.closest("[data-action]")?.dataset.action;
+  if (action === "restore") void restore(item.dataset.id);
+  else if (action === "purge") void purge(item.dataset.id);
+  else if (action === "view") item.classList.toggle("is-expanded");
+}
+els.trashNoteItems?.addEventListener("click", e => {
+  handleTrashItemsClick(e, { restore: restoreTrashedNote, purge: permanentlyDeleteTrashedNote });
+});
+els.trashQuickMemoItems?.addEventListener("click", e => {
+  handleTrashItemsClick(e, { restore: restoreTrashedQuickMemo, purge: permanentlyDeleteTrashedQuickMemo });
 });
 els.noteHistoryBtn?.addEventListener("click", e => {
   e.stopPropagation();
