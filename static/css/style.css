@@ -1402,24 +1402,23 @@ body.has-large-editor-open .note-head {
 
 .media-caret-anchor {
   position: relative;
-  display: inline-block;
+  display: block;
   width: 8px;
   min-width: 8px;
   margin: 0 -4px;
   padding: 0;
-  min-height: 1.8em;
-  line-height: 1.8em;
-  vertical-align: top;
+  min-height: 0;
+  line-height: 0;
   white-space: pre;
   caret-color: transparent;
   cursor: text;
   overflow: visible;
 }
 
-/* 画像は display:block のため、前後のキャレットアンカーは画像と同じ行には
-   並ばず必ず単独の行になる。以前はここに画像と同じ高さ(--media-caret-height)
-   を与えていたが、大きい画像だとキャレットの縦棒までバカでかくなってしまう
-   ため廃止。アクティブ時も通常の1行分の高さにとどめる。
+/* 画像前後のキャレットは、実際に触れる前は行の高さを取らない（詰めておく）。
+   有効化した時の見た目は画像側の has-left-caret/has-right-caret（画像の高さ
+   いっぱいのバー）が担うので、アンカー自身は ::after を position:absolute で
+   独立して重ねるだけでよく、アンカー本体の高さは常に0のままで構わない。
    margin の負値で画像と重なっているため、キャレットバーが画像の背景に
    隠れないよう手前に出す */
 .media-caret-anchor.is-active-media-caret {
