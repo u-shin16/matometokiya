@@ -1105,6 +1105,34 @@ body.has-large-editor-open .note-head {
   line-height: 0;             /* figure 内の余分な行高をリセット */
 }
 
+/* 画像を消すのに前後のキャレット＋Backspaceを使う必要がないよう、
+   角に小さい削除ボタンを常時重ねておく。 */
+.inline-media-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.55);
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-user-drag: none;
+}
+
+.inline-media-delete-btn:hover,
+.inline-media-delete-btn:focus-visible {
+  background: rgba(220, 38, 38, 0.85);
+  outline: none;
+}
+
 /* 画像：幅いっぱいに広がり、縦は最大 70vh まで */
 .inline-media-figure img.inline-media {
   display: block;

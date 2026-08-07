@@ -11531,6 +11531,20 @@ function lockInlineMediaDrag(root = els.contentInput) {
     figure.draggable = false;
     figure.setAttribute("draggable", "false");
     mediaFigureResizeObserver.observe(figure);
+    if (!figure.querySelector(":scope > .inline-media-delete-btn")) {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "inline-media-delete-btn";
+      deleteBtn.title = "画像を削除";
+      deleteBtn.setAttribute("aria-label", "画像を削除");
+      deleteBtn.textContent = "×";
+      deleteBtn.addEventListener("click", e => {
+        e.preventDefault();
+        e.stopPropagation();
+        deleteMediaFigure(figure);
+      });
+      figure.appendChild(deleteBtn);
+    }
   });
   root.querySelectorAll(".inline-media").forEach(media => {
     media.draggable = false;
@@ -13004,15 +13018,20 @@ els.mediaContextMenu.addEventListener("click", e => {
 
   if (action === "delete") {
     const figure = state.mediaCmFigure;
-    pushUndoSnapshot(snapshotFromNote(getSelectedNote()));
     hideMediaCtxMenu();
-    figure.remove();
-    normalizeMediaCaretAnchors();
-    updateEmptyState();
-    scheduleSave();
+    deleteMediaFigure(figure);
     return;
   }
 });
+
+function deleteMediaFigure(figure) {
+  if (!figure?.isConnected) return;
+  pushUndoSnapshot(snapshotFromNote(getSelectedNote()));
+  figure.remove();
+  normalizeMediaCaretAnchors();
+  updateEmptyState();
+  scheduleSave();
+}
 
 // ── contenteditable イベント委任 ──────────────────────────────────────────────
 
