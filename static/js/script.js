@@ -12040,12 +12040,9 @@ function insertMediaElement(item) {
   }
 
   ensureMediaTextLines();
-  const line = isMediaCaretAnchor(figure.nextElementSibling)
-    ? figure.nextElementSibling
-    : createMediaCaretAnchor();
-  if (!line.isConnected) figure.insertAdjacentElement("afterend", line);
   try {
-    placeCaretInMediaCaretAnchor(line);
+    // 挿入直後は画像の左（前）のキャレットをアクティブにしておく。
+    placeCaretBesideFigure(figure, "before");
   } catch (_) { els.contentInput.focus(); }
 
   figure.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -13898,21 +13895,50 @@ els.contentInput.addEventListener("keydown", e => {
       }
     }
   }
+  if (e.key === "ArrowRight" && !e.shiftKey) {
+    const anchor = els.contentInput.querySelector(".media-caret-anchor.is-active-media-caret");
+    if (anchor) {
+      const prevFigure = getMediaBoundarySibling(anchor, "previousSibling");
+      const nextFigure = getMediaBoundarySibling(anchor, "nextSibling");
+      if (isInlineMediaFigure(nextFigure)) {
+        // 画像の左（前）のキャレットで右矢印を押したら、同じ画像の右（後）の
+        // キャレットへ移動する。
+        e.preventDefault();
+        placeCaretBesideFigure(nextFigure, "after");
+        return;
+      }
+      if (isInlineMediaFigure(prevFigure)) {
+        // 画像の右（後）のキャレットでさらに右矢印を押した時も、幅0の
+        // アンカーだと1回では下の行まで抜けてくれないことがあるため、
+        // 明示的に下の行頭へ移動する。
+        e.preventDefault();
+        redirectMediaCaretTyping();
+        return;
+      }
+    }
+  }
   if (e.key === "Backspace") {
     const anchor = els.contentInput.querySelector(".media-caret-anchor.is-active-media-caret");
-    const figure = anchor ? getMediaBoundarySibling(anchor, "nextSibling") : null;
-    if (isInlineMediaFigure(figure)) {
+    const prev = anchor ? getMediaBoundarySibling(anchor, "previousSibling") : null;
+    const next = anchor ? getMediaBoundarySibling(anchor, "nextSibling") : null;
+    if (isInlineMediaFigure(next)) {
       // 画像の左（前）のキャレットでBackspace: 直前が空行ならその空行だけを
       // 消してキャレットは画像の左のままにする。直前に実際の文字がある
       // 場合は文字を消さず、行末へキャレットを移動するだけにする。
       e.preventDefault();
-      const prev = getMediaBoundarySibling(anchor, "previousSibling");
       if (isEmptyContentBlock(prev)) {
         prev.remove();
-        placeCaretBesideFigure(figure, "before");
+        placeCaretBesideFigure(next, "before");
       } else {
         redirectMediaCaretTyping();
       }
+      return;
+    }
+    if (isInlineMediaFigure(prev)) {
+      // 画像の右（後）のキャレットでBackspace: 直前は画像そのものなので、
+      // 画像自体を削除する。
+      e.preventDefault();
+      deleteMediaFigure(prev);
       return;
     }
   }
