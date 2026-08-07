@@ -124,6 +124,11 @@ const els = {
   trashClose:         document.getElementById("trashClose"),
   trashNoteItems:     document.getElementById("trashNoteItems"),
   trashQuickMemoItems: document.getElementById("trashQuickMemoItems"),
+  trashDialog:        document.getElementById("trashDialog"),
+  trashPreview:       document.getElementById("trashPreview"),
+  trashPreviewBack:   document.getElementById("trashPreviewBack"),
+  trashPreviewTitle:  document.getElementById("trashPreviewTitle"),
+  trashPreviewBody:   document.getElementById("trashPreviewBody"),
   noteChildrenPopover:      document.getElementById("noteChildrenPopover"),
   noteChildrenPopoverTitle: document.getElementById("noteChildrenPopoverTitle"),
   noteChildrenPopoverItems: document.getElementById("noteChildrenPopoverItems"),
@@ -6282,17 +6287,34 @@ async function openChildNoteFromPopover(noteId) {
 // 収まるよう配置する共通処理。狭いモバイル画面だと「下に置く→はみ出るので
 // 上に反転」の両方が入り切らず、反転先が画面外（負の座標）になって
 // ボタンは反応するのに何も見えない、ということがあるため最後にclampする。
-function positionPopoverNearAnchor(popover, anchorEl) {
+// scrollEl を渡すと、中身が多い時にアンカー付近の実際に使える高さへ
+// max-height を合わせ直す。これをしないと中身の多さに応じてポップアップ
+// 全体が伸び、置き場所を確保できず画面の一番上まで飛んでいってしまい、
+// ボタンから離れた位置に表示されて見える（実際はスクロールで見えている）。
+function positionPopoverNearAnchor(popover, anchorEl, scrollEl = null) {
+  if (scrollEl) scrollEl.style.maxHeight = "";
+
   const rect = anchorEl.getBoundingClientRect();
-  const pw = popover.offsetWidth, ph = popover.offsetHeight;
+  const pw = popover.offsetWidth;
+  let ph = popover.offsetHeight;
 
   let left = rect.left;
   if (left + pw > window.innerWidth) left = window.innerWidth - pw - 6;
   left = Math.max(6, left);
 
-  let top = rect.bottom + 4;
-  if (top + ph > window.innerHeight) top = rect.top - ph - 4;
-  top = Math.min(Math.max(6, top), window.innerHeight - ph - 6);
+  const spaceBelow = window.innerHeight - rect.bottom - 10;
+  const spaceAbove = rect.top - 10;
+  const placeBelow = ph <= spaceBelow || spaceBelow >= spaceAbove;
+
+  if (scrollEl) {
+    const available = Math.max(80, (placeBelow ? spaceBelow : spaceAbove) - (ph - scrollEl.offsetHeight));
+    scrollEl.style.maxHeight = `${Math.min(180, available)}px`;
+    ph = popover.offsetHeight;
+  }
+
+  const top = placeBelow
+    ? rect.bottom + 4
+    : Math.max(6, rect.top - ph - 4);
 
   popover.style.left = `${left}px`;
   popover.style.top = `${top}px`;
@@ -6314,7 +6336,7 @@ function showNoteChildrenPopover(anchorEl, parentId) {
   });
 
   els.noteChildrenPopover.hidden = false;
-  positionPopoverNearAnchor(els.noteChildrenPopover, anchorEl);
+  positionPopoverNearAnchor(els.noteChildrenPopover, anchorEl, els.noteChildrenPopoverItems);
 }
 
 function hideNoteChildrenPopover() {
@@ -6467,7 +6489,7 @@ function showQuickMemoMovePopover() {
   quickMemoMoveStack = [];
   renderQuickMemoMovePopover();
   els.quickMemoMovePopover.hidden = false;
-  positionPopoverNearAnchor(els.quickMemoMovePopover, els.quickMemoMoveBtn);
+  positionPopoverNearAnchor(els.quickMemoMovePopover, els.quickMemoMoveBtn, els.quickMemoMovePopoverItems);
 }
 
 function renderQuickMemoMovePopover() {
@@ -6500,7 +6522,7 @@ function renderQuickMemoMovePopover() {
 
   // 潜るたびに大きさが変わるので、その都度アンカーへ位置を合わせ直す。
   if (els.quickMemoMovePopover && !els.quickMemoMovePopover.hidden) {
-    positionPopoverNearAnchor(els.quickMemoMovePopover, els.quickMemoMoveBtn);
+    positionPopoverNearAnchor(els.quickMemoMovePopover, els.quickMemoMoveBtn, els.quickMemoMovePopoverItems);
   }
 }
 
@@ -6791,9 +6813,28 @@ function closeTrashOverlay() {
   els.trashOverlay.hidden = true;
   document.body.classList.remove("has-management-open");
   els.trashBtn?.setAttribute("aria-expanded", "false");
+  hideTrashPreview();
+}
+
+function showTrashPreview(title, bodyText) {
+  if (!els.trashDialog || !els.trashPreview) return;
+  els.trashPreviewTitle.textContent = title || "";
+  els.trashPreviewTitle.hidden = !title;
+  els.trashPreviewBody.textContent = bodyText || "";
+  els.trashDialog.classList.add("is-previewing");
+  els.trashPreview.hidden = false;
+}
+
+function hideTrashPreview() {
+  if (!els.trashDialog || !els.trashPreview) return;
+  els.trashDialog.classList.remove("is-previewing");
+  els.trashPreview.hidden = true;
 }
 
 async function restoreTrashedNote(noteId) {
+  const note = state.trashNotes.find(n => n.id === noteId);
+  const ok = await showConfirm(`「${note?.title || "無題"}」を復元しますか？`, "復元");
+  if (!ok) return;
   const ids = collectTrashSubtreeIds(noteId);
   try {
     const ref = notesCollection();
@@ -6830,6 +6871,8 @@ async function permanentlyDeleteTrashedNote(noteId) {
 }
 
 async function restoreTrashedQuickMemo(id) {
+  const ok = await showConfirm("復元しますか？", "復元");
+  if (!ok) return;
   try {
     await quickMemosCollection().doc(id).update({ deleted: false, deleted_at: null });
     const memo = state.trashQuickMemos.find(m => m.id === id);
@@ -13983,20 +14026,35 @@ els.trashClose?.addEventListener("click", closeTrashOverlay);
 els.trashOverlay?.addEventListener("click", e => {
   if (e.target === els.trashOverlay) closeTrashOverlay();
 });
-function handleTrashItemsClick(e, { restore, purge }) {
+function handleTrashItemsClick(e, { restore, purge, view }) {
   const item = e.target.closest(".note-grid-card");
   if (!item) return;
   const action = e.target.closest("[data-action]")?.dataset.action;
   if (action === "restore") void restore(item.dataset.id);
   else if (action === "purge") void purge(item.dataset.id);
-  else if (action === "view") item.classList.toggle("is-expanded");
+  else if (action === "view") view(item.dataset.id);
 }
 els.trashNoteItems?.addEventListener("click", e => {
-  handleTrashItemsClick(e, { restore: restoreTrashedNote, purge: permanentlyDeleteTrashedNote });
+  handleTrashItemsClick(e, {
+    restore: restoreTrashedNote,
+    purge: permanentlyDeleteTrashedNote,
+    view: id => {
+      const note = state.trashNotes.find(n => n.id === id);
+      if (note) showTrashPreview(note.title || "無題", trashNotePreviewText(note));
+    },
+  });
 });
 els.trashQuickMemoItems?.addEventListener("click", e => {
-  handleTrashItemsClick(e, { restore: restoreTrashedQuickMemo, purge: permanentlyDeleteTrashedQuickMemo });
+  handleTrashItemsClick(e, {
+    restore: restoreTrashedQuickMemo,
+    purge: permanentlyDeleteTrashedQuickMemo,
+    view: id => {
+      const memo = state.trashQuickMemos.find(m => m.id === id);
+      if (memo) showTrashPreview(deriveQuickMemoTitle(memo.text), memo.text || "");
+    },
+  });
 });
+els.trashPreviewBack?.addEventListener("click", hideTrashPreview);
 els.noteHistoryBtn?.addEventListener("click", e => {
   e.stopPropagation();
   if (els.noteHistoryOverlay?.hidden) openNoteHistoryOverlay();

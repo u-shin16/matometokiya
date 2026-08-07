@@ -1721,7 +1721,7 @@ body.has-large-editor-open .note-head {
 
 .note-children-popover #noteChildrenPopoverItems,
 #quickMemoMovePopoverItems {
-  max-height: 240px;
+  max-height: 180px;
   overflow-y: auto;
 }
 
@@ -2393,9 +2393,40 @@ body.has-large-editor-open .note-head {
   -webkit-line-clamp: 3;
 }
 
-/* ゴミ箱：カード本文をクリックすると全文表示に切り替える */
-.note-grid-card.is-expanded .note-grid-card-preview {
-  -webkit-line-clamp: unset;
+/* ゴミ箱：カードを選ぶと大画面の読み取り専用プレビューに切り替える */
+#trashDialog.is-previewing {
+  width: min(1000px, 95vw);
+  height: min(85vh, 85dvh);
+  max-height: none;
+}
+
+#trashDialog.is-previewing .settings-section-title,
+#trashDialog.is-previewing #trashNoteItems,
+#trashDialog.is-previewing #trashQuickMemoItems {
+  display: none;
+}
+
+.trash-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
+}
+
+.trash-preview-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.trash-preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.8;
+  padding: 4px 2px;
 }
 
 .note-grid-card-more {
