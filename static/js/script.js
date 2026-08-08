@@ -6667,6 +6667,21 @@ function trashNotePreviewText(note) {
   return childCount ? `（子メモ${childCount}件を含む）\n${body}` : body;
 }
 
+// 削除される前にどこの子メモだったかをゴミ箱の一覧・プレビューで
+// わかるようにする。親は（トップレベルのゴミ箱項目である以上）まだ
+// アクティブなはずなので getNotes() で辿れる。
+function trashNoteLocationText(note) {
+  const chain = [];
+  let current = note.parent_id ? getNotes().find(n => n.id === note.parent_id) : null;
+  const visited = new Set();
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    chain.unshift(current.title || "無題");
+    current = current.parent_id ? getNotes().find(n => n.id === current.parent_id) : null;
+  }
+  return chain.length ? chain.join(" > ") : "ルート直下";
+}
+
 function renderTrashOverlay() {
   if (!els.trashNoteItems || !els.trashQuickMemoItems) return;
 
@@ -6692,6 +6707,11 @@ function renderTrashOverlay() {
       title.className = "note-grid-card-title";
       title.textContent = note.title || "無題";
       body.appendChild(title);
+
+      const location = document.createElement("span");
+      location.className = "trash-card-location";
+      location.textContent = trashNoteLocationText(note);
+      body.appendChild(location);
 
       const preview = document.createElement("span");
       preview.className = "note-grid-card-preview";
@@ -14040,7 +14060,7 @@ els.trashNoteItems?.addEventListener("click", e => {
     purge: permanentlyDeleteTrashedNote,
     view: id => {
       const note = state.trashNotes.find(n => n.id === id);
-      if (note) showTrashPreview(note.title || "無題", trashNotePreviewText(note));
+      if (note) showTrashPreview(note.title || "無題", `${trashNoteLocationText(note)}\n\n${trashNotePreviewText(note)}`);
     },
   });
 });
