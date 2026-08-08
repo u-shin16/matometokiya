@@ -6308,7 +6308,7 @@ function positionPopoverNearAnchor(popover, anchorEl, scrollEl = null) {
 
   if (scrollEl) {
     const available = Math.max(80, (placeBelow ? spaceBelow : spaceAbove) - (ph - scrollEl.offsetHeight));
-    scrollEl.style.maxHeight = `${Math.min(180, available)}px`;
+    scrollEl.style.maxHeight = `${Math.min(400, available)}px`;
     ph = popover.offsetHeight;
   }
 
