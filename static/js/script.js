@@ -31,6 +31,7 @@ const state = {
   trashNotes:         [],
   trashQuickMemos:    [],
   trashLoaded:        false,
+  trashFilter:        "all",
   mindMap:         null,
   mindMapList:     [],
   mindMapLoaded:   false,
@@ -122,8 +123,9 @@ const els = {
   trashBtn:           document.getElementById("trashBtn"),
   trashOverlay:       document.getElementById("trashOverlay"),
   trashClose:         document.getElementById("trashClose"),
-  trashNoteItems:     document.getElementById("trashNoteItems"),
-  trashQuickMemoItems: document.getElementById("trashQuickMemoItems"),
+  trashEmptyBtn:      document.getElementById("trashEmptyBtn"),
+  trashItems:         document.getElementById("trashItems"),
+  trashFilterSelect:  document.getElementById("trashFilterSelect"),
   trashDialog:        document.getElementById("trashDialog"),
   trashPreview:       document.getElementById("trashPreview"),
   trashPreviewBack:   document.getElementById("trashPreviewBack"),
@@ -6682,130 +6684,112 @@ function trashNoteLocationText(note) {
   return chain.length ? chain.join(" > ") : "ルート直下";
 }
 
+function buildTrashCard({ kind, id, restoreLabel, purgeLabel, body }) {
+  const card = document.createElement("div");
+  card.className = "note-grid-card";
+  card.dataset.id = id;
+  card.dataset.kind = kind;
+
+  const openBtn = document.createElement("button");
+  openBtn.type = "button";
+  openBtn.className = "note-grid-card-open";
+  openBtn.dataset.action = "view";
+  body.forEach(el => openBtn.appendChild(el));
+  card.appendChild(openBtn);
+
+  const actions = document.createElement("div");
+  actions.className = "note-grid-card-actions";
+
+  const restoreBtn = document.createElement("button");
+  restoreBtn.type = "button";
+  restoreBtn.className = "note-grid-card-icon-btn";
+  restoreBtn.dataset.action = "restore";
+  restoreBtn.title = "復元";
+  restoreBtn.setAttribute("aria-label", restoreLabel);
+  restoreBtn.textContent = "↩";
+  actions.appendChild(restoreBtn);
+
+  const purgeBtn = document.createElement("button");
+  purgeBtn.type = "button";
+  purgeBtn.className = "note-grid-card-icon-btn danger";
+  purgeBtn.dataset.action = "purge";
+  purgeBtn.title = "完全に削除";
+  purgeBtn.setAttribute("aria-label", purgeLabel);
+  purgeBtn.textContent = "🗑";
+  actions.appendChild(purgeBtn);
+
+  card.appendChild(actions);
+  return card;
+}
+
+function buildTrashNoteCard(note) {
+  const title = document.createElement("span");
+  title.className = "note-grid-card-title";
+  title.textContent = note.title || "無題";
+
+  const location = document.createElement("span");
+  location.className = "trash-card-location";
+  location.textContent = trashNoteLocationText(note);
+
+  const preview = document.createElement("span");
+  preview.className = "note-grid-card-preview";
+  preview.textContent = trashNotePreviewText(note);
+
+  const date = document.createElement("span");
+  date.className = "note-grid-card-date";
+  date.textContent = `削除: ${formatListDate(note.deleted_at)}`;
+
+  return buildTrashCard({
+    kind: "note",
+    id: note.id,
+    restoreLabel: `「${note.title || "無題"}」を復元`,
+    purgeLabel: `「${note.title || "無題"}」を完全に削除`,
+    body: [title, location, preview, date],
+  });
+}
+
+function buildTrashQuickMemoCard(memo) {
+  const preview = document.createElement("span");
+  preview.className = "note-grid-card-preview";
+  preview.textContent = memo.text || "";
+
+  const date = document.createElement("span");
+  date.className = "note-grid-card-date";
+  date.textContent = `削除: ${formatListDate(memo.deleted_at)}`;
+
+  return buildTrashCard({
+    kind: "quickMemo",
+    id: memo.id,
+    restoreLabel: "クイックメモを復元",
+    purgeLabel: "クイックメモを完全に削除",
+    body: [preview, date],
+  });
+}
+
+// 階層メモ・クイックメモを分けず、削除日時順にまとめて1つの一覧に出す。
+// 右上の絞り込みで種類ごとに表示を絞れる。
 function renderTrashOverlay() {
-  if (!els.trashNoteItems || !els.trashQuickMemoItems) return;
+  if (!els.trashItems) return;
+  const filter = state.trashFilter;
 
-  els.trashNoteItems.innerHTML = "";
-  const trashedNotes = getTrashRootNotes();
-  if (trashedNotes.length === 0) {
+  const entries = [
+    ...(filter === "quickMemo" ? [] : getTrashRootNotes().map(note => ({ kind: "note", deletedAt: note.deleted_at, note }))),
+    ...(filter === "note" ? [] : state.trashQuickMemos.map(memo => ({ kind: "quickMemo", deletedAt: memo.deleted_at, memo }))),
+  ].sort((a, b) => String(b.deletedAt ?? "").localeCompare(String(a.deletedAt ?? "")));
+
+  els.trashItems.innerHTML = "";
+  if (entries.length === 0) {
     const empty = document.createElement("p");
     empty.className = "note-grid-empty";
-    empty.textContent = "ゴミ箱に階層メモはありません。";
-    els.trashNoteItems.appendChild(empty);
-  } else {
-    trashedNotes.forEach(note => {
-      const card = document.createElement("div");
-      card.className = "note-grid-card";
-      card.dataset.id = note.id;
-
-      const body = document.createElement("button");
-      body.type = "button";
-      body.className = "note-grid-card-open";
-      body.dataset.action = "view";
-
-      const title = document.createElement("span");
-      title.className = "note-grid-card-title";
-      title.textContent = note.title || "無題";
-      body.appendChild(title);
-
-      const location = document.createElement("span");
-      location.className = "trash-card-location";
-      location.textContent = trashNoteLocationText(note);
-      body.appendChild(location);
-
-      const preview = document.createElement("span");
-      preview.className = "note-grid-card-preview";
-      preview.textContent = trashNotePreviewText(note);
-      body.appendChild(preview);
-
-      const date = document.createElement("span");
-      date.className = "note-grid-card-date";
-      date.textContent = `削除: ${formatListDate(note.deleted_at)}`;
-      body.appendChild(date);
-      card.appendChild(body);
-
-      const actions = document.createElement("div");
-      actions.className = "note-grid-card-actions";
-
-      const restoreBtn = document.createElement("button");
-      restoreBtn.type = "button";
-      restoreBtn.className = "note-grid-card-icon-btn";
-      restoreBtn.dataset.action = "restore";
-      restoreBtn.title = "復元";
-      restoreBtn.setAttribute("aria-label", `「${note.title || "無題"}」を復元`);
-      restoreBtn.textContent = "↩";
-      actions.appendChild(restoreBtn);
-
-      const purgeBtn = document.createElement("button");
-      purgeBtn.type = "button";
-      purgeBtn.className = "note-grid-card-icon-btn danger";
-      purgeBtn.dataset.action = "purge";
-      purgeBtn.title = "完全に削除";
-      purgeBtn.setAttribute("aria-label", `「${note.title || "無題"}」を完全に削除`);
-      purgeBtn.textContent = "🗑";
-      actions.appendChild(purgeBtn);
-
-      card.appendChild(actions);
-      els.trashNoteItems.appendChild(card);
-    });
+    empty.textContent = "ゴミ箱は空です。";
+    els.trashItems.appendChild(empty);
+    return;
   }
 
-  els.trashQuickMemoItems.innerHTML = "";
-  const trashedQuickMemos = [...state.trashQuickMemos].sort(
-    (a, b) => String(b.deleted_at ?? "").localeCompare(String(a.deleted_at ?? "")),
-  );
-  if (trashedQuickMemos.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "note-grid-empty";
-    empty.textContent = "ゴミ箱にクイックメモはありません。";
-    els.trashQuickMemoItems.appendChild(empty);
-  } else {
-    trashedQuickMemos.forEach(memo => {
-      const card = document.createElement("div");
-      card.className = "note-grid-card";
-      card.dataset.id = memo.id;
-
-      const body = document.createElement("button");
-      body.type = "button";
-      body.className = "note-grid-card-open";
-      body.dataset.action = "view";
-
-      const preview = document.createElement("span");
-      preview.className = "note-grid-card-preview";
-      preview.textContent = memo.text || "";
-      body.appendChild(preview);
-
-      const date = document.createElement("span");
-      date.className = "note-grid-card-date";
-      date.textContent = `削除: ${formatListDate(memo.deleted_at)}`;
-      body.appendChild(date);
-      card.appendChild(body);
-
-      const actions = document.createElement("div");
-      actions.className = "note-grid-card-actions";
-
-      const restoreBtn = document.createElement("button");
-      restoreBtn.type = "button";
-      restoreBtn.className = "note-grid-card-icon-btn";
-      restoreBtn.dataset.action = "restore";
-      restoreBtn.title = "復元";
-      restoreBtn.setAttribute("aria-label", "クイックメモを復元");
-      restoreBtn.textContent = "↩";
-      actions.appendChild(restoreBtn);
-
-      const purgeBtn = document.createElement("button");
-      purgeBtn.type = "button";
-      purgeBtn.className = "note-grid-card-icon-btn danger";
-      purgeBtn.dataset.action = "purge";
-      purgeBtn.title = "完全に削除";
-      purgeBtn.setAttribute("aria-label", "クイックメモを完全に削除");
-      purgeBtn.textContent = "🗑";
-      actions.appendChild(purgeBtn);
-
-      card.appendChild(actions);
-      els.trashQuickMemoItems.appendChild(card);
-    });
-  }
+  entries.forEach(entry => {
+    const card = entry.kind === "note" ? buildTrashNoteCard(entry.note) : buildTrashQuickMemoCard(entry.memo);
+    els.trashItems.appendChild(card);
+  });
 }
 
 async function openTrashOverlay() {
@@ -6918,6 +6902,29 @@ async function permanentlyDeleteTrashedQuickMemo(id) {
     state.trashQuickMemos = state.trashQuickMemos.filter(m => m.id !== id);
     renderTrashOverlay();
     showToast("完全に削除しました。");
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+async function emptyTrash() {
+  if (state.trashNotes.length === 0 && state.trashQuickMemos.length === 0) {
+    showToast("ゴミ箱は空です。");
+    return;
+  }
+  const ok = await showConfirm("ゴミ箱を空にしますか？元に戻せません。", "空にする");
+  if (!ok) return;
+  try {
+    const noteIds = state.trashNotes.map(n => n.id);
+    if (noteIds.length) await deleteNoteDocuments(noteIds);
+    for (const memo of state.trashQuickMemos) {
+      await quickMemosCollection().doc(memo.id).delete();
+    }
+    state.trashNotes = [];
+    state.trashQuickMemos = [];
+    hideTrashPreview();
+    renderTrashOverlay();
+    showToast("ゴミ箱を空にしました。");
   } catch (e) {
     showToast(e.message);
   }
@@ -14043,36 +14050,41 @@ els.trashBtn?.addEventListener("click", () => {
   else closeTrashOverlay();
 });
 els.trashClose?.addEventListener("click", closeTrashOverlay);
+els.trashEmptyBtn?.addEventListener("click", () => void emptyTrash());
 els.trashOverlay?.addEventListener("click", e => {
   if (e.target === els.trashOverlay) closeTrashOverlay();
 });
-function handleTrashItemsClick(e, { restore, purge, view }) {
-  const item = e.target.closest(".note-grid-card");
-  if (!item) return;
-  const action = e.target.closest("[data-action]")?.dataset.action;
-  if (action === "restore") void restore(item.dataset.id);
-  else if (action === "purge") void purge(item.dataset.id);
-  else if (action === "view") view(item.dataset.id);
-}
-els.trashNoteItems?.addEventListener("click", e => {
-  handleTrashItemsClick(e, {
+const TRASH_ACTIONS = {
+  note: {
     restore: restoreTrashedNote,
     purge: permanentlyDeleteTrashedNote,
     view: id => {
       const note = state.trashNotes.find(n => n.id === id);
       if (note) showTrashPreview(note.title || "無題", `${trashNoteLocationText(note)}\n\n${trashNotePreviewText(note)}`);
     },
-  });
-});
-els.trashQuickMemoItems?.addEventListener("click", e => {
-  handleTrashItemsClick(e, {
+  },
+  quickMemo: {
     restore: restoreTrashedQuickMemo,
     purge: permanentlyDeleteTrashedQuickMemo,
     view: id => {
       const memo = state.trashQuickMemos.find(m => m.id === id);
       if (memo) showTrashPreview(deriveQuickMemoTitle(memo.text), memo.text || "");
     },
-  });
+  },
+};
+els.trashItems?.addEventListener("click", e => {
+  const item = e.target.closest(".note-grid-card");
+  if (!item) return;
+  const handlers = TRASH_ACTIONS[item.dataset.kind];
+  if (!handlers) return;
+  const action = e.target.closest("[data-action]")?.dataset.action;
+  if (action === "restore") void handlers.restore(item.dataset.id);
+  else if (action === "purge") void handlers.purge(item.dataset.id);
+  else if (action === "view") handlers.view(item.dataset.id);
+});
+els.trashFilterSelect?.addEventListener("change", () => {
+  state.trashFilter = els.trashFilterSelect.value;
+  renderTrashOverlay();
 });
 els.trashPreviewBack?.addEventListener("click", hideTrashPreview);
 els.noteHistoryBtn?.addEventListener("click", e => {

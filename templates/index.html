@@ -157,12 +157,17 @@
       <section id="trashDialog" class="note-grid-dialog" role="dialog" aria-modal="true" aria-labelledby="trashTitle">
         <div class="templates-head">
           <p id="trashTitle" class="templates-title">ゴミ箱</p>
-          <button id="trashClose" class="templates-close" type="button" title="閉じる" aria-label="ゴミ箱を閉じる">×</button>
+          <div class="note-grid-header-actions">
+            <select id="trashFilterSelect" class="trash-filter-select" aria-label="ゴミ箱の絞り込み">
+              <option value="all">全て</option>
+              <option value="note">階層メモ</option>
+              <option value="quickMemo">クイックメモ</option>
+            </select>
+            <button id="trashEmptyBtn" class="templates-close" type="button" title="ゴミ箱を空にする" aria-label="ゴミ箱を空にする">空にする</button>
+            <button id="trashClose" class="templates-close" type="button" title="閉じる" aria-label="ゴミ箱を閉じる">×</button>
+          </div>
         </div>
-        <p class="settings-section-title">階層メモ</p>
-        <div id="trashNoteItems" class="note-grid-items"></div>
-        <p class="settings-section-title">クイックメモ</p>
-        <div id="trashQuickMemoItems" class="note-grid-items"></div>
+        <div id="trashItems" class="note-grid-items"></div>
         <div id="trashPreview" class="trash-preview" hidden>
           <button id="trashPreviewBack" class="templates-close" type="button">◀ 戻る</button>
           <p id="trashPreviewTitle" class="trash-preview-title"></p>
