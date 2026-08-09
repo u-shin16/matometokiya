@@ -6749,6 +6749,10 @@ function buildTrashNoteCard(note) {
 }
 
 function buildTrashQuickMemoCard(memo) {
+  const title = document.createElement("span");
+  title.className = "note-grid-card-title";
+  title.textContent = deriveQuickMemoTitle(memo.text);
+
   const location = document.createElement("span");
   location.className = "trash-card-location";
   location.textContent = "クイックメモ";
@@ -6766,7 +6770,7 @@ function buildTrashQuickMemoCard(memo) {
     id: memo.id,
     restoreLabel: "クイックメモを復元",
     purgeLabel: "クイックメモを完全に削除",
-    body: [location, preview, date],
+    body: [title, location, preview, date],
   });
 }
 
