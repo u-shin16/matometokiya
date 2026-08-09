@@ -2434,9 +2434,15 @@ body.has-large-editor-open .note-head {
 .trash-preview {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 10px;
   min-height: 0;
   flex: 1;
+}
+
+.trash-preview-title,
+.trash-preview-body {
+  align-self: stretch;
 }
 
 .trash-preview-title {
