@@ -6450,7 +6450,7 @@ function updateQuickMemoFormMode() {
   // 「移動する」は保存済みの既存メモを選んでいる時だけ意味があるので、
   // 新規作成中は出さない。
   if (els.quickMemoMoveBtn) els.quickMemoMoveBtn.hidden = !editing;
-  if (!editing) hideQuickMemoMovePopover();
+  if (!editing) hideDestinationPicker();
   // 一覧からメモを選んだ時は、プレビューでは省略されがちな内容を
   // ちゃんと読み書きできるよう全画面表示にする。新規作成中はそのまま
   // 一覧と並べて見せておく。
@@ -6479,32 +6479,43 @@ function deriveQuickMemoTitle(text) {
 // （notesツリー）側へ移すための移動先候補。フォルダを潜るのと同じ要領で、
 // メモをクリックするとその子メモ一覧へ潜り、「この階層に移動」でその時点の
 // 階層（ルート、またはどこまでも潜った先の子メモの下）へ移動する。
-let quickMemoMoveStack = []; // [{id, title}, ...]（先頭がルート側、末尾が現在地）
+// 汎用の「どのメモの下に置くか」ドリルダウン選択ポップアップ。
+// フォルダを潜る感覚で目的の階層まで進み、「この階層に○○」で決定する。
+// クイックメモの階層メモ移動・テンプレート追加など、複数の場面で使い回す。
+let destinationPickerStack = []; // [{id, title}, ...]（先頭がルート側、末尾が現在地）
+let destinationPickerAnchor = null;
+let destinationPickerActionLabel = "移動";
+let destinationPickerOnChoose = null; // (parentId: string|null) => void
 
-function currentQuickMemoMoveParentId() {
-  return quickMemoMoveStack.length ? quickMemoMoveStack[quickMemoMoveStack.length - 1].id : null;
+function currentDestinationPickerParentId() {
+  return destinationPickerStack.length ? destinationPickerStack[destinationPickerStack.length - 1].id : null;
 }
 
-function showQuickMemoMovePopover() {
-  if (!els.quickMemoMovePopover || !els.quickMemoMoveBtn || !state.quickMemoEditingId) return;
+function showDestinationPicker(anchorEl, actionLabel, onChoose) {
+  if (!els.quickMemoMovePopover || !anchorEl) return;
   hideNoteChildrenPopover();
-  quickMemoMoveStack = [];
-  renderQuickMemoMovePopover();
+  destinationPickerStack = [];
+  destinationPickerAnchor = anchorEl;
+  destinationPickerActionLabel = actionLabel;
+  destinationPickerOnChoose = onChoose;
+  renderDestinationPicker();
   els.quickMemoMovePopover.hidden = false;
-  positionPopoverNearAnchor(els.quickMemoMovePopover, els.quickMemoMoveBtn, els.quickMemoMovePopoverItems);
+  positionPopoverNearAnchor(els.quickMemoMovePopover, anchorEl, els.quickMemoMovePopoverItems);
 }
 
-function renderQuickMemoMovePopover() {
+function renderDestinationPicker() {
   if (!els.quickMemoMovePopoverItems) return;
-  const parentId = currentQuickMemoMoveParentId();
-  const current = quickMemoMoveStack[quickMemoMoveStack.length - 1];
+  const parentId = currentDestinationPickerParentId();
+  const current = destinationPickerStack[destinationPickerStack.length - 1];
 
   if (els.quickMemoMoveBreadcrumb) {
     els.quickMemoMoveBreadcrumb.textContent = current ? `「${current.title}」の中` : "ルート一覧";
   }
-  if (els.quickMemoMoveBackBtn) els.quickMemoMoveBackBtn.hidden = quickMemoMoveStack.length === 0;
+  if (els.quickMemoMoveBackBtn) els.quickMemoMoveBackBtn.hidden = destinationPickerStack.length === 0;
   if (els.quickMemoMoveHereBtn) {
-    els.quickMemoMoveHereBtn.textContent = current ? `「${current.title}」に移動` : "ルート直下へ移動";
+    els.quickMemoMoveHereBtn.textContent = current
+      ? `「${current.title}」に${destinationPickerActionLabel}`
+      : `ルート直下へ${destinationPickerActionLabel}`;
   }
 
   els.quickMemoMovePopoverItems.innerHTML = "";
@@ -6516,34 +6527,36 @@ function renderQuickMemoMovePopover() {
     const hasKids = getChildNotesForCard(note.id).length > 0;
     item.textContent = (note.title || "無題") + (hasKids ? " ▸" : "");
     item.addEventListener("click", () => {
-      quickMemoMoveStack.push({ id: note.id, title: note.title || "無題" });
-      renderQuickMemoMovePopover();
+      destinationPickerStack.push({ id: note.id, title: note.title || "無題" });
+      renderDestinationPicker();
     });
     els.quickMemoMovePopoverItems.appendChild(item);
   });
 
   // 潜るたびに大きさが変わるので、その都度アンカーへ位置を合わせ直す。
-  if (els.quickMemoMovePopover && !els.quickMemoMovePopover.hidden) {
-    positionPopoverNearAnchor(els.quickMemoMovePopover, els.quickMemoMoveBtn, els.quickMemoMovePopoverItems);
+  if (els.quickMemoMovePopover && !els.quickMemoMovePopover.hidden && destinationPickerAnchor) {
+    positionPopoverNearAnchor(els.quickMemoMovePopover, destinationPickerAnchor, els.quickMemoMovePopoverItems);
   }
 }
 
-function quickMemoMoveGoBack() {
-  quickMemoMoveStack.pop();
-  renderQuickMemoMovePopover();
+function destinationPickerGoBack() {
+  destinationPickerStack.pop();
+  renderDestinationPicker();
 }
 
-function hideQuickMemoMovePopover() {
+function hideDestinationPicker() {
   if (!els.quickMemoMovePopover || els.quickMemoMovePopover.hidden) return;
   els.quickMemoMovePopover.hidden = true;
-  quickMemoMoveStack = [];
+  destinationPickerStack = [];
+  destinationPickerAnchor = null;
+  destinationPickerOnChoose = null;
 }
 
 async function moveQuickMemoToHierarchy(parentId) {
   const memoId = state.quickMemoEditingId;
   const memo = state.quickMemos.find(m => m.id === memoId);
   if (!memo) return;
-  hideQuickMemoMovePopover();
+  hideDestinationPicker();
   if (blockIfGuestReadOnly()) return;
   if (parentId === null && blockNewRootMemoInCollab()) return;
   if (parentId && !await ensureNoteAccess(parentId)) return;
@@ -8177,8 +8190,8 @@ function renderTemplateItem(t) {
 
   const applyBtn = document.createElement("button");
   applyBtn.className   = "template-action-btn";
-  applyBtn.title       = "このテンプレートを今開いている親メモの直下に追加";
-  applyBtn.setAttribute("aria-label", "このテンプレートを今開いている親メモの直下に追加");
+  applyBtn.title       = "追加先のメモを選んでこのテンプレートを追加";
+  applyBtn.setAttribute("aria-label", "追加先のメモを選んでこのテンプレートを追加");
   applyBtn.dataset.action = "apply";
   setButtonContent(applyBtn, "＋", "追加する");
 
@@ -8697,15 +8710,13 @@ function startTemplateRename(item, templateId) {
   });
 }
 
-async function applyTemplate(templateId) {
+async function applyTemplate(templateId, parentId) {
   try {
     if (blockIfGuestReadOnly()) return;
     const template = state.templates.find(t => t.id === templateId);
     if (!template) throw new Error("テンプレートが見つかりません。");
 
-    const selectedRootId = getSelectedRootNoteId();
-    const selectedRoot = selectedRootId ? getNotes().find(note => note.id === selectedRootId) : null;
-    const parentId = selectedRoot?.id ?? null;
+    const parent = parentId ? getNotes().find(note => note.id === parentId) : null;
 
     if (parentId === null && blockNewRootMemoInCollab()) return;
     if (parentId && !await ensureNoteAccess(parentId, { keepLocked: true })) return;
@@ -8720,7 +8731,7 @@ async function applyTemplate(templateId) {
     if (parentId) state.expanded.add(parentId);
     selectNote(created[0].id);
     showToast(parentId
-      ? `「${selectedRoot.title || "無題"}」の直下にテンプレートを追加しました。`
+      ? `「${parent?.title || "無題"}」の直下にテンプレートを追加しました。`
       : "テンプレートを親メモとして追加しました。");
   } catch (e) { showToast(e.message); }
 }
@@ -8760,7 +8771,7 @@ els.templatesList.addEventListener("click", e => {
   if (!id) return;
   switch (btn.dataset.action) {
     case "preview": toggleTemplatePreview(id); break;
-    case "apply":  applyTemplate(id); break;
+    case "apply":  showDestinationPicker(btn, "追加", parentId => void applyTemplate(id, parentId)); break;
     case "rename": startTemplateRename(item, id); break;
     case "delete": deleteTemplate(item, id, item.querySelector(".template-name")?.textContent ?? ""); break;
   }
@@ -13778,8 +13789,8 @@ document.addEventListener("click", e => {
   if (!els.noteChildrenPopover?.hidden && !els.noteChildrenPopover.contains(e.target) && !e.target.closest(".note-grid-card-more")) {
     hideNoteChildrenPopover();
   }
-  if (!els.quickMemoMovePopover?.hidden && !els.quickMemoMovePopover.contains(e.target) && e.target !== els.quickMemoMoveBtn) {
-    hideQuickMemoMovePopover();
+  if (!els.quickMemoMovePopover?.hidden && !els.quickMemoMovePopover.contains(e.target) && !destinationPickerAnchor?.contains(e.target)) {
+    hideDestinationPicker();
   }
   const clickedMemoFormat = Boolean(
     els.memoFormatBar?.contains(e.target) ||
@@ -13889,7 +13900,7 @@ document.addEventListener("keydown", e => {
   }
   if (e.key === "Escape" && !els.quickMemoMovePopover?.hidden) {
     e.preventDefault();
-    hideQuickMemoMovePopover();
+    hideDestinationPicker();
     return;
   }
   if (e.key === "Escape" && !els.quickMemoOverlay?.hidden) {
@@ -14033,11 +14044,15 @@ els.quickMemoInput?.addEventListener("keydown", e => {
 });
 els.quickMemoCancelEditBtn?.addEventListener("click", cancelQuickMemoEdit);
 els.quickMemoMoveBtn?.addEventListener("click", () => {
-  if (els.quickMemoMovePopover?.hidden) showQuickMemoMovePopover();
-  else hideQuickMemoMovePopover();
+  if (els.quickMemoMovePopover?.hidden) {
+    if (!state.quickMemoEditingId) return;
+    showDestinationPicker(els.quickMemoMoveBtn, "移動", parentId => void moveQuickMemoToHierarchy(parentId));
+  } else {
+    hideDestinationPicker();
+  }
 });
-els.quickMemoMoveBackBtn?.addEventListener("click", quickMemoMoveGoBack);
-els.quickMemoMoveHereBtn?.addEventListener("click", () => void moveQuickMemoToHierarchy(currentQuickMemoMoveParentId()));
+els.quickMemoMoveBackBtn?.addEventListener("click", destinationPickerGoBack);
+els.quickMemoMoveHereBtn?.addEventListener("click", () => destinationPickerOnChoose?.(currentDestinationPickerParentId()));
 // 一覧内クリックで中身を作り直す（潜る操作）ため、クリックされた要素が
 // document到達前にDOMから外れてしまい、「外側クリック」判定に誤って
 // 引っかかってポップアップが閉じてしまう。ここで伝播を止めて防ぐ。
