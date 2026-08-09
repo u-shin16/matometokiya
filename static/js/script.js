@@ -6749,13 +6749,12 @@ function buildTrashNoteCard(note) {
 }
 
 function buildTrashQuickMemoCard(memo) {
+  // クイックメモには元々タイトルがないので、階層メモの偽タイトルを作らず、
+  // タイトルの場所に「クイックメモ」というラベル自体を太字で置いて
+  // 位置・見た目を揃える。
   const title = document.createElement("span");
   title.className = "note-grid-card-title";
-  title.textContent = deriveQuickMemoTitle(memo.text);
-
-  const location = document.createElement("span");
-  location.className = "trash-card-location";
-  location.textContent = "クイックメモ";
+  title.textContent = "クイックメモ";
 
   const preview = document.createElement("span");
   preview.className = "note-grid-card-preview";
@@ -6770,7 +6769,7 @@ function buildTrashQuickMemoCard(memo) {
     id: memo.id,
     restoreLabel: "クイックメモを復元",
     purgeLabel: "クイックメモを完全に削除",
-    body: [title, location, preview, date],
+    body: [title, preview, date],
   });
 }
 
@@ -14076,7 +14075,7 @@ const TRASH_ACTIONS = {
     purge: permanentlyDeleteTrashedQuickMemo,
     view: id => {
       const memo = state.trashQuickMemos.find(m => m.id === id);
-      if (memo) showTrashPreview(deriveQuickMemoTitle(memo.text), `クイックメモ\n\n${memo.text || ""}`);
+      if (memo) showTrashPreview("クイックメモ", memo.text || "");
     },
   },
 };
