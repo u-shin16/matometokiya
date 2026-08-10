@@ -12118,23 +12118,55 @@ function normalizeMediaCaretAnchors(root = els.contentInput) {
   });
 }
 
-function placeCaretInMediaCaretAnchor(anchor) {
-  if (!anchor) return;
-  els.contentInput.focus();
-  anchor.querySelectorAll("br").forEach(br => br.remove());
-  if (!anchor.firstChild) anchor.appendChild(document.createTextNode("\u200b"));
-  setActiveMediaCaret(anchor);
+// \u30b9\u30de\u30db\u306e\u30bf\u30c3\u30c1\u753b\u9762\u306f\u3001\u3053\u306e\u95a2\u6570\u304c Range \u3092\u7f6e\u3044\u305f\u76f4\u5f8c\u3067\u3082\u3001\u30d6\u30e9\u30a6\u30b6\u5074\u306e
+// \u300c\u30bf\u30c3\u30d7\u4f4d\u7f6e\u304b\u3089\u72ec\u81ea\u306b\u30ad\u30e3\u30ec\u30c3\u30c8\u3092\u6c7a\u3081\u76f4\u3059\u300d\u51e6\u7406\u304c\u975e\u540c\u671f\u306b\u5f8c\u8ffd\u3044\u3067\u8d70\u308b\u3053\u3068\u304c\u3042\u308b\u3002
+// \u753b\u50cf\u7528\u30a2\u30f3\u30ab\u30fc\u306f\u5e458px\u3057\u304b\u306a\u304f contentEditable="false" \u306e\u753b\u50cf\u306b\u63a5\u3057\u3066\u3044\u308b\u305f\u3081\u3001
+// \u305d\u306e\u30bf\u30c3\u30c1\u72ec\u81ea\u51e6\u7406\u304c\u300c\u7de8\u96c6\u3067\u304d\u306a\u3044\u753b\u50cf\u306b\u306f\u7f6e\u3051\u306a\u3044\u300d\u3068\u5224\u65ad\u3057\u3001\u30ad\u30e3\u30ec\u30c3\u30c8\u3092
+// \u96a3\u63a5\u3059\u308b\u666e\u901a\u306e\u30c6\u30ad\u30b9\u30c8\u5074\u3078\u52dd\u624b\u306b\u305a\u3089\u3057\u3066\u3057\u307e\u3046\u3002\u305a\u308c\u305f\u5148\u306f caret-color:
+// transparent \u306e\u5bfe\u8c61\u5916\u306a\u306e\u3067\u3001\u305d\u3053\u306b\u30d6\u30e9\u30a6\u30b6\u672c\u6765\u306e\uff08\u5c0f\u3055\u3044\uff09\u30ad\u30e3\u30ec\u30c3\u30c8\u304c
+// \u300c\u753b\u50cf\u306e\u8107\u30fb\u5c11\u3057\u4e0a\u300d\u306b\u898b\u3048\u3066\u3057\u307e\u3046\uff1d\u5831\u544a\u3055\u308c\u3066\u3044\u308b\u898b\u305f\u76ee\u306e\u30ba\u30ec\u3002
+// PC \u306e\u30de\u30a6\u30b9\u30af\u30ea\u30c3\u30af\u306f\u3053\u306e\u975e\u540c\u671f\u306e\u5f8c\u8ffd\u3044\u304c\u8d77\u304d\u306a\u3044\u305f\u3081\u75c7\u72b6\u304c\u51fa\u306a\u3044\u3002
+function placeSelectionRangeInAnchor(anchor) {
   try {
+    anchor.querySelectorAll("br").forEach(br => br.remove());
+    if (!anchor.firstChild) anchor.appendChild(document.createTextNode("\u200b"));
     const range = document.createRange();
     range.setStart(anchor.firstChild, 0);
     range.collapse(true);
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
+    return true;
   } catch (_) {
     // Some embedded browser layers can fail range placement; keep the visible caret.
+    return false;
   }
+}
+
+const isCoarsePointerDevice = () => window.matchMedia?.("(pointer: coarse)").matches ?? false;
+
+function placeCaretInMediaCaretAnchor(anchor) {
+  if (!anchor) return;
+  els.contentInput.focus();
+  anchor.querySelectorAll("br").forEach(br => br.remove());
+  if (!anchor.firstChild) anchor.appendChild(document.createTextNode("\u200b"));
+  setActiveMediaCaret(anchor);
+  placeSelectionRangeInAnchor(anchor);
   requestAnimationFrame(() => setActiveMediaCaret(anchor));
+
+  // \u30bf\u30c3\u30c1\u7aef\u672b\u9650\u5b9a\uff1a\u30d6\u30e9\u30a6\u30b6\u5074\u306e\u5f8c\u8ffd\u3044\u30ad\u30e3\u30ec\u30c3\u30c8\u79fb\u52d5\u3067\u30a2\u30f3\u30ab\u30fc\u304b\u3089\u5916\u308c\u3066\u3044\u305f\u3089
+  // \u7f6e\u304d\u76f4\u3059\u3002PC\uff08pointer: fine\uff09\u306f\u3053\u306e\u518d\u88dc\u6b63\u3092\u4e00\u5207\u884c\u308f\u305a\u3001\u65e2\u5b58\u306e\u6319\u52d5\u306e\u307e\u307e\u3002
+  if (isCoarsePointerDevice()) {
+    setTimeout(() => {
+      if (!anchor.isConnected) return;
+      const selection = window.getSelection();
+      const stillInAnchor = !!selection?.rangeCount &&
+        selection.isCollapsed &&
+        (selection.anchorNode === anchor || anchor.contains(selection.anchorNode));
+      if (!stillInAnchor) placeSelectionRangeInAnchor(anchor);
+      setActiveMediaCaret(anchor);
+    }, 200);
+  }
 }
 
 function placeCaretInMediaTextLine(line) {
