@@ -2919,13 +2919,22 @@ async function loadSignedInWorkspace(user) {
   state.uid = user.uid;
   await restoreSavedCollabRoom(user.uid);
   await restorePersonalWorkspaceIfSavedCollabIsStale(user.uid);
-  [state.templates, state.mindMapTemplates, state.todos] = await Promise.all([
-    ensureOfficialTemplates(user.uid),
-    ensureOfficialMindMapTemplates(user.uid),
-    loadTodos(),
-  ]);
-  updateTodoButton();
-  await reloadCurrentWorkspace();
+
+  // メモ一覧の描画（renderTree/renderEditor）はテンプレート・TODOのデータを
+  // 参照しないため、直列に待つ必要がない。直列だとモバイル回線では1往復ごとの
+  // 遅延が積み重なり、メモが表示されるまでの体感速度が大きく悪化するため、
+  // メモ本体の読み込みとテンプレート/TODOの読み込みを並行して走らせる。
+  const workspaceReady = reloadCurrentWorkspace();
+  try {
+    [state.templates, state.mindMapTemplates, state.todos] = await Promise.all([
+      ensureOfficialTemplates(user.uid),
+      ensureOfficialMindMapTemplates(user.uid),
+      loadTodos(),
+    ]);
+    updateTodoButton();
+  } finally {
+    await workspaceReady;
+  }
 }
 
 function openAppManagement(anchor) {
