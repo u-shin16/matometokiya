@@ -12043,6 +12043,7 @@ function clearActiveMediaCaret(root = els.contentInput) {
     .forEach(anchor => anchor.classList.remove("is-active-media-caret", "caret-shown-on-figure"));
   root.querySelectorAll(".inline-media-figure.has-left-caret, .inline-media-figure.has-right-caret")
     .forEach(figure => figure.classList.remove("has-left-caret", "has-right-caret"));
+  els.contentInput.classList.remove("has-media-caret-active");
 }
 
 // キャレットが画像のすぐ前（このアンカーの次が画像）にある時は画像の左端に、
@@ -12055,9 +12056,11 @@ function updateAdjacentMediaCaretSide(anchor) {
   if (isInlineMediaFigure(next)) {
     next.classList.add("has-left-caret");
     anchor.classList.add("caret-shown-on-figure");
+    els.contentInput.classList.add("has-media-caret-active");
   } else if (isInlineMediaFigure(prev)) {
     prev.classList.add("has-right-caret");
     anchor.classList.add("caret-shown-on-figure");
+    els.contentInput.classList.add("has-media-caret-active");
   }
 }
 
@@ -12152,8 +12155,6 @@ function placeSelectionRangeInAnchor(anchor) {
   }
 }
 
-const isCoarsePointerDevice = () => window.matchMedia?.("(pointer: coarse)").matches ?? false;
-
 function placeCaretInMediaCaretAnchor(anchor) {
   if (!anchor) return;
   els.contentInput.focus();
@@ -12162,20 +12163,6 @@ function placeCaretInMediaCaretAnchor(anchor) {
   setActiveMediaCaret(anchor);
   placeSelectionRangeInAnchor(anchor);
   requestAnimationFrame(() => setActiveMediaCaret(anchor));
-
-  // \u30bf\u30c3\u30c1\u7aef\u672b\u9650\u5b9a\uff1a\u30d6\u30e9\u30a6\u30b6\u5074\u306e\u5f8c\u8ffd\u3044\u30ad\u30e3\u30ec\u30c3\u30c8\u79fb\u52d5\u3067\u30a2\u30f3\u30ab\u30fc\u304b\u3089\u5916\u308c\u3066\u3044\u305f\u3089
-  // \u7f6e\u304d\u76f4\u3059\u3002PC\uff08pointer: fine\uff09\u306f\u3053\u306e\u518d\u88dc\u6b63\u3092\u4e00\u5207\u884c\u308f\u305a\u3001\u65e2\u5b58\u306e\u6319\u52d5\u306e\u307e\u307e\u3002
-  if (isCoarsePointerDevice()) {
-    setTimeout(() => {
-      if (!anchor.isConnected) return;
-      const selection = window.getSelection();
-      const stillInAnchor = !!selection?.rangeCount &&
-        selection.isCollapsed &&
-        (selection.anchorNode === anchor || anchor.contains(selection.anchorNode));
-      if (!stillInAnchor) placeSelectionRangeInAnchor(anchor);
-      setActiveMediaCaret(anchor);
-    }, 200);
-  }
 }
 
 function placeCaretInMediaTextLine(line) {

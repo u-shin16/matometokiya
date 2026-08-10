@@ -1034,6 +1034,15 @@ body.has-large-editor-open .note-head {
   border-color: var(--primary);
 }
 
+/* 画像の直前・直後にキャレットがある間は、8px幅のアンカー要素だけに
+   caret-color: transparent をかけても一部のモバイルブラウザでは効かず、
+   画像の高さいっぱいの自作キャレット（has-left-caret/has-right-caret）と
+   ブラウザ本来の小さいキャレットが二重に見えることがある。編集領域全体の
+   caret-color を直接切り替えることで、どのブラウザでも確実に隠す。 */
+.content-input.has-media-caret-active {
+  caret-color: transparent;
+}
+
 .content-input a.memo-link,
 .content-input a[href] {
   position: relative;
