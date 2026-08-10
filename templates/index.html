@@ -18,6 +18,14 @@
   <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v=static_version('css/style.css')) }}">
 
+  <!-- 起動時、末尾の<script>群が1本ずつ順番にダウンロードされるのを避けるため、
+       先読みして並行取得させる（実行順序やタイミングは変えない）。 -->
+  <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js">
+  <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js">
+  <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js">
+  <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js">
+  <link rel="preload" as="script" href="{{ url_for('static', filename='js/script.js', v=static_version('js/script.js')) }}">
+
   <meta property="og:title" content="まとめときや｜階層メモ帳アプリ">
   <meta property="og:description" content="アイデアを階層的に整理できるシンプルなメモ帳アプリです。画像・動画の添付にも対応。">
   <meta property="og:type" content="website">

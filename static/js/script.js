@@ -450,6 +450,11 @@ const els = {
 const auth    = (window.FIREBASE_READY && typeof firebase !== "undefined") ? firebase.auth() : null;
 const db      = (window.FIREBASE_READY && typeof firebase !== "undefined") ? firebase.firestore() : null;
 const storage = (window.FIREBASE_READY && typeof firebase !== "undefined") ? firebase.storage() : null;
+// モバイル回線・一部のキャリア/プロキシ環境ではFirestoreの既定の接続方式
+// （WebChannelのストリーミング接続）の確立が非常に遅くなることがある。
+// ロングポーリングへの自動切り替えを有効にし、初回読み込みが固まって
+// 見える時間を短縮する。Wi-Fi等の通常環境ではWebChannelのまま動作する。
+if (db) db.settings({ experimentalAutoDetectLongPolling: true });
 if (auth) auth.languageCode = "ja";
 
 const STORAGE_ENABLED = Boolean(storage && window.firebaseConfig?.storageBucket);
