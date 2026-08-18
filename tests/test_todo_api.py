@@ -251,6 +251,33 @@ class AllNotesPayloadTests(unittest.TestCase):
 
         self.assertTrue(result[0]["checked"])
 
+    def test_locked_note_content_is_hidden_by_default(self):
+        notes = [
+            ("note", {"title": "鍵付き", "content": "秘密の内容", "parent_id": None, "locked": True})
+        ]
+
+        result = app_module.build_all_notes_payload(notes)
+
+        self.assertTrue(result[0]["locked"])
+        self.assertEqual(result[0]["content"], "")
+
+    def test_locked_note_content_is_included_when_opted_in(self):
+        notes = [
+            ("note", {"title": "鍵付き", "content": "秘密の内容", "parent_id": None, "locked": True})
+        ]
+
+        result = app_module.build_all_notes_payload(notes, include_locked=True)
+
+        self.assertEqual(result[0]["content"], "秘密の内容")
+
+    def test_unlocked_note_content_is_always_included(self):
+        notes = [("note", {"title": "通常", "content": "内容", "parent_id": None})]
+
+        result = app_module.build_all_notes_payload(notes)
+
+        self.assertFalse(result[0]["locked"])
+        self.assertEqual(result[0]["content"], "内容")
+
 
 class TodoApiTests(unittest.TestCase):
     TOKEN = "test-token-that-is-long-and-random-enough"
@@ -359,7 +386,22 @@ class NotesApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["notes"], notes)
         self.assertTrue(response.get_json()["read_only"])
-        fetch.assert_called_once_with(self.UID)
+        fetch.assert_called_once_with(self.UID, False)
+
+    def test_include_locked_query_param_is_passed_through(self):
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(
+                app_module, "fetch_all_notes_for_uid", return_value=[]
+            ) as fetch,
+        ):
+            response = self.client.get(
+                "/api/v1/notes?include_locked=true",
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        fetch.assert_called_once_with(self.UID, True)
 
     def test_post_is_not_allowed(self):
         response = self.client.post("/api/v1/notes")

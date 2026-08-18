@@ -790,7 +790,12 @@ def fetch_incomplete_todos_for_uid(uid: str, project: str | None = None) -> list
     return build_incomplete_todo_payload(todo_documents, note_documents, project)
 
 
-def build_all_notes_payload(note_documents: list[tuple[str, dict]]) -> list[dict]:
+def build_all_notes_payload(
+    note_documents: list[tuple[str, dict]], include_locked: bool = False
+) -> list[dict]:
+    """鍵付きメモ（`locked`）は、明示的にinclude_locked=Trueを指定しない限り本文を
+    含めずタイトルだけ返す。鍵はFirestore上は暗号化ではなく画面上の表示制御に過ぎない
+    ため、指定がなければ「うっかり中身までClaudeに渡ってしまう」ことを避ける。"""
     notes_by_id = {document_id: data for document_id, data in note_documents}
 
     entries = []
@@ -799,6 +804,9 @@ def build_all_notes_payload(note_documents: list[tuple[str, dict]]) -> list[dict
         content = str(data.get("content") or "").strip()
         if not title and not content:
             continue
+        locked = bool(data.get("locked"))
+        if locked and not include_locked:
+            content = ""
         order = data.get("order")
         order = order if isinstance(order, (int, float)) else 0
         path = _ancestor_titles(document_id, notes_by_id)
@@ -810,6 +818,7 @@ def build_all_notes_payload(note_documents: list[tuple[str, dict]]) -> list[dict
                     "title": title or "無題",
                     "content": content,
                     "path": path,
+                    "locked": locked,
                     "checked": bool(data.get("checked")),
                     "created_at": _serialize_firestore_value(data.get("created_at")),
                 },
@@ -820,7 +829,7 @@ def build_all_notes_payload(note_documents: list[tuple[str, dict]]) -> list[dict
     return [note for _sort_key, note in entries]
 
 
-def fetch_all_notes_for_uid(uid: str) -> list[dict]:
+def fetch_all_notes_for_uid(uid: str, include_locked: bool = False) -> list[dict]:
     """このユーザーの全メモを、階層の浅い順に並べて返す（要約などClaude Code側での
     全量把握のための読み取り専用API向け。Todo取得APIと同じ読み取り用トークンを使う）。"""
     user_ref = get_firestore_client().collection("users").document(uid)
@@ -828,7 +837,7 @@ def fetch_all_notes_for_uid(uid: str) -> list[dict]:
         (document.id, document.to_dict() or {})
         for document in user_ref.collection("notes").stream()
     ]
-    return build_all_notes_payload(note_documents)
+    return build_all_notes_payload(note_documents, include_locked)
 
 
 def mark_todo_done_for_uid(uid: str, todo_id: str) -> bool:
@@ -1212,8 +1221,10 @@ def api_all_notes():
     if auth_error is not None:
         return auth_error
 
+    include_locked = request.args.get("include_locked", "").strip().lower() == "true"
+
     try:
-        notes = fetch_all_notes_for_uid(uid)
+        notes = fetch_all_notes_for_uid(uid, include_locked)
     except Exception:
         app.logger.exception("Notes APIでFirestoreの読み取りに失敗しました。")
         return (

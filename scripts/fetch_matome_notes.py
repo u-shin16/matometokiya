@@ -37,10 +37,15 @@ def parse_args() -> argparse.Namespace:
         default=os.getenv(API_URL_ENV, "").strip(),
         help=f"Todo APIのURL（既定: 環境変数 {API_URL_ENV}。末尾の/todosを/notesに置き換えて使用）",
     )
+    parser.add_argument(
+        "--include-locked",
+        action="store_true",
+        help="鍵付きメモの本文も含めて取得する（既定ではタイトルのみ）",
+    )
     return parser.parse_args()
 
 
-def _notes_api_url(todo_api_url: str) -> str:
+def _notes_api_url(todo_api_url: str, include_locked: bool = False) -> str:
     if not todo_api_url:
         raise FetchError(f"{API_URL_ENV} または --api-url を指定してください。")
 
@@ -55,7 +60,8 @@ def _notes_api_url(todo_api_url: str) -> str:
         raise FetchError(f"{API_URL_ENV} は /api/v1/todos を指すURLにしてください。")
 
     notes_path = parsed.path[: -len("/todos")] + "/notes"
-    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, notes_path, "", ""))
+    query = "include_locked=true" if include_locked else ""
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, notes_path, query, ""))
 
 
 def _read_error_message(error: urllib.error.HTTPError) -> str:
@@ -70,11 +76,11 @@ def _read_error_message(error: urllib.error.HTTPError) -> str:
     return f"HTTP {error.code}"
 
 
-def fetch_notes(api_url: str, token: str) -> list[dict[str, Any]]:
+def fetch_notes(api_url: str, token: str, include_locked: bool = False) -> list[dict[str, Any]]:
     if not token:
         raise FetchError(f"環境変数 {API_TOKEN_ENV} を設定してください。")
 
-    url = _notes_api_url(api_url)
+    url = _notes_api_url(api_url, include_locked)
     request = urllib.request.Request(
         url,
         headers={
@@ -119,17 +125,24 @@ def format_notes(notes: list[dict[str, Any]]) -> str:
         indent = "  " * depth
         title = _single_line(note.get("title"), "無題")
         checked = "✓ " if note.get("checked") else ""
-        lines.append(f"{indent}- {checked}{title}")
+        locked = "🔒 " if note.get("locked") else ""
+        lines.append(f"{indent}- {checked}{locked}{title}")
         content = _single_line(note.get("content"))
         if content:
             lines.append(f"{indent}  {content}")
+        elif note.get("locked"):
+            lines.append(f"{indent}  (鍵付きのため本文は非表示。含めるには --include-locked)")
     return "\n".join(lines)
 
 
 def main() -> int:
     args = parse_args()
     try:
-        notes = fetch_notes(args.api_url, os.getenv(API_TOKEN_ENV, "").strip())
+        notes = fetch_notes(
+            args.api_url,
+            os.getenv(API_TOKEN_ENV, "").strip(),
+            args.include_locked,
+        )
     except FetchError as error:
         print(f"エラー: {error}", file=sys.stderr)
         return 1
