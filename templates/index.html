@@ -1410,6 +1410,7 @@
 
       <div class="app-account-claude">
         <p class="settings-section-title">Claude連携</p>
+        <p class="app-account-claude-explain">連携すると、Claude Code（AIアシスタント）からあなたのTodoとメモを読み取れるようになります。Todoを完了にする操作もできます。鍵付きメモの内容は、下のチェックを入れない限り渡りません。</p>
         <p id="claudeConnectStatus" class="app-account-claude-status">確認中…</p>
         <div id="claudeConnectCodeBox" class="app-account-claude-code" hidden>
           <p class="app-account-claude-code-title">コード</p>
@@ -1425,7 +1426,7 @@
           <input id="claudeConnectIncludeLockedToggle" type="checkbox">
           <span>鍵付きメモの内容もClaude連携で取得できるようにする</span>
         </label>
-        <p class="app-account-claude-locked-note">オフのままだと、鍵付きメモはタイトルだけがClaudeに渡り、内容は渡りません。</p>
+        <p class="app-account-claude-locked-note">鍵付きメモは、パスワードなど他人に見られたくない内容を書く場所として使っている場合が多いはずです。オンにすると、その内容もClaude Codeから読めるようになります。心当たりがなければオフのままにしてください。</p>
         <div class="app-account-claude-actions">
           <button id="claudeConnectStartBtn" class="app-account-action-btn" type="button">連携する</button>
           <button id="claudeConnectRevokeBtn" class="app-account-action-btn danger" type="button" hidden>連携を解除</button>

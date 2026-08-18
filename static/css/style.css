@@ -3042,6 +3042,13 @@ body.has-management-open {
   gap: 8px;
 }
 
+.app-account-claude-explain {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
 .app-account-claude-status {
   font-size: 12px;
   color: var(--muted);
