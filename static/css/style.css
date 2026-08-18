@@ -3074,9 +3074,9 @@ body.has-management-open {
   color: var(--muted);
   line-height: 1.6;
   padding: 10px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--primary);
   border-radius: 10px;
-  background: var(--panel);
+  background: var(--primary-soft);
   display: grid;
   gap: 8px;
 }
