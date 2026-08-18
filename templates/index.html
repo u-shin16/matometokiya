@@ -1425,6 +1425,11 @@
           <button id="claudeConnectStartBtn" class="app-account-action-btn" type="button">連携する</button>
           <button id="claudeConnectRevokeBtn" class="app-account-action-btn danger" type="button" hidden>連携を解除</button>
         </div>
+        <label class="auth-remember app-account-claude-locked-toggle">
+          <input id="claudeConnectIncludeLockedToggle" type="checkbox">
+          <span>鍵付きメモの内容もClaude連携で取得できるようにする</span>
+        </label>
+        <p class="app-account-claude-locked-note">オフのままだと、鍵付きメモはタイトルだけがClaudeに渡り、内容は渡りません。</p>
       </div>
     </section>
   </div>

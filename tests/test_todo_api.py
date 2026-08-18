@@ -365,6 +365,7 @@ class NotesApiTests(unittest.TestCase):
         notes = [{"id": "note-1", "title": "メモ", "content": "", "path": [], "checked": False}]
         with (
             patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "get_claude_include_locked_notes", return_value=False),
             patch.object(
                 app_module, "fetch_all_notes_for_uid", return_value=notes
             ) as fetch,
@@ -377,97 +378,78 @@ class NotesApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["notes"], notes)
         self.assertTrue(response.get_json()["read_only"])
-        fetch.assert_called_once_with(self.UID)
+        fetch.assert_called_once_with(self.UID, False)
 
-    def test_include_locked_query_param_has_no_effect(self):
-        notes = [{"id": "note-1", "title": "メモ", "content": "", "path": [], "checked": False}]
+    def test_passes_user_locked_notes_setting_to_fetch(self):
         with (
             patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "get_claude_include_locked_notes", return_value=True),
             patch.object(
-                app_module, "fetch_all_notes_for_uid", return_value=notes
+                app_module, "fetch_all_notes_for_uid", return_value=[]
             ) as fetch,
         ):
             response = self.client.get(
-                "/api/v1/notes?include_locked=true",
+                "/api/v1/notes",
                 headers={"Authorization": f"Bearer {self.TOKEN}"},
             )
 
         self.assertEqual(response.status_code, 200)
-        fetch.assert_called_once_with(self.UID)
+        fetch.assert_called_once_with(self.UID, True)
 
     def test_post_is_not_allowed(self):
         response = self.client.post("/api/v1/notes")
         self.assertEqual(response.status_code, 405)
 
 
-class NotesUnlockApiTests(unittest.TestCase):
-    TOKEN = "test-token-that-is-long-and-random-enough"
+class ClaudeConnectLockedNotesSettingApiTests(unittest.TestCase):
     UID = "firebase-user-123"
 
     def setUp(self):
         app_module.app.config.update(TESTING=True)
         self.client = app_module.app.test_client()
-        self.env = {
-            "MATOME_TODO_API_UID": self.UID,
-            "MATOME_TODO_API_TOKEN_SHA256": hashlib.sha256(
-                self.TOKEN.encode("utf-8")
-            ).hexdigest(),
-        }
 
-    def test_rejects_missing_token(self):
-        with patch.dict(os.environ, self.env, clear=False):
-            response = self.client.post("/api/v1/notes/unlock", json={"password": "x"})
-
+    def test_get_requires_login(self):
+        response = self.client.get("/api/v1/claude-connect/locked-notes-setting")
         self.assertEqual(response.status_code, 401)
 
-    def test_rejects_missing_password(self):
-        with patch.dict(os.environ, self.env, clear=False):
-            response = self.client.post(
-                "/api/v1/notes/unlock",
-                json={},
-                headers={"Authorization": f"Bearer {self.TOKEN}"},
-            )
-
-        self.assertEqual(response.status_code, 400)
-
-    def test_rejects_wrong_password_without_returning_notes(self):
-        with (
-            patch.dict(os.environ, self.env, clear=False),
-            patch.object(app_module, "verify_account_password", return_value=False),
-            patch.object(app_module, "fetch_all_notes_for_uid") as fetch,
-        ):
-            response = self.client.post(
-                "/api/v1/notes/unlock",
-                json={"password": "wrong"},
-                headers={"Authorization": f"Bearer {self.TOKEN}"},
-            )
-
+    def test_post_requires_login(self):
+        response = self.client.post("/api/v1/claude-connect/locked-notes-setting")
         self.assertEqual(response.status_code, 401)
-        fetch.assert_not_called()
 
-    def test_returns_notes_with_locked_content_when_password_verified(self):
-        notes = [{"id": "note-1", "title": "鍵付き", "content": "秘密", "locked": True}]
+    def test_get_returns_current_setting(self):
         with (
-            patch.dict(os.environ, self.env, clear=False),
-            patch.object(app_module, "verify_account_password", return_value=True) as verify,
             patch.object(
-                app_module, "fetch_all_notes_for_uid", return_value=notes
-            ) as fetch,
+                app_module, "verify_firebase_id_token", return_value=(self.UID, None)
+            ),
+            patch.object(
+                app_module, "get_claude_include_locked_notes", return_value=True
+            ) as get_setting,
         ):
-            response = self.client.post(
-                "/api/v1/notes/unlock",
-                json={"password": "correct"},
-                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            response = self.client.get(
+                "/api/v1/claude-connect/locked-notes-setting",
+                headers={"Authorization": "Bearer some-id-token"},
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["notes"], notes)
-        verify.assert_called_once_with(self.UID, "correct")
-        fetch.assert_called_once_with(self.UID, include_locked=True)
+        self.assertEqual(response.get_json(), {"include_locked": True})
+        get_setting.assert_called_once_with(self.UID)
 
-    def test_get_is_not_allowed(self):
-        response = self.client.get("/api/v1/notes/unlock")
-        self.assertEqual(response.status_code, 405)
+    def test_post_updates_setting(self):
+        with (
+            patch.object(
+                app_module, "verify_firebase_id_token", return_value=(self.UID, None)
+            ),
+            patch.object(app_module, "set_claude_include_locked_notes") as set_setting,
+        ):
+            response = self.client.post(
+                "/api/v1/claude-connect/locked-notes-setting",
+                json={"include_locked": True},
+                headers={"Authorization": "Bearer some-id-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"include_locked": True})
+        set_setting.assert_called_once_with(self.UID, True)
 
 
 class TodoCompleteApiTests(unittest.TestCase):

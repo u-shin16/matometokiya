@@ -33,10 +33,6 @@ app = Flask(__name__)
 SITE_NAME = "まとめときや"
 SITE_URL = "https://matome.webtool-labs.com"
 FIREBASE_AUTH_DOMAIN = "memo-app-9dd98.firebaseapp.com"
-# static/js/firebase-config.jsと同じ値。FirebaseのWeb向けAPIキーは秘匿情報ではなく
-# クライアントに公開される前提のキーなので、サーバー側でIdentity Toolkit APIを
-# 呼ぶ用途にもそのまま使う。
-FIREBASE_WEB_API_KEY = "AIzaSyDagDgJSe9WWMwYNsb7AhfrB7P_AVlfaZ0"
 OPERATOR_NAME = "RakuYade"
 OPERATOR_PROFILE_URL = "https://profile.webtool-labs.com/"
 OPERATOR_SITE_URL = "https://webtool-labs.com/"
@@ -797,10 +793,8 @@ def fetch_incomplete_todos_for_uid(uid: str, project: str | None = None) -> list
 def build_all_notes_payload(
     note_documents: list[tuple[str, dict]], include_locked: bool = False
 ) -> list[dict]:
-    """鍵付きメモ（`locked`）は既定では本文を含めずタイトルだけ返す。include_locked=Trueは
-    呼び出し元が事前にアカウントのログインパスワードを検証済みの場合だけ渡すこと
-    （verify_account_passwordを参照）。パスワード検証なしにこの引数だけでは
-    本文を取得できないようにするのが前提。"""
+    """鍵付きメモ（`locked`）は、この利用者が「Claude連携」画面のトグルで許可している
+    場合（include_locked=True）だけ本文を含める。既定はタイトルのみ。"""
     notes_by_id = {document_id: data for document_id, data in note_documents}
 
     entries = []
@@ -843,46 +837,6 @@ def fetch_all_notes_for_uid(uid: str, include_locked: bool = False) -> list[dict
         for document in user_ref.collection("notes").stream()
     ]
     return build_all_notes_payload(note_documents, include_locked)
-
-
-def verify_account_password(uid: str, password: str) -> bool:
-    """アプリ画面が鍵付きメモを開く際に行うのと同じ、Firebaseのアカウントログイン
-    パスワード検証をサーバー側で行う（Identity Toolkit APIを直接叩く。Admin SDKには
-    パスワード検証機能がないため）。"""
-    from firebase_admin import auth as firebase_auth
-
-    _ensure_firebase_app()
-    if not password:
-        return False
-
-    try:
-        email = firebase_auth.get_user(uid).email
-    except Exception:
-        return False
-    if not email:
-        return False
-
-    url = (
-        "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword"
-        f"?key={FIREBASE_WEB_API_KEY}"
-    )
-    body = json.dumps(
-        {"email": email, "password": password, "returnSecureToken": False}
-    ).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10):
-            return True
-    except urllib.error.HTTPError:
-        return False
-    except urllib.error.URLError:
-        app.logger.exception("パスワード検証APIへの接続に失敗しました。")
-        return False
 
 
 def mark_todo_done_for_uid(uid: str, todo_id: str) -> bool:
@@ -1035,6 +989,21 @@ def get_claude_connect_status(uid: str) -> str | None:
         return None
     connected_at = (doc.to_dict() or {}).get("claude_connected_at")
     return _serialize_firestore_value(connected_at) if connected_at else None
+
+
+def get_claude_include_locked_notes(uid: str) -> bool:
+    """「Claude連携」画面のトグルで、この利用者が鍵付きメモの本文もClaudeに渡す設定に
+    しているかどうか。既定はFalse（渡さない）。"""
+    doc = get_firestore_client().collection("users").document(uid).get()
+    if not doc.exists:
+        return False
+    return bool((doc.to_dict() or {}).get("claude_include_locked_notes"))
+
+
+def set_claude_include_locked_notes(uid: str, include_locked: bool) -> None:
+    get_firestore_client().collection("users").document(uid).set(
+        {"claude_include_locked_notes": bool(include_locked)}, merge=True
+    )
 
 
 @app.get("/app")
@@ -1261,13 +1230,15 @@ def api_incomplete_todos():
 
 @app.get("/api/v1/notes")
 def api_all_notes():
-    """全メモの一覧を返す（読み取り専用）。Todo取得APIと同じ読み取り用トークンで認証する。"""
+    """全メモの一覧を返す（読み取り専用）。Todo取得APIと同じ読み取り用トークンで認証する。
+    鍵付きメモの本文は、この利用者が「Claude連携」画面のトグルで許可している場合だけ含める。"""
     uid, auth_error = authenticate_todo_api_request()
     if auth_error is not None:
         return auth_error
 
     try:
-        notes = fetch_all_notes_for_uid(uid)
+        include_locked = get_claude_include_locked_notes(uid)
+        notes = fetch_all_notes_for_uid(uid, include_locked)
     except Exception:
         app.logger.exception("Notes APIでFirestoreの読み取りに失敗しました。")
         return (
@@ -1281,40 +1252,43 @@ def api_all_notes():
     return response
 
 
-@app.post("/api/v1/notes/unlock")
-def api_all_notes_unlock():
-    """全メモの一覧を、鍵付きメモの本文も含めて返す。アカウントのログインパスワード
-    （アプリ画面で鍵付きメモを開くときと同じもの）をリクエストボディで検証できた
-    場合だけ本文を含める。"""
-    uid, auth_error = authenticate_todo_api_request()
+@app.get("/api/v1/claude-connect/locked-notes-setting")
+def api_claude_connect_locked_notes_setting_get():
+    """「鍵付きメモの内容もClaude連携で取得できるようにする」設定の現在値を返す。
+    ログイン中の本人のみ（Firebase IDトークン認証）。"""
+    uid, auth_error = verify_firebase_id_token()
+    if auth_error is not None:
+        return auth_error
+
+    try:
+        include_locked = get_claude_include_locked_notes(uid)
+    except Exception:
+        app.logger.exception("鍵付きメモ設定の取得に失敗しました。")
+        return jsonify(error="設定の取得に失敗しました。"), 502, {"Cache-Control": "no-store"}
+
+    response = jsonify(include_locked=include_locked)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/v1/claude-connect/locked-notes-setting")
+def api_claude_connect_locked_notes_setting_post():
+    """「鍵付きメモの内容もClaude連携で取得できるようにする」設定を変更する。
+    ログイン中の本人のみ（Firebase IDトークン認証）。"""
+    uid, auth_error = verify_firebase_id_token()
     if auth_error is not None:
         return auth_error
 
     payload = request.get_json(silent=True) or {}
-    password = str(payload.get("password") or "")
-    if not password:
-        return jsonify(error="passwordを指定してください。"), 400, {"Cache-Control": "no-store"}
+    include_locked = bool(payload.get("include_locked"))
 
     try:
-        verified = verify_account_password(uid, password)
+        set_claude_include_locked_notes(uid, include_locked)
     except Exception:
-        app.logger.exception("鍵付きメモ用のパスワード検証に失敗しました。")
-        return jsonify(error="パスワードの確認に失敗しました。"), 502, {"Cache-Control": "no-store"}
+        app.logger.exception("鍵付きメモ設定の更新に失敗しました。")
+        return jsonify(error="設定の更新に失敗しました。"), 502, {"Cache-Control": "no-store"}
 
-    if not verified:
-        return jsonify(error="パスワードが正しくありません。"), 401, {"Cache-Control": "no-store"}
-
-    try:
-        notes = fetch_all_notes_for_uid(uid, include_locked=True)
-    except Exception:
-        app.logger.exception("Notes APIでFirestoreの読み取りに失敗しました。")
-        return (
-            jsonify(error="メモの取得に失敗しました。"),
-            502,
-            {"Cache-Control": "no-store"},
-        )
-
-    response = jsonify(notes=notes, count=len(notes), read_only=True)
+    response = jsonify(include_locked=include_locked)
     response.headers["Cache-Control"] = "no-store"
     return response
 

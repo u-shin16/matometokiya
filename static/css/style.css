@@ -3047,6 +3047,16 @@ body.has-management-open {
   color: var(--muted);
 }
 
+.app-account-claude-locked-toggle {
+  margin-top: 4px;
+}
+
+.app-account-claude-locked-note {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+}
+
 .app-account-claude-code {
   padding: 12px;
   border: 1px dashed var(--primary);

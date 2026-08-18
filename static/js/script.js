@@ -318,6 +318,7 @@ const els = {
   claudeConnectRefreshBtn: document.getElementById("claudeConnectRefreshBtn"),
   claudeConnectStartBtn: document.getElementById("claudeConnectStartBtn"),
   claudeConnectRevokeBtn: document.getElementById("claudeConnectRevokeBtn"),
+  claudeConnectIncludeLockedToggle: document.getElementById("claudeConnectIncludeLockedToggle"),
   appCreatorInfoBtn: document.getElementById("appCreatorInfoBtn"),
   appContactBtn:     document.getElementById("appContactBtn"),
   appInfoDialog:     document.getElementById("appInfoDialog"),
@@ -1208,6 +1209,54 @@ async function refreshClaudeConnectStatus() {
   } catch (e) {
     els.claudeConnectStatus.textContent = "状況を確認できませんでした。";
     console.error("[claudeConnect] status error", e);
+  }
+  void refreshClaudeIncludeLockedSetting();
+}
+
+async function refreshClaudeIncludeLockedSetting() {
+  const user = auth?.currentUser;
+  if (!user || !els.claudeConnectIncludeLockedToggle) return;
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/v1/claude-connect/locked-notes-setting", {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "設定の取得に失敗しました。");
+    els.claudeConnectIncludeLockedToggle.checked = Boolean(data.include_locked);
+  } catch (e) {
+    console.error("[claudeConnect] locked-notes-setting fetch error", e);
+  }
+}
+
+async function handleClaudeConnectIncludeLockedChange() {
+  const user = auth?.currentUser;
+  const toggle = els.claudeConnectIncludeLockedToggle;
+  if (!user || !toggle) return;
+  const includeLocked = toggle.checked;
+  toggle.disabled = true;
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/v1/claude-connect/locked-notes-setting", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ include_locked: includeLocked }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "設定の更新に失敗しました。");
+    showToast(
+      includeLocked
+        ? "鍵付きメモの内容もClaude連携で取得できるようにしました。"
+        : "鍵付きメモの内容はClaude連携で取得しないようにしました。"
+    );
+  } catch (e) {
+    toggle.checked = !includeLocked;
+    showToast(e.message || "設定の更新に失敗しました。");
+  } finally {
+    toggle.disabled = false;
   }
 }
 
@@ -15046,6 +15095,7 @@ if (auth) {
   els.claudeConnectRevokeBtn?.addEventListener("click", handleClaudeConnectRevoke);
   els.claudeConnectCopyBtn?.addEventListener("click", handleClaudeConnectCopy);
   els.claudeConnectRefreshBtn?.addEventListener("click", () => void refreshClaudeConnectStatus());
+  els.claudeConnectIncludeLockedToggle?.addEventListener("change", handleClaudeConnectIncludeLockedChange);
   els.authVerifyResendBtn.addEventListener("click", handleResendVerification);
   els.authVerifyRefreshBtn.addEventListener("click", handleRefreshStatus);
   els.authVerifyLogoutBtn.addEventListener("click", handleLogout);

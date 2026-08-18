@@ -249,26 +249,23 @@ Authorization: Bearer <読み取り用APIトークン>
 - `users/{uid}/notes` の全件を、階層の浅い順（親→子）に並べて返します。タイトル・本文どちらも空のメモは含みません
 - 成功時は `{"notes": [...], "count": 1, "read_only": true}` を返します
 - 各メモは `id`, `title`, `content`, `path`（ルートから直近の親までの祖先タイトル）, `locked`, `checked`, `created_at` を含みます
-- **鍵付きメモ（`locked: true`）は本文（`content`）を常に空にし、タイトルだけ返します**。中身が必要な場合は下記の鍵付きメモ解錠APIを使ってください
+- **鍵付きメモ（`locked: true`）は既定では本文（`content`）を空にし、タイトルだけ返します**。含めるかどうかは、まとめときやのアプリ画面「Claude連携」内のトグル設定（利用者本人がログイン状態で切り替える）で決まります。APIリクエスト側からは指定できません
 - 認証失敗は `401`、Firestore読み取り失敗は `502` です
-- PC側では `scripts/fetch_matome_notes.py` を実行すると、`MATOME_TODO_API_URL`・`MATOME_TODO_API_TOKEN`をそのまま使って全メモの階層を標準出力に表示します（ファイルへの書き込みはしません）。鍵付きメモは「(鍵付きのため本文は非表示)」とだけ表示されます。Claude Codeがこの出力を読んで要約などを行います
+- PC側では `scripts/fetch_matome_notes.py` を実行すると、`MATOME_TODO_API_URL`・`MATOME_TODO_API_TOKEN`をそのまま使って全メモの階層を標準出力に表示します（ファイルへの書き込みはしません）。トグルがオフなら鍵付きメモは「(鍵付きのため本文は非表示)」とだけ表示されます。Claude Codeがこの出力を読んで要約などを行います
 
-### 鍵付きメモの本文も取得する（パスワード検証あり）
+### 鍵付きメモの内容もClaude連携で取得するかどうかの設定
 
 ```text
-POST /api/v1/notes/unlock
-Authorization: Bearer <読み取り用APIトークン>
-Content-Type: application/json
+GET  /api/v1/claude-connect/locked-notes-setting
+POST /api/v1/claude-connect/locked-notes-setting
+Authorization: Bearer <FirebaseのIDトークン（ログイン中の本人）>
 
-{"password": "アカウントのログインパスワード"}
+POSTのボディ: {"include_locked": true}
 ```
 
-- 本番URL: `https://matome.webtool-labs.com/api/v1/notes/unlock`
-- Todo取得APIと同じ読み取り用トークンで認証したうえで、**さらにリクエストボディでアカウントのログインパスワードを検証します**。アプリ画面で鍵付きメモを開くときに求められるのと同じパスワードです
-- サーバー側でFirebaseのIdentity Toolkit API（`accounts:signInWithPassword`）にemail・passwordを渡して検証します。Firebase Admin SDK自体にはパスワード検証機能がないため、クライアントSDKが内部で使っているのと同じREST APIを直接呼び出しています
-- パスワードが正しければ、鍵付きメモも含めた全メモの本文を返します。誤っていれば `401` を返し、メモは一切返しません
-- `password`未指定は `400`、パスワード確認自体の失敗（Identity Toolkit APIへの接続失敗など）は `502` です
-- PC側では `scripts/fetch_matome_notes.py --include-locked` を実行すると、その場でパスワード入力を求められます（`getpass`のため画面には表示されません）。パスワードは`.env`などには保存されず、その1回のリクエストにだけ使われます
+- アプリ画面「アカウント」→「Claude連携」内のチェックボックス「鍵付きメモの内容もClaude連携で取得できるようにする」から変更します（既定はオフ）
+- ログイン中の本人だけが変更できます（Todo/Notes APIの読み取り用トークンではなく、Firebase IDトークンで認証）
+- 設定値は `users/{uid}.claude_include_locked_notes` に保存され、`GET /api/v1/notes` はこの値を見て鍵付きメモの本文を含めるかどうかを決めます
 
 ### トークンとVPS側の環境変数
 
