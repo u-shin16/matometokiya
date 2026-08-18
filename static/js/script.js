@@ -319,6 +319,8 @@ const els = {
   claudeConnectStartBtn: document.getElementById("claudeConnectStartBtn"),
   claudeConnectRevokeBtn: document.getElementById("claudeConnectRevokeBtn"),
   claudeConnectIncludeLockedToggle: document.getElementById("claudeConnectIncludeLockedToggle"),
+  claudeConnectInfoBtn: document.getElementById("claudeConnectInfoBtn"),
+  claudeConnectInfoBox: document.getElementById("claudeConnectInfoBox"),
   appCreatorInfoBtn: document.getElementById("appCreatorInfoBtn"),
   appContactBtn:     document.getElementById("appContactBtn"),
   appInfoDialog:     document.getElementById("appInfoDialog"),
@@ -1172,6 +1174,15 @@ function openAppAccount() {
   els.appAccountBtn?.setAttribute("aria-expanded", "true");
   requestAnimationFrame(() => els.appAccountBack?.focus());
   void refreshClaudeConnectStatus();
+}
+
+function toggleClaudeConnectInfo() {
+  const box = els.claudeConnectInfoBox;
+  const btn = els.claudeConnectInfoBtn;
+  if (!box || !btn) return;
+  const expanded = !box.hidden;
+  box.hidden = expanded;
+  btn.setAttribute("aria-expanded", String(!expanded));
 }
 
 function buildClaudeConnectMessage(code) {
@@ -15096,6 +15107,7 @@ if (auth) {
   els.claudeConnectCopyBtn?.addEventListener("click", handleClaudeConnectCopy);
   els.claudeConnectRefreshBtn?.addEventListener("click", () => void refreshClaudeConnectStatus());
   els.claudeConnectIncludeLockedToggle?.addEventListener("change", handleClaudeConnectIncludeLockedChange);
+  els.claudeConnectInfoBtn?.addEventListener("click", toggleClaudeConnectInfo);
   els.authVerifyResendBtn.addEventListener("click", handleResendVerification);
   els.authVerifyRefreshBtn.addEventListener("click", handleRefreshStatus);
   els.authVerifyLogoutBtn.addEventListener("click", handleLogout);
