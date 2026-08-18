@@ -400,6 +400,76 @@ class NotesApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 405)
 
 
+class NotesUnlockApiTests(unittest.TestCase):
+    TOKEN = "test-token-that-is-long-and-random-enough"
+    UID = "firebase-user-123"
+
+    def setUp(self):
+        app_module.app.config.update(TESTING=True)
+        self.client = app_module.app.test_client()
+        self.env = {
+            "MATOME_TODO_API_UID": self.UID,
+            "MATOME_TODO_API_TOKEN_SHA256": hashlib.sha256(
+                self.TOKEN.encode("utf-8")
+            ).hexdigest(),
+        }
+
+    def test_rejects_missing_token(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            response = self.client.post("/api/v1/notes/unlock", json={"password": "x"})
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_rejects_missing_password(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            response = self.client.post(
+                "/api/v1/notes/unlock",
+                json={},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_rejects_wrong_password_without_returning_notes(self):
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "verify_account_password", return_value=False),
+            patch.object(app_module, "fetch_all_notes_for_uid") as fetch,
+        ):
+            response = self.client.post(
+                "/api/v1/notes/unlock",
+                json={"password": "wrong"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 401)
+        fetch.assert_not_called()
+
+    def test_returns_notes_with_locked_content_when_password_verified(self):
+        notes = [{"id": "note-1", "title": "鍵付き", "content": "秘密", "locked": True}]
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "verify_account_password", return_value=True) as verify,
+            patch.object(
+                app_module, "fetch_all_notes_for_uid", return_value=notes
+            ) as fetch,
+        ):
+            response = self.client.post(
+                "/api/v1/notes/unlock",
+                json={"password": "correct"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["notes"], notes)
+        verify.assert_called_once_with(self.UID, "correct")
+        fetch.assert_called_once_with(self.UID, include_locked=True)
+
+    def test_get_is_not_allowed(self):
+        response = self.client.get("/api/v1/notes/unlock")
+        self.assertEqual(response.status_code, 405)
+
+
 class TodoCompleteApiTests(unittest.TestCase):
     READ_TOKEN = "test-read-token-that-is-long-enough"
     WRITE_TOKEN = "test-write-token-that-is-long-enough"

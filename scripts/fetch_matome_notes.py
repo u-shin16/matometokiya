@@ -1,14 +1,14 @@
 """まとめときやの全メモを取得し、階層がわかる形で標準出力へ表示する。
 Claude Codeがメモ全体を読み込んで要約するためのスクリプト。
 
-鍵付きメモの本文はAPI側で常に除外される（タイトルのみ）。アプリ画面では鍵を開く際に
-アカウントのログインパスワードを検証しているが、このAPIにはその検証を再現できない
-ため、抜け道なく常に除外する。中身を読ませたい場合はアプリ側で鍵を外してから
-取得し直すこと。"""
+鍵付きメモの本文は既定では除外される（タイトルのみ）。--include-lockedを付けると、
+アプリ画面で鍵付きメモを開くときと同じアカウントのログインパスワードをその場で
+入力してもらい、サーバー側で検証できた場合だけ本文も取得する。"""
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import sys
@@ -40,12 +40,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--api-url",
         default=os.getenv(API_URL_ENV, "").strip(),
-        help=f"Todo APIのURL(既定: 環境変数 {API_URL_ENV}。末尾の/todosを/notesに置き換えて使用)",
+        help=f"Todo APIのURL(既定: 環境変数 {API_URL_ENV}。末尾の/todosを/notesまたは/notes/unlockに置き換えて使用)",
+    )
+    parser.add_argument(
+        "--include-locked",
+        action="store_true",
+        help="鍵付きメモの本文も取得する（実行時にアカウントのログインパスワードの入力を求める）",
     )
     return parser.parse_args()
 
 
-def _notes_api_url(todo_api_url: str) -> str:
+def _base_url(todo_api_url: str) -> tuple[str, str, str]:
     if not todo_api_url:
         raise FetchError(f"{API_URL_ENV} または --api-url を指定してください。")
 
@@ -59,8 +64,17 @@ def _notes_api_url(todo_api_url: str) -> str:
     if not parsed.path.endswith("/todos"):
         raise FetchError(f"{API_URL_ENV} は /api/v1/todos を指すURLにしてください。")
 
-    notes_path = parsed.path[: -len("/todos")] + "/notes"
-    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, notes_path, "", ""))
+    return parsed.scheme, parsed.netloc, parsed.path[: -len("/todos")]
+
+
+def _notes_api_url(todo_api_url: str) -> str:
+    scheme, netloc, base_path = _base_url(todo_api_url)
+    return urllib.parse.urlunsplit((scheme, netloc, base_path + "/notes", "", ""))
+
+
+def _notes_unlock_api_url(todo_api_url: str) -> str:
+    scheme, netloc, base_path = _base_url(todo_api_url)
+    return urllib.parse.urlunsplit((scheme, netloc, base_path + "/notes/unlock", "", ""))
 
 
 def _read_error_message(error: urllib.error.HTTPError) -> str:
@@ -75,33 +89,28 @@ def _read_error_message(error: urllib.error.HTTPError) -> str:
     return f"HTTP {error.code}"
 
 
-def fetch_notes(api_url: str, token: str) -> list[dict[str, Any]]:
-    if not token:
-        raise FetchError(f"環境変数 {API_TOKEN_ENV} を設定してください。")
-
-    url = _notes_api_url(api_url)
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "matometokiya-note-fetcher/1.0",
-        },
-        method="GET",
-    )
+def _request_notes(url: str, token: str, *, method: str, body: bytes | None = None) -> list[dict[str, Any]]:
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "matometokiya-note-fetcher/1.0",
+    }
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=body, headers=headers, method=method)
 
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
-            body = response.read(MAX_RESPONSE_BYTES + 1)
+            response_body = response.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as error:
         raise FetchError(f"Notes APIエラー: {_read_error_message(error)}") from error
     except urllib.error.URLError as error:
         raise FetchError(f"Notes APIへ接続できません: {error.reason}") from error
 
-    if len(body) > MAX_RESPONSE_BYTES:
+    if len(response_body) > MAX_RESPONSE_BYTES:
         raise FetchError("Notes APIの応答サイズが上限を超えました。")
     try:
-        payload = json.loads(body.decode("utf-8"))
+        payload = json.loads(response_body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise FetchError("Notes APIから不正なJSON応答を受信しました。") from error
 
@@ -109,6 +118,19 @@ def fetch_notes(api_url: str, token: str) -> list[dict[str, Any]]:
     if not isinstance(notes, list) or not all(isinstance(note, dict) for note in notes):
         raise FetchError("Notes APIの応答形式が正しくありません。")
     return notes
+
+
+def fetch_notes(api_url: str, token: str) -> list[dict[str, Any]]:
+    if not token:
+        raise FetchError(f"環境変数 {API_TOKEN_ENV} を設定してください。")
+    return _request_notes(_notes_api_url(api_url), token, method="GET")
+
+
+def fetch_notes_with_locked(api_url: str, token: str, password: str) -> list[dict[str, Any]]:
+    if not token:
+        raise FetchError(f"環境変数 {API_TOKEN_ENV} を設定してください。")
+    body = json.dumps({"password": password}).encode("utf-8")
+    return _request_notes(_notes_unlock_api_url(api_url), token, method="POST", body=body)
 
 
 def _single_line(value: Any, fallback: str = "") -> str:
@@ -130,14 +152,19 @@ def format_notes(notes: list[dict[str, Any]]) -> str:
         if content:
             lines.append(f"{indent}  {content}")
         elif note.get("locked"):
-            lines.append(f"{indent}  (鍵付きのため本文は非表示。読ませたい場合はアプリ側で鍵を外してください)")
+            lines.append(f"{indent}  (鍵付きのため本文は非表示。読ませたい場合はアプリ側で鍵を外すか --include-locked を使ってください)")
     return "\n".join(lines)
 
 
 def main() -> int:
     args = parse_args()
+    token = os.getenv(API_TOKEN_ENV, "").strip()
     try:
-        notes = fetch_notes(args.api_url, os.getenv(API_TOKEN_ENV, "").strip())
+        if args.include_locked:
+            password = getpass.getpass("まとめときやのアカウントパスワード（鍵付きメモを開くのと同じもの）: ")
+            notes = fetch_notes_with_locked(args.api_url, token, password)
+        else:
+            notes = fetch_notes(args.api_url, token)
     except FetchError as error:
         print(f"エラー: {error}", file=sys.stderr)
         return 1

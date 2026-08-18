@@ -249,9 +249,26 @@ Authorization: Bearer <読み取り用APIトークン>
 - `users/{uid}/notes` の全件を、階層の浅い順（親→子）に並べて返します。タイトル・本文どちらも空のメモは含みません
 - 成功時は `{"notes": [...], "count": 1, "read_only": true}` を返します
 - 各メモは `id`, `title`, `content`, `path`（ルートから直近の親までの祖先タイトル）, `locked`, `checked`, `created_at` を含みます
-- **鍵付きメモ（`locked: true`）は本文（`content`）を常に空にし、タイトルだけ返します。オプトインの抜け道はありません**。アプリ画面では鍵付きメモを開く際にアカウントのログインパスワードを検証していますが、このAPIにはその検証を再現できないため、鍵付きメモの中身は一切返しません。中身をClaudeに読ませたい場合は、アプリ側で先に鍵を外してから取得し直してください
+- **鍵付きメモ（`locked: true`）は本文（`content`）を常に空にし、タイトルだけ返します**。中身が必要な場合は下記の鍵付きメモ解錠APIを使ってください
 - 認証失敗は `401`、Firestore読み取り失敗は `502` です
 - PC側では `scripts/fetch_matome_notes.py` を実行すると、`MATOME_TODO_API_URL`・`MATOME_TODO_API_TOKEN`をそのまま使って全メモの階層を標準出力に表示します（ファイルへの書き込みはしません）。鍵付きメモは「(鍵付きのため本文は非表示)」とだけ表示されます。Claude Codeがこの出力を読んで要約などを行います
+
+### 鍵付きメモの本文も取得する（パスワード検証あり）
+
+```text
+POST /api/v1/notes/unlock
+Authorization: Bearer <読み取り用APIトークン>
+Content-Type: application/json
+
+{"password": "アカウントのログインパスワード"}
+```
+
+- 本番URL: `https://matome.webtool-labs.com/api/v1/notes/unlock`
+- Todo取得APIと同じ読み取り用トークンで認証したうえで、**さらにリクエストボディでアカウントのログインパスワードを検証します**。アプリ画面で鍵付きメモを開くときに求められるのと同じパスワードです
+- サーバー側でFirebaseのIdentity Toolkit API（`accounts:signInWithPassword`）にemail・passwordを渡して検証します。Firebase Admin SDK自体にはパスワード検証機能がないため、クライアントSDKが内部で使っているのと同じREST APIを直接呼び出しています
+- パスワードが正しければ、鍵付きメモも含めた全メモの本文を返します。誤っていれば `401` を返し、メモは一切返しません
+- `password`未指定は `400`、パスワード確認自体の失敗（Identity Toolkit APIへの接続失敗など）は `502` です
+- PC側では `scripts/fetch_matome_notes.py --include-locked` を実行すると、その場でパスワード入力を求められます（`getpass`のため画面には表示されません）。パスワードは`.env`などには保存されず、その1回のリクエストにだけ使われます
 
 ### トークンとVPS側の環境変数
 
