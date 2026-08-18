@@ -3601,7 +3601,7 @@ function isGuestReadOnly() {
   return isCollabActive() && state.collabRoomRole === "guest" && state.collabGuestsReadOnly;
 }
 
-// 自分で切り替える「閲覧専用モード」。共同編集のホスト設定とは別に、うっかり
+// 自分で切り替える「ビュー」モード。共同編集のホスト設定とは別に、うっかり
 // 編集してしまうのを防ぐために、いつでも自分の意思でON/OFFできる。
 function isViewOnlyMode() {
   return state.viewOnlyMode;
@@ -3613,7 +3613,7 @@ function isReadOnlyMode() {
 
 function blockIfGuestReadOnly() {
   if (isViewOnlyMode()) {
-    showToast("閲覧専用モード中は編集できません。解除するには目のアイコンを押してください。");
+    showToast("ビュー中は編集できません。解除するには目のアイコンを押してください。");
     return true;
   }
   if (!isGuestReadOnly()) return false;
@@ -3621,10 +3621,13 @@ function blockIfGuestReadOnly() {
   return true;
 }
 
+// ビューをONにすると、メモの全体像が見えるよう大画面表示も一緒に開く。
+// OFFにすると大画面表示も閉じて元の画面に戻る。
 function toggleViewOnlyMode() {
   state.viewOnlyMode = !state.viewOnlyMode;
   renderEditor();
-  showToast(state.viewOnlyMode ? "閲覧専用モードにしました。" : "閲覧専用モードを解除しました。");
+  setLargeEditorOpen(state.viewOnlyMode);
+  showToast(state.viewOnlyMode ? "ビューにしました。" : "ビューを解除しました。");
 }
 
 function currentWorkspaceRootRef() {
@@ -7311,7 +7314,7 @@ function updateMemoTodoButton() {
     setButtonContent(btn, "✓", "追加済み");
   } else {
     btn.disabled = readOnly;
-    btn.title = readOnly ? "ホストが閲覧専用に設定しています" : "選択中のメモをTODOに追加";
+    btn.title = readOnly ? (isViewOnlyMode() ? "ビュー中です" : "ホストが閲覧専用に設定しています") : "選択中のメモをTODOに追加";
     btn.setAttribute("aria-label", "TODO追加");
     setButtonContent(btn, "📋", "TODO追加");
   }
@@ -7699,7 +7702,7 @@ function renderEditor() {
   if (els.viewOnlyBtn) {
     els.viewOnlyBtn.classList.toggle("active", isViewOnlyMode());
     els.viewOnlyBtn.setAttribute("aria-pressed", String(isViewOnlyMode()));
-    els.viewOnlyBtn.title = isViewOnlyMode() ? "閲覧専用モードを解除" : "閲覧専用モードにする（誤編集を防ぐ）";
+    els.viewOnlyBtn.title = isViewOnlyMode() ? "ビューを解除" : "ビューにする（誤編集を防ぐ）";
   }
   let note = getSelectedNote();
   const closedLock = note ? getClosedNoteLocks(note.id)[0] : null;
@@ -7745,7 +7748,7 @@ function renderEditor() {
   els.deleteBtn.disabled = (isCollabActive() && isRootNote) || readOnly;
   els.deleteBtn.title = isCollabActive() && isRootNote
     ? "共同作業中は親メモを削除できません"
-    : readOnly ? (isViewOnlyMode() ? "閲覧専用モード中です" : "ホストが閲覧専用に設定しています") : "選択中のメモを削除";
+    : readOnly ? (isViewOnlyMode() ? "ビュー中です" : "ホストが閲覧専用に設定しています") : "選択中のメモを削除";
   els.checkBtn.classList.toggle("active", Boolean(note.checked));
   els.checkBtn.title = note.checked ? "チェックを外す" : "チェックを付ける";
   setButtonContent(els.checkBtn, "✓");
@@ -7766,7 +7769,7 @@ function renderEditor() {
   els.titleInput.readOnly = !titleEditable;
   els.titleInput.title = titleEditable
     ? ""
-    : readOnly ? "ホストが閲覧専用に設定しています" : "共同作業中、親メモの名前を変更できるのはホストだけです";
+    : readOnly ? (isViewOnlyMode() ? "ビュー中です" : "ホストが閲覧専用に設定しています") : "共同作業中、親メモの名前を変更できるのはホストだけです";
   els.titleInput.value = note.title;
 
   let html = contentToHtml(note.content);
@@ -7795,7 +7798,7 @@ function renderEditor() {
   els.selectedInfo.textContent = `作成: ${note.created_at} / 更新: ${note.updated_at}${src}${sync}`;
   applySyncPairStyle(els.selectedInfo, syncDisplayMapId, Boolean(syncDisplayMapId));
   renderCollabCaretFlags();
-  els.saveStatus.textContent   = readOnly ? "閲覧専用（ホストが編集を制限中）" : "保存済み";
+  els.saveStatus.textContent   = readOnly ? (isViewOnlyMode() ? "ビュー中" : "閲覧専用（ホストが編集を制限中）") : "保存済み";
   updateEmptyState();
   updateUndoButton();
 }
@@ -13687,7 +13690,7 @@ function showCtxMenu(x, y, noteId) {
   els.contextMenu.querySelectorAll("[data-action]").forEach(button => {
     if (readOnly && button.dataset.action !== "open-lock") {
       button.disabled = true;
-      button.title = isViewOnlyMode() ? "閲覧専用モード中です" : "ホストが閲覧専用に設定しています";
+      button.title = isViewOnlyMode() ? "ビュー中です" : "ホストが閲覧専用に設定しています";
       return;
     }
     button.disabled = accessLocked
@@ -13715,7 +13718,7 @@ function showCtxMenu(x, y, noteId) {
     } else {
       todoBtn.textContent = "📋　TODOに追加";
       todoBtn.disabled = accessLocked || readOnly;
-      todoBtn.title = readOnly ? "ホストが閲覧専用に設定しています" : "";
+      todoBtn.title = readOnly ? (isViewOnlyMode() ? "ビュー中です" : "ホストが閲覧専用に設定しています") : "";
     }
   }
   const siblingTopBtn = els.contextMenu.querySelector('[data-action="move-sibling-top"]');
