@@ -271,20 +271,21 @@ POSTのボディ: {"include_locked": true}
 
 ```text
 POST   /api/v1/notes                 メモを新規作成
-PATCH  /api/v1/notes/<note_id>       メモのtitle/contentを更新
+PATCH  /api/v1/notes/<note_id>       メモのtitle/content/checkedを更新
 DELETE /api/v1/notes/<note_id>       メモ（と子孫メモ）を削除
 Authorization: Bearer <書き込み用APIトークン>
 ```
 
 - Todo完了APIと**同じ書き込み用トークン**で認証します（読み取り用トークンではアクセスできません）
 - 作成：ボディに`title`・`content`・`parent_id`（省略時はルート直下）を指定します。`parent_id`が見つからない場合は`404`
-- 更新：ボディに`title`・`content`のどちらか（または両方）を指定します。両方省略した場合は`400`
+- 更新：ボディに`title`・`content`・`checked`のいずれか（複数可）を指定します。全て省略した場合は`400`。`checked`はTodo完了時にメモへ付くチェックマークと同じもので、`true`にすると`checked_at`も現在時刻になります
 - 削除：**アプリのゴミ箱と同じソフトデリート**です（`deleted: true`を立てるだけで、Firestoreのドキュメント自体は消しません）。子孫メモも一緒に削除され、アプリ画面のゴミ箱からいつでも復元できます
 - 更新・削除のどちらも、対象メモが**鍵付き（`locked: true`）で、かつ上記の鍵付きメモ設定がオフの場合は`403`**を返します。Claudeが読めない鍵付きメモを、内容を見ないまま書き換えたり消したりできてしまうのを防ぐためです
 - PC側では次のスクリプトを使います
   - `python3 scripts/create_matome_note.py "タイトル" --content "本文" [--parent-id <ID>]`
-  - `python3 scripts/update_matome_note.py <ID> [--title "新タイトル"] [--content "新本文"]`
+  - `python3 scripts/update_matome_note.py <ID> [--title "新タイトル"] [--content "新本文"] [--check | --uncheck]`
   - `python3 scripts/delete_matome_note.py <ID>`（実行前に確認プロンプトが出ます。`--yes`でスキップ可能）
+- 開いたままのアプリ画面には、リアルタイム同期によりこれらの変更が自動的に反映されます
 
 ### トークンとVPS側の環境変数
 

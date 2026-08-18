@@ -892,9 +892,13 @@ def create_note_for_uid(
 
 
 def update_note_for_uid(
-    uid: str, note_id: str, title: str | None, content: str | None
+    uid: str,
+    note_id: str,
+    title: str | None,
+    content: str | None,
+    checked: bool | None = None,
 ) -> dict | None:
-    """指定メモのtitle/contentを更新する。存在しない、または削除済みならNoneを返す。"""
+    """指定メモのtitle/content/checkedを更新する。存在しない、または削除済みならNoneを返す。"""
     ref = _note_ref(uid, note_id)
     doc = ref.get()
     if not doc.exists:
@@ -908,6 +912,9 @@ def update_note_for_uid(
         updates["title"] = (title or "").strip()[:120] or "無題"
     if content is not None:
         updates["content"] = content or ""
+    if checked is not None:
+        updates["checked"] = bool(checked)
+        updates["checked_at"] = datetime.now(timezone.utc).isoformat() if checked else None
     ref.update(updates)
     data.update(updates)
     data["id"] = note_id
@@ -1398,7 +1405,7 @@ def api_create_note():
 
 @app.patch("/api/v1/notes/<note_id>")
 def api_update_note(note_id):
-    """既存メモのtitle/contentを更新する（書き込み専用トークン）。
+    """既存メモのtitle/content/checkedを更新する（書き込み専用トークン）。
     鍵付きメモは、この利用者が「Claude連携」画面のトグルで許可していない限り更新できない
     （読み取れないメモをClaudeが書き換えられてしまうのを防ぐため）。"""
     uid, auth_error = authenticate_todo_write_api_request()
@@ -1410,14 +1417,15 @@ def api_update_note(note_id):
         return jsonify(error="note_idが正しくありません。"), 400, {"Cache-Control": "no-store"}
 
     payload = request.get_json(silent=True) or {}
-    if "title" not in payload and "content" not in payload:
+    if "title" not in payload and "content" not in payload and "checked" not in payload:
         return (
-            jsonify(error="titleまたはcontentのいずれかを指定してください。"),
+            jsonify(error="title、content、checkedのいずれかを指定してください。"),
             400,
             {"Cache-Control": "no-store"},
         )
     title = str(payload["title"]) if "title" in payload else None
     content = str(payload["content"]) if "content" in payload else None
+    checked = bool(payload["checked"]) if "checked" in payload else None
 
     try:
         existing = _note_ref(uid, note_id).get()
@@ -1427,7 +1435,7 @@ def api_update_note(note_id):
                 403,
                 {"Cache-Control": "no-store"},
             )
-        note = update_note_for_uid(uid, note_id, title, content)
+        note = update_note_for_uid(uid, note_id, title, content, checked)
     except Exception:
         app.logger.exception("Notes APIでメモの更新に失敗しました。")
         return jsonify(error="メモの更新に失敗しました。"), 502, {"Cache-Control": "no-store"}
@@ -1435,7 +1443,7 @@ def api_update_note(note_id):
     if note is None:
         return jsonify(error="指定されたメモが見つかりません。"), 404, {"Cache-Control": "no-store"}
 
-    response = jsonify(id=note_id, title=note["title"], content=note["content"])
+    response = jsonify(id=note_id, title=note["title"], content=note["content"], checked=bool(note.get("checked")))
     response.headers["Cache-Control"] = "no-store"
     return response
 

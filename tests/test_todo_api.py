@@ -547,7 +547,27 @@ class NotesWriteApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["title"], "新タイトル")
-        update.assert_called_once_with(self.UID, "note-1", "新タイトル", "新本文")
+        update.assert_called_once_with(self.UID, "note-1", "新タイトル", "新本文", None)
+
+    def test_update_checked_only(self):
+        updated = {"id": "note-1", "title": "既存", "content": "既存本文", "checked": True}
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": False}))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(
+                app_module, "update_note_for_uid", return_value=updated
+            ) as update,
+        ):
+            response = self.client.patch(
+                "/api/v1/notes/note-1",
+                json={"checked": True},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["checked"])
+        update.assert_called_once_with(self.UID, "note-1", None, None, True)
 
     def test_update_returns_404_when_not_found(self):
         fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot(None))

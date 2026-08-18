@@ -1,4 +1,4 @@
-"""まとめときやの既存メモを、書き込み専用APIでtitle/content更新する。"""
+"""まとめときやの既存メモを、書き込み専用APIでtitle/content/checked更新する。"""
 
 from __future__ import annotations
 
@@ -29,11 +29,14 @@ class UpdateError(RuntimeError):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="まとめときやの既存メモのtitle/contentを更新します。"
+        description="まとめときやの既存メモのtitle/content/checkedを更新します。"
     )
     parser.add_argument("note_id", help="更新するメモのID")
     parser.add_argument("--title", default=None, help="新しいタイトル（省略時は変更しない）")
     parser.add_argument("--content", default=None, help="新しい本文（省略時は変更しない）")
+    check_group = parser.add_mutually_exclusive_group()
+    check_group.add_argument("--check", action="store_true", help="チェックマークを付ける")
+    check_group.add_argument("--uncheck", action="store_true", help="チェックマークを外す")
     parser.add_argument(
         "--api-url",
         default=os.getenv(API_URL_ENV, "").strip(),
@@ -77,18 +80,25 @@ def _read_error_message(error: urllib.error.HTTPError) -> str:
 
 
 def update_note(
-    api_url: str, token: str, note_id: str, title: str | None, content: str | None
+    api_url: str,
+    token: str,
+    note_id: str,
+    title: str | None,
+    content: str | None,
+    checked: bool | None = None,
 ) -> dict[str, Any]:
     if not token:
         raise UpdateError(f"環境変数 {WRITE_TOKEN_ENV} を設定してください。")
-    if title is None and content is None:
-        raise UpdateError("--title または --content の少なくとも一方を指定してください。")
+    if title is None and content is None and checked is None:
+        raise UpdateError("--title、--content、--check/--uncheck の少なくとも一つを指定してください。")
 
     payload: dict[str, Any] = {}
     if title is not None:
         payload["title"] = title
     if content is not None:
         payload["content"] = content
+    if checked is not None:
+        payload["checked"] = checked
 
     url = _note_update_url(api_url, note_id)
     body = json.dumps(payload).encode("utf-8")
@@ -122,6 +132,7 @@ def update_note(
 
 def main() -> int:
     args = parse_args()
+    checked = True if args.check else (False if args.uncheck else None)
     try:
         result = update_note(
             args.api_url,
@@ -129,6 +140,7 @@ def main() -> int:
             args.note_id,
             args.title,
             args.content,
+            checked,
         )
     except UpdateError as error:
         print(f"エラー: {error}", file=sys.stderr)
