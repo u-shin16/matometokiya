@@ -790,6 +790,47 @@ def fetch_incomplete_todos_for_uid(uid: str, project: str | None = None) -> list
     return build_incomplete_todo_payload(todo_documents, note_documents, project)
 
 
+def build_all_notes_payload(note_documents: list[tuple[str, dict]]) -> list[dict]:
+    notes_by_id = {document_id: data for document_id, data in note_documents}
+
+    entries = []
+    for document_id, data in note_documents:
+        title = str(data.get("title") or "").strip()
+        content = str(data.get("content") or "").strip()
+        if not title and not content:
+            continue
+        order = data.get("order")
+        order = order if isinstance(order, (int, float)) else 0
+        path = _ancestor_titles(document_id, notes_by_id)
+        entries.append(
+            (
+                (len(path), path, order, document_id),
+                {
+                    "id": document_id,
+                    "title": title or "無題",
+                    "content": content,
+                    "path": path,
+                    "checked": bool(data.get("checked")),
+                    "created_at": _serialize_firestore_value(data.get("created_at")),
+                },
+            )
+        )
+
+    entries.sort(key=lambda entry: entry[0])
+    return [note for _sort_key, note in entries]
+
+
+def fetch_all_notes_for_uid(uid: str) -> list[dict]:
+    """このユーザーの全メモを、階層の浅い順に並べて返す（要約などClaude Code側での
+    全量把握のための読み取り専用API向け。Todo取得APIと同じ読み取り用トークンを使う）。"""
+    user_ref = get_firestore_client().collection("users").document(uid)
+    note_documents = [
+        (document.id, document.to_dict() or {})
+        for document in user_ref.collection("notes").stream()
+    ]
+    return build_all_notes_payload(note_documents)
+
+
 def mark_todo_done_for_uid(uid: str, todo_id: str) -> bool:
     """指定Todoをdone=Trueにする。対象が存在しなければFalseを返す。
     このTodoの元になっているメモ自体にも、アプリの画面上でチェック済みだと
@@ -1160,6 +1201,28 @@ def api_incomplete_todos():
         project=project,
         read_only=True,
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/api/v1/notes")
+def api_all_notes():
+    """全メモの一覧を返す（読み取り専用）。Todo取得APIと同じ読み取り用トークンで認証する。"""
+    uid, auth_error = authenticate_todo_api_request()
+    if auth_error is not None:
+        return auth_error
+
+    try:
+        notes = fetch_all_notes_for_uid(uid)
+    except Exception:
+        app.logger.exception("Notes APIでFirestoreの読み取りに失敗しました。")
+        return (
+            jsonify(error="メモの取得に失敗しました。"),
+            502,
+            {"Cache-Control": "no-store"},
+        )
+
+    response = jsonify(notes=notes, count=len(notes), read_only=True)
     response.headers["Cache-Control"] = "no-store"
     return response
 

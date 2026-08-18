@@ -219,6 +219,39 @@ class TodoPayloadTests(unittest.TestCase):
         self.assertIsNone(result[0]["project"])
 
 
+class AllNotesPayloadTests(unittest.TestCase):
+    def test_orders_by_depth_then_order_then_id(self):
+        notes = [
+            ("root", {"title": "制作", "parent_id": None, "order": 0}),
+            ("child-b", {"title": "後の項目", "parent_id": "root", "order": 2}),
+            ("child-a", {"title": "先の項目", "content": "詳細", "parent_id": "root", "order": 1}),
+        ]
+
+        result = app_module.build_all_notes_payload(notes)
+
+        self.assertEqual([note["id"] for note in result], ["root", "child-a", "child-b"])
+        self.assertEqual(result[0]["path"], [])
+        self.assertEqual(result[1]["path"], ["制作"])
+        self.assertEqual(result[1]["content"], "詳細")
+
+    def test_skips_notes_without_title_or_content(self):
+        notes = [
+            ("empty", {"title": "", "content": "", "parent_id": None}),
+            ("kept", {"title": "残る", "parent_id": None}),
+        ]
+
+        result = app_module.build_all_notes_payload(notes)
+
+        self.assertEqual([note["id"] for note in result], ["kept"])
+
+    def test_includes_checked_state(self):
+        notes = [("note", {"title": "済み", "parent_id": None, "checked": True})]
+
+        result = app_module.build_all_notes_payload(notes)
+
+        self.assertTrue(result[0]["checked"])
+
+
 class TodoApiTests(unittest.TestCase):
     TOKEN = "test-token-that-is-long-and-random-enough"
     UID = "firebase-user-123"
@@ -287,6 +320,49 @@ class TodoApiTests(unittest.TestCase):
 
     def test_post_is_not_allowed(self):
         response = self.client.post("/api/v1/todos")
+        self.assertEqual(response.status_code, 405)
+
+
+class NotesApiTests(unittest.TestCase):
+    TOKEN = "test-token-that-is-long-and-random-enough"
+    UID = "firebase-user-123"
+
+    def setUp(self):
+        app_module.app.config.update(TESTING=True)
+        self.client = app_module.app.test_client()
+        self.env = {
+            "MATOME_TODO_API_UID": self.UID,
+            "MATOME_TODO_API_TOKEN_SHA256": hashlib.sha256(
+                self.TOKEN.encode("utf-8")
+            ).hexdigest(),
+        }
+
+    def test_rejects_missing_token(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            response = self.client.get("/api/v1/notes")
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_returns_all_notes_with_read_token(self):
+        notes = [{"id": "note-1", "title": "メモ", "content": "", "path": [], "checked": False}]
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(
+                app_module, "fetch_all_notes_for_uid", return_value=notes
+            ) as fetch,
+        ):
+            response = self.client.get(
+                "/api/v1/notes",
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["notes"], notes)
+        self.assertTrue(response.get_json()["read_only"])
+        fetch.assert_called_once_with(self.UID)
+
+    def test_post_is_not_allowed(self):
+        response = self.client.post("/api/v1/notes")
         self.assertEqual(response.status_code, 405)
 
 

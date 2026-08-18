@@ -237,6 +237,21 @@ Authorization: Bearer <書き込み用APIトークン>
 - 応答には `Cache-Control: no-store` を付けます
 - `GET`、`PUT`、`PATCH`、`DELETE` は提供しません
 
+### 全メモを取得する読み取り専用API
+
+```text
+GET /api/v1/notes
+Authorization: Bearer <読み取り用APIトークン>
+```
+
+- 本番URL: `https://matome.webtool-labs.com/api/v1/notes`
+- Todo取得APIと**同じ読み取り用トークン**で認証します（別トークンの発行は不要）
+- `users/{uid}/notes` の全件を、階層の浅い順（親→子）に並べて返します。タイトル・本文どちらも空のメモは含みません
+- 成功時は `{"notes": [...], "count": 1, "read_only": true}` を返します
+- 各メモは `id`, `title`, `content`, `path`（ルートから直近の親までの祖先タイトル）, `checked`, `created_at` を含みます
+- 認証失敗は `401`、Firestore読み取り失敗は `502` です
+- PC側では `scripts/fetch_matome_notes.py` を実行すると、`MATOME_TODO_API_URL`・`MATOME_TODO_API_TOKEN`をそのまま使って全メモの階層を標準出力に表示します（ファイルへの書き込みはしません）。Claude Codeがこの出力を読んで要約などを行います
+
 ### トークンとVPS側の環境変数
 
 読み取り用・書き込み用それぞれに、十分に長いランダムトークンを生成し、そのSHA-256だけをVPSへ設定します。平文トークンはClaude Codeを実行するPC側だけに保存してください。
