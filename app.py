@@ -784,8 +784,9 @@ def fetch_incomplete_todos_for_uid(uid: str, project: str | None = None) -> list
         return []
 
     note_documents = [
-        (document.id, document.to_dict() or {})
+        (document.id, data)
         for document in user_ref.collection("notes").stream()
+        if not (data := document.to_dict() or {}).get("deleted")
     ]
     return build_incomplete_todo_payload(todo_documents, note_documents, project)
 
@@ -833,10 +834,122 @@ def fetch_all_notes_for_uid(uid: str, include_locked: bool = False) -> list[dict
     全量把握のための読み取り専用API向け。Todo取得APIと同じ読み取り用トークンを使う）。"""
     user_ref = get_firestore_client().collection("users").document(uid)
     note_documents = [
-        (document.id, document.to_dict() or {})
+        (document.id, data)
         for document in user_ref.collection("notes").stream()
+        if not (data := document.to_dict() or {}).get("deleted")
     ]
     return build_all_notes_payload(note_documents, include_locked)
+
+
+def _note_ref(uid: str, note_id: str):
+    return get_firestore_client().collection("users").document(uid).collection("notes").document(note_id)
+
+
+def _next_order_for_new_note(uid: str, parent_id: str | None) -> int:
+    """アプリ画面のnextOrderForNewNote()と同じ規則（末尾の兄弟 + 1000）で並び順を決める。"""
+    notes_ref = get_firestore_client().collection("users").document(uid).collection("notes")
+    max_order = None
+    for doc in notes_ref.stream():
+        data = doc.to_dict() or {}
+        if data.get("deleted") or data.get("parent_id") != parent_id:
+            continue
+        order = data.get("order")
+        if isinstance(order, (int, float)) and (max_order is None or order > max_order):
+            max_order = order
+    return int(max_order) + 1000 if max_order is not None else 1000
+
+
+def create_note_for_uid(
+    uid: str, title: str, content: str, parent_id: str | None
+) -> dict | None:
+    """新しいメモを作成する。parent_idを指定した場合、そのメモが存在し削除もされて
+    いなければ子として作成する。parent_idが見つからなければNoneを返す
+    （呼び出し元は404扱いにする）。"""
+    if parent_id:
+        parent_doc = _note_ref(uid, parent_id).get()
+        if not parent_doc.exists or (parent_doc.to_dict() or {}).get("deleted"):
+            return None
+
+    note_id = secrets.token_hex(6)
+    now = datetime.now(timezone.utc).isoformat()
+    note = {
+        "id": note_id,
+        "parent_id": parent_id,
+        "title": (title or "").strip()[:120] or "無題",
+        "content": content or "",
+        "created_at": now,
+        "updated_at": now,
+        "source_file": None,
+        "media": [],
+        "pinned": False,
+        "checked": False,
+        "checked_at": None,
+        "locked": False,
+        "order": _next_order_for_new_note(uid, parent_id),
+    }
+    _note_ref(uid, note_id).set(note)
+    return note
+
+
+def update_note_for_uid(
+    uid: str, note_id: str, title: str | None, content: str | None
+) -> dict | None:
+    """指定メモのtitle/contentを更新する。存在しない、または削除済みならNoneを返す。"""
+    ref = _note_ref(uid, note_id)
+    doc = ref.get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    if data.get("deleted"):
+        return None
+
+    updates: dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if title is not None:
+        updates["title"] = (title or "").strip()[:120] or "無題"
+    if content is not None:
+        updates["content"] = content or ""
+    ref.update(updates)
+    data.update(updates)
+    data["id"] = note_id
+    return data
+
+
+def _collect_note_subtree_ids(uid: str, note_id: str) -> list[str]:
+    """指定メモとその子孫（削除済みを除く）のIDを全て集める。"""
+    notes_ref = get_firestore_client().collection("users").document(uid).collection("notes")
+    children_by_parent: dict[str | None, list[str]] = {}
+    for doc in notes_ref.stream():
+        data = doc.to_dict() or {}
+        if data.get("deleted"):
+            continue
+        children_by_parent.setdefault(data.get("parent_id"), []).append(doc.id)
+
+    ids = []
+    stack = [note_id]
+    while stack:
+        current = stack.pop()
+        ids.append(current)
+        stack.extend(children_by_parent.get(current, []))
+    return ids
+
+
+def delete_note_for_uid(uid: str, note_id: str) -> bool:
+    """指定メモとその子孫メモを、アプリのゴミ箱と同じ形（deleted=Trueを立てるだけで
+    Firestoreのドキュメント自体は消さない）で削除する。アプリ画面のゴミ箱から復元
+    できる。存在しない、または既に削除済みなら何もせずFalseを返す。"""
+    doc = _note_ref(uid, note_id).get()
+    if not doc.exists or (doc.to_dict() or {}).get("deleted"):
+        return False
+
+    ids = _collect_note_subtree_ids(uid, note_id)
+    db = get_firestore_client()
+    notes_ref = db.collection("users").document(uid).collection("notes")
+    now = datetime.now(timezone.utc).isoformat()
+    batch = db.batch()
+    for doc_id in ids:
+        batch.update(notes_ref.document(doc_id), {"deleted": True, "deleted_at": now})
+    batch.commit()
+    return True
 
 
 def mark_todo_done_for_uid(uid: str, todo_id: str) -> bool:
@@ -1248,6 +1361,115 @@ def api_all_notes():
         )
 
     response = jsonify(notes=notes, count=len(notes), read_only=True)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/v1/notes")
+def api_create_note():
+    """新しいメモを作成する（書き込み専用トークン）。"""
+    uid, auth_error = authenticate_todo_write_api_request()
+    if auth_error is not None:
+        return auth_error
+
+    payload = request.get_json(silent=True) or {}
+    title = str(payload.get("title") or "")
+    content = str(payload.get("content") or "")
+    parent_id = payload.get("parent_id")
+    parent_id = str(parent_id) if parent_id else None
+
+    try:
+        note = create_note_for_uid(uid, title, content, parent_id)
+    except Exception:
+        app.logger.exception("Notes APIでメモの作成に失敗しました。")
+        return jsonify(error="メモの作成に失敗しました。"), 502, {"Cache-Control": "no-store"}
+
+    if note is None:
+        return (
+            jsonify(error="指定されたparent_idのメモが見つかりません。"),
+            404,
+            {"Cache-Control": "no-store"},
+        )
+
+    response = jsonify(id=note["id"], title=note["title"], content=note["content"], parent_id=note["parent_id"])
+    response.headers["Cache-Control"] = "no-store"
+    return response, 201
+
+
+@app.patch("/api/v1/notes/<note_id>")
+def api_update_note(note_id):
+    """既存メモのtitle/contentを更新する（書き込み専用トークン）。
+    鍵付きメモは、この利用者が「Claude連携」画面のトグルで許可していない限り更新できない
+    （読み取れないメモをClaudeが書き換えられてしまうのを防ぐため）。"""
+    uid, auth_error = authenticate_todo_write_api_request()
+    if auth_error is not None:
+        return auth_error
+
+    note_id = (note_id or "").strip()
+    if not note_id or len(note_id) > 200:
+        return jsonify(error="note_idが正しくありません。"), 400, {"Cache-Control": "no-store"}
+
+    payload = request.get_json(silent=True) or {}
+    if "title" not in payload and "content" not in payload:
+        return (
+            jsonify(error="titleまたはcontentのいずれかを指定してください。"),
+            400,
+            {"Cache-Control": "no-store"},
+        )
+    title = str(payload["title"]) if "title" in payload else None
+    content = str(payload["content"]) if "content" in payload else None
+
+    try:
+        existing = _note_ref(uid, note_id).get()
+        if existing.exists and (existing.to_dict() or {}).get("locked") and not get_claude_include_locked_notes(uid):
+            return (
+                jsonify(error="鍵付きメモです。「Claude連携」設定で許可してから編集してください。"),
+                403,
+                {"Cache-Control": "no-store"},
+            )
+        note = update_note_for_uid(uid, note_id, title, content)
+    except Exception:
+        app.logger.exception("Notes APIでメモの更新に失敗しました。")
+        return jsonify(error="メモの更新に失敗しました。"), 502, {"Cache-Control": "no-store"}
+
+    if note is None:
+        return jsonify(error="指定されたメモが見つかりません。"), 404, {"Cache-Control": "no-store"}
+
+    response = jsonify(id=note_id, title=note["title"], content=note["content"])
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.delete("/api/v1/notes/<note_id>")
+def api_delete_note(note_id):
+    """指定メモとその子孫メモを削除する（書き込み専用トークン）。アプリのゴミ箱と同じ
+    ソフトデリートで、アプリ画面から復元できる。鍵付きメモは、この利用者が
+    「Claude連携」画面のトグルで許可していない限り削除できない。"""
+    uid, auth_error = authenticate_todo_write_api_request()
+    if auth_error is not None:
+        return auth_error
+
+    note_id = (note_id or "").strip()
+    if not note_id or len(note_id) > 200:
+        return jsonify(error="note_idが正しくありません。"), 400, {"Cache-Control": "no-store"}
+
+    try:
+        existing = _note_ref(uid, note_id).get()
+        if existing.exists and (existing.to_dict() or {}).get("locked") and not get_claude_include_locked_notes(uid):
+            return (
+                jsonify(error="鍵付きメモです。「Claude連携」設定で許可してから削除してください。"),
+                403,
+                {"Cache-Control": "no-store"},
+            )
+        deleted = delete_note_for_uid(uid, note_id)
+    except Exception:
+        app.logger.exception("Notes APIでメモの削除に失敗しました。")
+        return jsonify(error="メモの削除に失敗しました。"), 502, {"Cache-Control": "no-store"}
+
+    if not deleted:
+        return jsonify(error="指定されたメモが見つかりません。"), 404, {"Cache-Control": "no-store"}
+
+    response = jsonify(id=note_id, deleted=True)
     response.headers["Cache-Control"] = "no-store"
     return response
 

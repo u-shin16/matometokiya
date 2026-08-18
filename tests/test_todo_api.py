@@ -4,6 +4,7 @@ import hashlib
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import app as app_module
@@ -396,8 +397,8 @@ class NotesApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         fetch.assert_called_once_with(self.UID, True)
 
-    def test_post_is_not_allowed(self):
-        response = self.client.post("/api/v1/notes")
+    def test_put_is_not_allowed(self):
+        response = self.client.put("/api/v1/notes")
         self.assertEqual(response.status_code, 405)
 
 
@@ -450,6 +451,205 @@ class ClaudeConnectLockedNotesSettingApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"include_locked": True})
         set_setting.assert_called_once_with(self.UID, True)
+
+
+class _FakeNoteSnapshot:
+    def __init__(self, data):
+        self._data = data
+
+    @property
+    def exists(self):
+        return self._data is not None
+
+    def to_dict(self):
+        return dict(self._data) if self._data is not None else None
+
+
+class NotesWriteApiTests(unittest.TestCase):
+    TOKEN = "test-write-token-that-is-long-enough"
+    UID = "firebase-user-123"
+
+    def setUp(self):
+        app_module.app.config.update(TESTING=True)
+        self.client = app_module.app.test_client()
+        self.env = {
+            "MATOME_TODO_API_UID": self.UID,
+            "MATOME_TODO_API_WRITE_TOKEN_SHA256": hashlib.sha256(
+                self.TOKEN.encode("utf-8")
+            ).hexdigest(),
+        }
+
+    # --- 作成 ---
+
+    def test_create_rejects_missing_token(self):
+        response = self.client.post("/api/v1/notes", json={"title": "x"})
+        self.assertEqual(response.status_code, 401)
+
+    def test_create_note(self):
+        note = {"id": "note-1", "title": "見出し", "content": "本文", "parent_id": None}
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "create_note_for_uid", return_value=note) as create,
+        ):
+            response = self.client.post(
+                "/api/v1/notes",
+                json={"title": "見出し", "content": "本文"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.get_json()["id"], "note-1")
+        create.assert_called_once_with(self.UID, "見出し", "本文", None)
+
+    def test_create_returns_404_for_missing_parent(self):
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "create_note_for_uid", return_value=None),
+        ):
+            response = self.client.post(
+                "/api/v1/notes",
+                json={"title": "x", "parent_id": "missing"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 404)
+
+    # --- 更新 ---
+
+    def test_update_rejects_missing_token(self):
+        response = self.client.patch("/api/v1/notes/note-1", json={"title": "x"})
+        self.assertEqual(response.status_code, 401)
+
+    def test_update_rejects_empty_payload(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            response = self.client.patch(
+                "/api/v1/notes/note-1",
+                json={},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+        self.assertEqual(response.status_code, 400)
+
+    def test_update_note(self):
+        updated = {"id": "note-1", "title": "新タイトル", "content": "新本文"}
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": False}))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(
+                app_module, "update_note_for_uid", return_value=updated
+            ) as update,
+        ):
+            response = self.client.patch(
+                "/api/v1/notes/note-1",
+                json={"title": "新タイトル", "content": "新本文"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["title"], "新タイトル")
+        update.assert_called_once_with(self.UID, "note-1", "新タイトル", "新本文")
+
+    def test_update_returns_404_when_not_found(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot(None))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "update_note_for_uid", return_value=None),
+        ):
+            response = self.client.patch(
+                "/api/v1/notes/missing",
+                json={"title": "x"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_update_rejects_locked_note_when_setting_off(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": True}))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "get_claude_include_locked_notes", return_value=False),
+            patch.object(app_module, "update_note_for_uid") as update,
+        ):
+            response = self.client.patch(
+                "/api/v1/notes/note-1",
+                json={"title": "x"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        update.assert_not_called()
+
+    def test_update_allows_locked_note_when_setting_on(self):
+        updated = {"id": "note-1", "title": "x", "content": ""}
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": True}))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "get_claude_include_locked_notes", return_value=True),
+            patch.object(app_module, "update_note_for_uid", return_value=updated) as update,
+        ):
+            response = self.client.patch(
+                "/api/v1/notes/note-1",
+                json={"title": "x"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        update.assert_called_once()
+
+    # --- 削除 ---
+
+    def test_delete_rejects_missing_token(self):
+        response = self.client.delete("/api/v1/notes/note-1")
+        self.assertEqual(response.status_code, 401)
+
+    def test_delete_note(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": False}))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "delete_note_for_uid", return_value=True) as delete,
+        ):
+            response = self.client.delete(
+                "/api/v1/notes/note-1",
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"id": "note-1", "deleted": True})
+        delete.assert_called_once_with(self.UID, "note-1")
+
+    def test_delete_returns_404_when_not_found(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot(None))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "delete_note_for_uid", return_value=False),
+        ):
+            response = self.client.delete(
+                "/api/v1/notes/missing",
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_delete_rejects_locked_note_when_setting_off(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": True}))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "get_claude_include_locked_notes", return_value=False),
+            patch.object(app_module, "delete_note_for_uid") as delete,
+        ):
+            response = self.client.delete(
+                "/api/v1/notes/note-1",
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        delete.assert_not_called()
 
 
 class TodoCompleteApiTests(unittest.TestCase):
