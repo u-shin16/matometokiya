@@ -22,6 +22,7 @@ const MEMO_URL_TRAILING_PAIRS = {
 const state = {
   uid:             null,
   data:            null,
+  noteAiParentId:  null,
   templates:          [],
   templatePreviewId:  null,
   mindMapTemplates:   [],
@@ -257,6 +258,7 @@ const els = {
   noteAiTitle:      document.getElementById("noteAiTitle"),
   noteAiPrompt:     document.getElementById("noteAiPrompt"),
   noteAiFile:       document.getElementById("noteAiFile"),
+  noteAiDestinationBtn: document.getElementById("noteAiDestinationBtn"),
   noteAiGenerateBtn: document.getElementById("noteAiGenerateBtn"),
   noteAiError:      document.getElementById("noteAiError"),
   checkBtn:         document.getElementById("checkBtn"),
@@ -7820,12 +7822,20 @@ function prepareAiRequest(promptInput, fileInput, errorElement) {
   return { prompt, fetchOptions: { method: "POST", body } };
 }
 
+function updateNoteAiDestinationLabel() {
+  if (!els.noteAiDestinationBtn) return;
+  const parent = state.noteAiParentId ? getNotes().find(n => n.id === state.noteAiParentId) : null;
+  els.noteAiDestinationBtn.textContent = parent ? (parent.title || "無題") : "ルート直下";
+}
+
 function openNoteAiPanel() {
   if (els.noteAiTitle)  els.noteAiTitle.value  = "";
   if (els.noteAiPrompt) els.noteAiPrompt.value = "";
   if (els.noteAiFile)   els.noteAiFile.value = "";
   if (els.noteAiError)  els.noteAiError.hidden = true;
   if (els.noteAiGenerateBtn) els.noteAiGenerateBtn.disabled = false;
+  state.noteAiParentId = null;
+  updateNoteAiDestinationLabel();
   if (els.noteAiPanel) {
     els.noteAiPanel.hidden = false;
     els.noteAiTitle?.focus();
@@ -7834,10 +7844,13 @@ function openNoteAiPanel() {
 
 function closeNoteAiPanel() {
   if (els.noteAiPanel) els.noteAiPanel.hidden = true;
+  hideDestinationPicker();
 }
 
 async function generateNoteWithAI() {
-  if (blockNewRootMemoInCollab()) return;
+  const parentId = state.noteAiParentId ?? null;
+  if (parentId === null && blockNewRootMemoInCollab()) return;
+  if (parentId && !await ensureNoteAccess(parentId, { keepLocked: true })) return;
   const btn   = els.noteAiGenerateBtn;
   const errEl = els.noteAiError;
   const requestData = prepareAiRequest(els.noteAiPrompt, els.noteAiFile, errEl);
@@ -7853,9 +7866,10 @@ async function generateNoteWithAI() {
     const userTitle = els.noteAiTitle?.value.trim();
     if (userTitle) tree.title = userTitle;
     closeNoteAiPanel();
-    const created = createNotesFromTemplate(tree, null, nextOrderForNewNote(null));
+    const created = createNotesFromTemplate(tree, parentId, nextOrderForNewNote(parentId));
     await writeNotesBatch(created);
     appendNotesIfMissing(created);
+    if (parentId) state.expanded.add(parentId);
     created.forEach(note => {
       if (created.some(child => child.parent_id === note.id)) state.expanded.add(note.id);
     });
@@ -14572,6 +14586,13 @@ els.noteAiBtn?.addEventListener("click", openNoteAiPanel);
 els.noteAiClose?.addEventListener("click", closeNoteAiPanel);
 els.noteAiPanel?.addEventListener("click", e => {
   if (e.target === els.noteAiPanel) closeNoteAiPanel();
+});
+els.noteAiDestinationBtn?.addEventListener("click", () => {
+  showDestinationPicker(els.noteAiDestinationBtn, "追加", parentId => {
+    hideDestinationPicker();
+    state.noteAiParentId = parentId;
+    updateNoteAiDestinationLabel();
+  });
 });
 els.noteAiGenerateBtn?.addEventListener("click", generateNoteWithAI);
 els.noteAiPrompt?.addEventListener("keydown", e => {

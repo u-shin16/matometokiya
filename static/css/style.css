@@ -4624,6 +4624,25 @@ body.has-mindmap-memo-fullscreen {
   background: #fff;
 }
 
+.ai-destination-btn {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ai-destination-btn:hover,
+.ai-destination-btn:focus-visible {
+  border-color: var(--primary);
+  outline: none;
+}
+
 .mindmap-color-panel {
   display: grid;
   gap: 8px;
