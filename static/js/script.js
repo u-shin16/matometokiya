@@ -262,6 +262,9 @@ const els = {
   noteAiError:      document.getElementById("noteAiError"),
   checkBtn:         document.getElementById("checkBtn"),
   viewOnlyBtn:      document.getElementById("viewOnlyBtn"),
+  notePreview:      document.getElementById("notePreview"),
+  notePreviewTitle: document.getElementById("notePreviewTitle"),
+  notePreviewBody:  document.getElementById("notePreviewBody"),
   memoTodoBtn:      document.getElementById("memoTodoBtn"),
   memoSettingsBtn:  document.getElementById("memoSettingsBtn"),
   memoSettingsPanel: document.getElementById("memoSettingsPanel"),
@@ -574,92 +577,93 @@ function prepareNotesForExport() {
   return { notes, childrenOf };
 }
 
+// 画像を保持しつつスクリプト等を除去する（PDF出力・ビュー表示の両方で使う）
+function sanitizeForPrint(rawHtml) {
+  const div = document.createElement("div");
+  div.innerHTML = rawHtml || "";
+  // スクリプト・iframeを除去
+  div.querySelectorAll("script,iframe,object,embed").forEach(el => el.remove());
+  // onXxx 属性を除去
+  div.querySelectorAll("*").forEach(el => {
+    for (const attr of [...el.attributes]) {
+      if (attr.name.startsWith("on")) el.removeAttribute(attr.name);
+    }
+  });
+  // 編集用の透明アンカーは表示に不要なので消す
+  div.querySelectorAll(".media-caret-anchor").forEach(el => {
+    if (!el.querySelector("img,video")) el.remove();
+  });
+  // 画像を印刷サイズに収める
+  div.querySelectorAll("figure.inline-media-figure").forEach(figure => {
+    figure.removeAttribute("contenteditable");
+    figure.removeAttribute("draggable");
+    figure.style.display = "block";
+    figure.style.width = "100%";
+    figure.style.maxWidth = "100%";
+    figure.style.margin = "10px 0 14px";
+    figure.style.padding = "0";
+    figure.style.breakInside = "avoid";
+    figure.style.pageBreakInside = "avoid";
+    figure.style.lineHeight = "0";
+    figure.style.overflow = "visible";
+    figure.querySelectorAll("video").forEach(video => {
+      const label = document.createElement("div");
+      label.textContent = `動画: ${video.getAttribute("src") || ""}`;
+      label.style.fontSize = "11px";
+      label.style.color = "#6b7280";
+      label.style.lineHeight = "1.5";
+      label.style.padding = "8px 0";
+      video.replaceWith(label);
+    });
+  });
+  div.querySelectorAll("img").forEach(img => {
+    img.removeAttribute("draggable");
+    img.style.maxWidth = "100%";
+    img.style.maxHeight = "220mm";
+    img.style.width = "auto";
+    img.style.height = "auto";
+    img.style.display = "block";
+    img.style.margin = "8px 0";
+    img.style.objectFit = "contain";
+    img.style.borderRadius = "8px";
+    img.style.breakInside = "avoid";
+    img.style.pageBreakInside = "avoid";
+  });
+  return div.innerHTML;
+}
+
+function isPrintableImageItem(item) {
+  const type = item?.mime_type || "";
+  const filename = item?.filename || item?.original_name || "";
+  return Boolean(item?.downloadURL) &&
+    (type.startsWith("image/") || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(filename));
+}
+
+function mediaItemToPrintHtml(item) {
+  const src = escapeHtmlAttr(item.downloadURL);
+  const alt = escapeHtmlAttr(item.original_name || item.filename || "添付画像");
+  return `<figure class="inline-media-figure"><img src="${src}" alt="${alt}" class="inline-media"></figure>`;
+}
+
+function htmlIncludesMediaUrl(html, url) {
+  return Boolean(url) && (html.includes(url) || html.includes(escapeHtmlAttr(url)));
+}
+
+// メモ本文を、PDF出力・ビュー表示どちらでも使える「印刷用の見た目」に整形する。
+function getPrintableContent(note) {
+  let html = contentToHtml(note.content ?? "");
+  for (const item of (note.media ?? [])) {
+    if (!isPrintableImageItem(item)) continue;
+    if (htmlIncludesMediaUrl(html, item.downloadURL)) continue;
+    html += mediaItemToPrintHtml(item);
+  }
+  return sanitizeForPrint(html).trim();
+}
+
 // メモ → PDF（印刷ダイアログ経由・同一ページ内で完結）
 function downloadNotesAsPdf() {
   if (!state.selectedId) { showToast("メモを選択してください。"); return; }
   const { notes, childrenOf } = prepareNotesForExport();
-
-  // 画像を保持しつつスクリプト等を除去
-  function sanitizeForPrint(rawHtml) {
-    const div = document.createElement("div");
-    div.innerHTML = rawHtml || "";
-    // スクリプト・iframeを除去
-    div.querySelectorAll("script,iframe,object,embed").forEach(el => el.remove());
-    // onXxx 属性を除去
-    div.querySelectorAll("*").forEach(el => {
-      for (const attr of [...el.attributes]) {
-        if (attr.name.startsWith("on")) el.removeAttribute(attr.name);
-      }
-    });
-    // 編集用の透明アンカーはPDFでは不要なので消す
-    div.querySelectorAll(".media-caret-anchor").forEach(el => {
-      if (!el.querySelector("img,video")) el.remove();
-    });
-    // 画像を印刷サイズに収める
-    div.querySelectorAll("figure.inline-media-figure").forEach(figure => {
-      figure.removeAttribute("contenteditable");
-      figure.removeAttribute("draggable");
-      figure.style.display = "block";
-      figure.style.width = "100%";
-      figure.style.maxWidth = "100%";
-      figure.style.margin = "10px 0 14px";
-      figure.style.padding = "0";
-      figure.style.breakInside = "avoid";
-      figure.style.pageBreakInside = "avoid";
-      figure.style.lineHeight = "0";
-      figure.style.overflow = "visible";
-      figure.querySelectorAll("video").forEach(video => {
-        const label = document.createElement("div");
-        label.textContent = `動画: ${video.getAttribute("src") || ""}`;
-        label.style.fontSize = "11px";
-        label.style.color = "#6b7280";
-        label.style.lineHeight = "1.5";
-        label.style.padding = "8px 0";
-        video.replaceWith(label);
-      });
-    });
-    div.querySelectorAll("img").forEach(img => {
-      img.removeAttribute("draggable");
-      img.style.maxWidth = "100%";
-      img.style.maxHeight = "220mm";
-      img.style.width = "auto";
-      img.style.height = "auto";
-      img.style.display = "block";
-      img.style.margin = "8px 0";
-      img.style.objectFit = "contain";
-      img.style.borderRadius = "8px";
-      img.style.breakInside = "avoid";
-      img.style.pageBreakInside = "avoid";
-    });
-    return div.innerHTML;
-  }
-
-  function isPrintableImageItem(item) {
-    const type = item?.mime_type || "";
-    const filename = item?.filename || item?.original_name || "";
-    return Boolean(item?.downloadURL) &&
-      (type.startsWith("image/") || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(filename));
-  }
-
-  function mediaItemToPrintHtml(item) {
-    const src = escapeHtmlAttr(item.downloadURL);
-    const alt = escapeHtmlAttr(item.original_name || item.filename || "添付画像");
-    return `<figure class="inline-media-figure"><img src="${src}" alt="${alt}" class="inline-media"></figure>`;
-  }
-
-  function htmlIncludesMediaUrl(html, url) {
-    return Boolean(url) && (html.includes(url) || html.includes(escapeHtmlAttr(url)));
-  }
-
-  function getPrintableContent(note) {
-    let html = contentToHtml(note.content ?? "");
-    for (const item of (note.media ?? [])) {
-      if (!isPrintableImageItem(item)) continue;
-      if (htmlIncludesMediaUrl(html, item.downloadURL)) continue;
-      html += mediaItemToPrintHtml(item);
-    }
-    return sanitizeForPrint(html).trim();
-  }
 
   function buildHtml(noteId, numPath) {
     const note = notes.find(n => n.id === noteId);
@@ -7714,6 +7718,9 @@ function renderEditor() {
     const emptyMessage = closedLock
       ? "鍵付きメモです。開くにはパスワードを入力してください"
       : NO_SELECTION_MESSAGE;
+    if (els.notePreview) els.notePreview.hidden = true;
+    els.contentInput.hidden = false;
+    els.titleInput.style.display = "";
     els.titleInput.value         = "";
     els.titleInput.placeholder   = emptyMessage;
     els.titleInput.readOnly      = true;
@@ -7790,6 +7797,22 @@ function renderEditor() {
 
   els.contentInput.innerHTML = html;
   ensureMediaTextLines();
+
+  // ビュー中は、編集フォームではなくダウンロード（PDF出力）と同じ整形ロジックで
+  // 組んだ静的なプレビューを表示する。画像サイズなどが編集画面と違って見やすい。
+  const showPreview = isViewOnlyMode() && Boolean(els.notePreview);
+  if (els.notePreview) els.notePreview.hidden = !showPreview;
+  els.contentInput.hidden = showPreview;
+  els.titleInput.style.display = showPreview ? "none" : "";
+  if (showPreview) {
+    if (els.notePreviewTitle) els.notePreviewTitle.textContent = note.title || "無題";
+    if (els.notePreviewBody) {
+      const previewHtml = getPrintableContent(note);
+      els.notePreviewBody.innerHTML = previewHtml;
+      els.notePreviewBody.classList.toggle("is-empty", !previewHtml);
+    }
+  }
+
   els.breadcrumb.textContent = getParentChain(note).join(" / ");
   const src = note.source_file ? ` / 読み込み元: ${note.source_file}` : "";
   const syncDisplayMapId = getNoteSyncDisplayMapId(note);
