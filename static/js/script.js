@@ -22,6 +22,7 @@ const MEMO_URL_TRAILING_PAIRS = {
 const state = {
   uid:             null,
   data:            null,
+  viewOnlyMode:    false,
   templates:          [],
   templatePreviewId:  null,
   mindMapTemplates:   [],
@@ -260,6 +261,7 @@ const els = {
   noteAiGenerateBtn: document.getElementById("noteAiGenerateBtn"),
   noteAiError:      document.getElementById("noteAiError"),
   checkBtn:         document.getElementById("checkBtn"),
+  viewOnlyBtn:      document.getElementById("viewOnlyBtn"),
   memoTodoBtn:      document.getElementById("memoTodoBtn"),
   memoSettingsBtn:  document.getElementById("memoSettingsBtn"),
   memoSettingsPanel: document.getElementById("memoSettingsPanel"),
@@ -3599,10 +3601,30 @@ function isGuestReadOnly() {
   return isCollabActive() && state.collabRoomRole === "guest" && state.collabGuestsReadOnly;
 }
 
+// 自分で切り替える「閲覧専用モード」。共同編集のホスト設定とは別に、うっかり
+// 編集してしまうのを防ぐために、いつでも自分の意思でON/OFFできる。
+function isViewOnlyMode() {
+  return state.viewOnlyMode;
+}
+
+function isReadOnlyMode() {
+  return isGuestReadOnly() || isViewOnlyMode();
+}
+
 function blockIfGuestReadOnly() {
+  if (isViewOnlyMode()) {
+    showToast("閲覧専用モード中は編集できません。解除するには目のアイコンを押してください。");
+    return true;
+  }
   if (!isGuestReadOnly()) return false;
   showToast("ホストが閲覧専用に設定しているため編集できません。");
   return true;
+}
+
+function toggleViewOnlyMode() {
+  state.viewOnlyMode = !state.viewOnlyMode;
+  renderEditor();
+  showToast(state.viewOnlyMode ? "閲覧専用モードにしました。" : "閲覧専用モードを解除しました。");
 }
 
 function currentWorkspaceRootRef() {
@@ -7271,7 +7293,7 @@ function updateMemoTodoButton() {
   if (!btn) return;
   const note = state.selectedId ? getNotes().find(n => n.id === state.selectedId) : null;
   const existingTodo = note ? getTodoForNote(note.id) : null;
-  const readOnly = isGuestReadOnly();
+  const readOnly = isReadOnlyMode();
   const added = Boolean(existingTodo);
 
   btn.classList.toggle("is-added", added);
@@ -7674,6 +7696,11 @@ function renderNode(note, treeCtx) {
 
 function renderEditor() {
   state.memoFormatRange = null;
+  if (els.viewOnlyBtn) {
+    els.viewOnlyBtn.classList.toggle("active", isViewOnlyMode());
+    els.viewOnlyBtn.setAttribute("aria-pressed", String(isViewOnlyMode()));
+    els.viewOnlyBtn.title = isViewOnlyMode() ? "閲覧専用モードを解除" : "閲覧専用モードにする（誤編集を防ぐ）";
+  }
   let note = getSelectedNote();
   const closedLock = note ? getClosedNoteLocks(note.id)[0] : null;
   if (closedLock) {
@@ -7710,7 +7737,7 @@ function renderEditor() {
     updateUndoButton();
     return;
   }
-  const readOnly = isGuestReadOnly();
+  const readOnly = isReadOnlyMode();
   els.checkBtn.disabled = readOnly;
   els.largeEditorBtn.disabled = false;
   els.mediaBtn.disabled = readOnly;
@@ -7718,7 +7745,7 @@ function renderEditor() {
   els.deleteBtn.disabled = (isCollabActive() && isRootNote) || readOnly;
   els.deleteBtn.title = isCollabActive() && isRootNote
     ? "共同作業中は親メモを削除できません"
-    : readOnly ? "ホストが閲覧専用に設定しています" : "選択中のメモを削除";
+    : readOnly ? (isViewOnlyMode() ? "閲覧専用モード中です" : "ホストが閲覧専用に設定しています") : "選択中のメモを削除";
   els.checkBtn.classList.toggle("active", Boolean(note.checked));
   els.checkBtn.title = note.checked ? "チェックを外す" : "チェックを付ける";
   setButtonContent(els.checkBtn, "✓");
@@ -13656,11 +13683,11 @@ function showCtxMenu(x, y, noteId) {
   state.contextNoteId = noteId;
   const note  = getNotes().find(n => n.id === noteId);
   const accessLocked = Boolean(note) && isNoteAccessLocked(note.id);
-  const readOnly = isGuestReadOnly();
+  const readOnly = isReadOnlyMode();
   els.contextMenu.querySelectorAll("[data-action]").forEach(button => {
     if (readOnly && button.dataset.action !== "open-lock") {
       button.disabled = true;
-      button.title = "ホストが閲覧専用に設定しています";
+      button.title = isViewOnlyMode() ? "閲覧専用モード中です" : "ホストが閲覧専用に設定しています";
       return;
     }
     button.disabled = accessLocked
@@ -14303,6 +14330,7 @@ els.checkBtn.addEventListener("click", () => {
   if (!state.selectedId) { showToast("先にメモを選択してください。"); return; }
   toggleCheckedNote(state.selectedId);
 });
+els.viewOnlyBtn?.addEventListener("click", toggleViewOnlyMode);
 renderMemoTextColorPalette();
 renderMemoHighlightPalette();
 setMemoFormatEnabled(false);
