@@ -481,9 +481,9 @@ body.has-large-editor-open .note-head {
 }
 
 .large-editor-btn[aria-pressed="true"] {
-  background: var(--primary);
+  background: var(--primary-soft);
   border-color: var(--primary);
-  color: #fff;
+  color: #1d4ed8;
 }
 
 .editor-top {
