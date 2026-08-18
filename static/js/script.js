@@ -2339,8 +2339,10 @@ function restoreMemoEditorCaret(caret) {
   renderCollabCaretFlags();
 }
 
+// 共同編集中だけでなく、個人メモでも常時のリスナーとして使う。Claude連携など
+// 別経路（Firestoreへの直接書き込み）での変更も、開いたままの画面へ自動反映される。
 function applyNotesSnapshot(snap) {
-  if (!isCollabActive()) return;
+  const collab = isCollabActive();
   const previousSelectedId = state.selectedId;
   const editorCaret = captureMemoEditorCaret(previousSelectedId);
   const preserveEditor = Boolean(
@@ -2357,8 +2359,10 @@ function applyNotesSnapshot(snap) {
 
   renderTree();
   if (preserveEditor && previousSelectedId === state.selectedId && getSelectedNote()) {
+    // 自分がまさに未保存の変更を編集中のメモは、本文を上書きしない
+    // （画像のサイズ変更などdata-media-id単位の変更だけは安全にマージする）。
     mergeRemoteMediaIntoEditor(getSelectedNote().content);
-    els.saveStatus.textContent = "共同編集中...";
+    if (collab) els.saveStatus.textContent = "共同編集中...";
     updateUndoButton();
     return;
   }
@@ -2407,11 +2411,13 @@ function applyMindMapsSnapshot(snap) {
 
 function startWorkspaceSnapshots() {
   stopWorkspaceSnapshots();
-  if (!isCollabActive()) return;
+  // メモの購読は共同編集の有無に関わらず常時行う。Claude連携などFirestoreへの
+  // 直接書き込みも含め、開いたままの画面へ変更が自動的に反映されるようにするため。
   state.notesUnsubscribe = notesCollection().onSnapshot(
     applyNotesSnapshot,
-    err => showToast(translateCollabError(err, "共同メモの更新を受信できませんでした。")),
+    err => showToast(err?.message || "メモの更新を受信できませんでした。"),
   );
+  if (!isCollabActive()) return;
   state.mindMapsUnsubscribe = mindMapsCollection().onSnapshot(
     applyMindMapsSnapshot,
     err => showToast(translateCollabError(err, "共同マップの更新を受信できませんでした。")),
