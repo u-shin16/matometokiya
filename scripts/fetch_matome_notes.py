@@ -1,5 +1,10 @@
 """まとめときやの全メモを取得し、階層がわかる形で標準出力へ表示する。
-Claude Codeがメモ全体を読み込んで要約するためのスクリプト。"""
+Claude Codeがメモ全体を読み込んで要約するためのスクリプト。
+
+鍵付きメモの本文はAPI側で常に除外される（タイトルのみ）。アプリ画面では鍵を開く際に
+アカウントのログインパスワードを検証しているが、このAPIにはその検証を再現できない
+ため、抜け道なく常に除外する。中身を読ませたい場合はアプリ側で鍵を外してから
+取得し直すこと。"""
 
 from __future__ import annotations
 
@@ -16,7 +21,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 # 実行時のカレントディレクトリに関わらず、このリポジトリ直下の.envを読み込む。
-# 既にシェルでexport済みの環境変数は上書きしない（override=False が既定）。
+# 既にシェルでexport済みの環境変数は上書きしない(override=False が既定)。
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 API_URL_ENV = "MATOME_TODO_API_URL"
@@ -35,17 +40,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--api-url",
         default=os.getenv(API_URL_ENV, "").strip(),
-        help=f"Todo APIのURL（既定: 環境変数 {API_URL_ENV}。末尾の/todosを/notesに置き換えて使用）",
-    )
-    parser.add_argument(
-        "--include-locked",
-        action="store_true",
-        help="鍵付きメモの本文も含めて取得する（既定ではタイトルのみ）",
+        help=f"Todo APIのURL(既定: 環境変数 {API_URL_ENV}。末尾の/todosを/notesに置き換えて使用)",
     )
     return parser.parse_args()
 
 
-def _notes_api_url(todo_api_url: str, include_locked: bool = False) -> str:
+def _notes_api_url(todo_api_url: str) -> str:
     if not todo_api_url:
         raise FetchError(f"{API_URL_ENV} または --api-url を指定してください。")
 
@@ -60,8 +60,7 @@ def _notes_api_url(todo_api_url: str, include_locked: bool = False) -> str:
         raise FetchError(f"{API_URL_ENV} は /api/v1/todos を指すURLにしてください。")
 
     notes_path = parsed.path[: -len("/todos")] + "/notes"
-    query = "include_locked=true" if include_locked else ""
-    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, notes_path, query, ""))
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, notes_path, "", ""))
 
 
 def _read_error_message(error: urllib.error.HTTPError) -> str:
@@ -76,11 +75,11 @@ def _read_error_message(error: urllib.error.HTTPError) -> str:
     return f"HTTP {error.code}"
 
 
-def fetch_notes(api_url: str, token: str, include_locked: bool = False) -> list[dict[str, Any]]:
+def fetch_notes(api_url: str, token: str) -> list[dict[str, Any]]:
     if not token:
         raise FetchError(f"環境変数 {API_TOKEN_ENV} を設定してください。")
 
-    url = _notes_api_url(api_url, include_locked)
+    url = _notes_api_url(api_url)
     request = urllib.request.Request(
         url,
         headers={
@@ -131,18 +130,14 @@ def format_notes(notes: list[dict[str, Any]]) -> str:
         if content:
             lines.append(f"{indent}  {content}")
         elif note.get("locked"):
-            lines.append(f"{indent}  (鍵付きのため本文は非表示。含めるには --include-locked)")
+            lines.append(f"{indent}  (鍵付きのため本文は非表示。読ませたい場合はアプリ側で鍵を外してください)")
     return "\n".join(lines)
 
 
 def main() -> int:
     args = parse_args()
     try:
-        notes = fetch_notes(
-            args.api_url,
-            os.getenv(API_TOKEN_ENV, "").strip(),
-            args.include_locked,
-        )
+        notes = fetch_notes(args.api_url, os.getenv(API_TOKEN_ENV, "").strip())
     except FetchError as error:
         print(f"エラー: {error}", file=sys.stderr)
         return 1

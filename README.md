@@ -249,9 +249,9 @@ Authorization: Bearer <読み取り用APIトークン>
 - `users/{uid}/notes` の全件を、階層の浅い順（親→子）に並べて返します。タイトル・本文どちらも空のメモは含みません
 - 成功時は `{"notes": [...], "count": 1, "read_only": true}` を返します
 - 各メモは `id`, `title`, `content`, `path`（ルートから直近の親までの祖先タイトル）, `locked`, `checked`, `created_at` を含みます
-- **鍵付きメモ（`locked: true`）は既定では本文（`content`）を空にし、タイトルだけ返します**。鍵はFirestore上は暗号化ではなく画面の表示制御に過ぎないため、意図せず中身までClaudeに渡らないようにする既定値です。クエリに `?include_locked=true` を付けると本文も含めて返します
+- **鍵付きメモ（`locked: true`）は本文（`content`）を常に空にし、タイトルだけ返します。オプトインの抜け道はありません**。アプリ画面では鍵付きメモを開く際にアカウントのログインパスワードを検証していますが、このAPIにはその検証を再現できないため、鍵付きメモの中身は一切返しません。中身をClaudeに読ませたい場合は、アプリ側で先に鍵を外してから取得し直してください
 - 認証失敗は `401`、Firestore読み取り失敗は `502` です
-- PC側では `scripts/fetch_matome_notes.py` を実行すると、`MATOME_TODO_API_URL`・`MATOME_TODO_API_TOKEN`をそのまま使って全メモの階層を標準出力に表示します（ファイルへの書き込みはしません）。鍵付きメモの本文も見たい場合は `--include-locked` を付けてください。Claude Codeがこの出力を読んで要約などを行います
+- PC側では `scripts/fetch_matome_notes.py` を実行すると、`MATOME_TODO_API_URL`・`MATOME_TODO_API_TOKEN`をそのまま使って全メモの階層を標準出力に表示します（ファイルへの書き込みはしません）。鍵付きメモは「(鍵付きのため本文は非表示)」とだけ表示されます。Claude Codeがこの出力を読んで要約などを行います
 
 ### トークンとVPS側の環境変数
 
