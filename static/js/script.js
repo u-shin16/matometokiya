@@ -22,7 +22,6 @@ const MEMO_URL_TRAILING_PAIRS = {
 const state = {
   uid:             null,
   data:            null,
-  viewOnlyMode:    false,
   templates:          [],
   templatePreviewId:  null,
   mindMapTemplates:   [],
@@ -261,10 +260,6 @@ const els = {
   noteAiGenerateBtn: document.getElementById("noteAiGenerateBtn"),
   noteAiError:      document.getElementById("noteAiError"),
   checkBtn:         document.getElementById("checkBtn"),
-  viewOnlyBtn:      document.getElementById("viewOnlyBtn"),
-  notePreview:      document.getElementById("notePreview"),
-  notePreviewTitle: document.getElementById("notePreviewTitle"),
-  notePreviewBody:  document.getElementById("notePreviewBody"),
   memoTodoBtn:      document.getElementById("memoTodoBtn"),
   memoSettingsBtn:  document.getElementById("memoSettingsBtn"),
   memoSettingsPanel: document.getElementById("memoSettingsPanel"),
@@ -577,93 +572,92 @@ function prepareNotesForExport() {
   return { notes, childrenOf };
 }
 
-// 画像を保持しつつスクリプト等を除去する（PDF出力・ビュー表示の両方で使う）
-function sanitizeForPrint(rawHtml) {
-  const div = document.createElement("div");
-  div.innerHTML = rawHtml || "";
-  // スクリプト・iframeを除去
-  div.querySelectorAll("script,iframe,object,embed").forEach(el => el.remove());
-  // onXxx 属性を除去
-  div.querySelectorAll("*").forEach(el => {
-    for (const attr of [...el.attributes]) {
-      if (attr.name.startsWith("on")) el.removeAttribute(attr.name);
-    }
-  });
-  // 編集用の透明アンカーは表示に不要なので消す
-  div.querySelectorAll(".media-caret-anchor").forEach(el => {
-    if (!el.querySelector("img,video")) el.remove();
-  });
-  // 画像を印刷サイズに収める
-  div.querySelectorAll("figure.inline-media-figure").forEach(figure => {
-    figure.removeAttribute("contenteditable");
-    figure.removeAttribute("draggable");
-    figure.style.display = "block";
-    figure.style.width = "100%";
-    figure.style.maxWidth = "100%";
-    figure.style.margin = "10px 0 14px";
-    figure.style.padding = "0";
-    figure.style.breakInside = "avoid";
-    figure.style.pageBreakInside = "avoid";
-    figure.style.lineHeight = "0";
-    figure.style.overflow = "visible";
-    figure.querySelectorAll("video").forEach(video => {
-      const label = document.createElement("div");
-      label.textContent = `動画: ${video.getAttribute("src") || ""}`;
-      label.style.fontSize = "11px";
-      label.style.color = "#6b7280";
-      label.style.lineHeight = "1.5";
-      label.style.padding = "8px 0";
-      video.replaceWith(label);
-    });
-  });
-  div.querySelectorAll("img").forEach(img => {
-    img.removeAttribute("draggable");
-    img.style.maxWidth = "100%";
-    img.style.maxHeight = "220mm";
-    img.style.width = "auto";
-    img.style.height = "auto";
-    img.style.display = "block";
-    img.style.margin = "8px 0";
-    img.style.objectFit = "contain";
-    img.style.borderRadius = "8px";
-    img.style.breakInside = "avoid";
-    img.style.pageBreakInside = "avoid";
-  });
-  return div.innerHTML;
-}
-
-function isPrintableImageItem(item) {
-  const type = item?.mime_type || "";
-  const filename = item?.filename || item?.original_name || "";
-  return Boolean(item?.downloadURL) &&
-    (type.startsWith("image/") || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(filename));
-}
-
-function mediaItemToPrintHtml(item) {
-  const src = escapeHtmlAttr(item.downloadURL);
-  const alt = escapeHtmlAttr(item.original_name || item.filename || "添付画像");
-  return `<figure class="inline-media-figure"><img src="${src}" alt="${alt}" class="inline-media"></figure>`;
-}
-
-function htmlIncludesMediaUrl(html, url) {
-  return Boolean(url) && (html.includes(url) || html.includes(escapeHtmlAttr(url)));
-}
-
-// メモ本文を、PDF出力・ビュー表示どちらでも使える「印刷用の見た目」に整形する。
-function getPrintableContent(note) {
-  let html = contentToHtml(note.content ?? "");
-  for (const item of (note.media ?? [])) {
-    if (!isPrintableImageItem(item)) continue;
-    if (htmlIncludesMediaUrl(html, item.downloadURL)) continue;
-    html += mediaItemToPrintHtml(item);
-  }
-  return sanitizeForPrint(html).trim();
-}
-
 // メモ → PDF（印刷ダイアログ経由・同一ページ内で完結）
 function downloadNotesAsPdf() {
   if (!state.selectedId) { showToast("メモを選択してください。"); return; }
   const { notes, childrenOf } = prepareNotesForExport();
+
+  // 画像を保持しつつスクリプト等を除去
+  function sanitizeForPrint(rawHtml) {
+    const div = document.createElement("div");
+    div.innerHTML = rawHtml || "";
+    // スクリプト・iframeを除去
+    div.querySelectorAll("script,iframe,object,embed").forEach(el => el.remove());
+    // onXxx 属性を除去
+    div.querySelectorAll("*").forEach(el => {
+      for (const attr of [...el.attributes]) {
+        if (attr.name.startsWith("on")) el.removeAttribute(attr.name);
+      }
+    });
+    // 編集用の透明アンカーはPDFでは不要なので消す
+    div.querySelectorAll(".media-caret-anchor").forEach(el => {
+      if (!el.querySelector("img,video")) el.remove();
+    });
+    // 画像を印刷サイズに収める
+    div.querySelectorAll("figure.inline-media-figure").forEach(figure => {
+      figure.removeAttribute("contenteditable");
+      figure.removeAttribute("draggable");
+      figure.style.display = "block";
+      figure.style.width = "100%";
+      figure.style.maxWidth = "100%";
+      figure.style.margin = "10px 0 14px";
+      figure.style.padding = "0";
+      figure.style.breakInside = "avoid";
+      figure.style.pageBreakInside = "avoid";
+      figure.style.lineHeight = "0";
+      figure.style.overflow = "visible";
+      figure.querySelectorAll("video").forEach(video => {
+        const label = document.createElement("div");
+        label.textContent = `動画: ${video.getAttribute("src") || ""}`;
+        label.style.fontSize = "11px";
+        label.style.color = "#6b7280";
+        label.style.lineHeight = "1.5";
+        label.style.padding = "8px 0";
+        video.replaceWith(label);
+      });
+    });
+    div.querySelectorAll("img").forEach(img => {
+      img.removeAttribute("draggable");
+      img.style.maxWidth = "100%";
+      img.style.maxHeight = "220mm";
+      img.style.width = "auto";
+      img.style.height = "auto";
+      img.style.display = "block";
+      img.style.margin = "8px 0";
+      img.style.objectFit = "contain";
+      img.style.borderRadius = "8px";
+      img.style.breakInside = "avoid";
+      img.style.pageBreakInside = "avoid";
+    });
+    return div.innerHTML;
+  }
+
+  function isPrintableImageItem(item) {
+    const type = item?.mime_type || "";
+    const filename = item?.filename || item?.original_name || "";
+    return Boolean(item?.downloadURL) &&
+      (type.startsWith("image/") || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(filename));
+  }
+
+  function mediaItemToPrintHtml(item) {
+    const src = escapeHtmlAttr(item.downloadURL);
+    const alt = escapeHtmlAttr(item.original_name || item.filename || "添付画像");
+    return `<figure class="inline-media-figure"><img src="${src}" alt="${alt}" class="inline-media"></figure>`;
+  }
+
+  function htmlIncludesMediaUrl(html, url) {
+    return Boolean(url) && (html.includes(url) || html.includes(escapeHtmlAttr(url)));
+  }
+
+  function getPrintableContent(note) {
+    let html = contentToHtml(note.content ?? "");
+    for (const item of (note.media ?? [])) {
+      if (!isPrintableImageItem(item)) continue;
+      if (htmlIncludesMediaUrl(html, item.downloadURL)) continue;
+      html += mediaItemToPrintHtml(item);
+    }
+    return sanitizeForPrint(html).trim();
+  }
 
   function buildHtml(noteId, numPath) {
     const note = notes.find(n => n.id === noteId);
@@ -3605,33 +3599,10 @@ function isGuestReadOnly() {
   return isCollabActive() && state.collabRoomRole === "guest" && state.collabGuestsReadOnly;
 }
 
-// 自分で切り替える「ビュー」モード。共同編集のホスト設定とは別に、うっかり
-// 編集してしまうのを防ぐために、いつでも自分の意思でON/OFFできる。
-function isViewOnlyMode() {
-  return state.viewOnlyMode;
-}
-
-function isReadOnlyMode() {
-  return isGuestReadOnly() || isViewOnlyMode();
-}
-
 function blockIfGuestReadOnly() {
-  if (isViewOnlyMode()) {
-    showToast("ビュー中は編集できません。解除するには目のアイコンを押してください。");
-    return true;
-  }
   if (!isGuestReadOnly()) return false;
   showToast("ホストが閲覧専用に設定しているため編集できません。");
   return true;
-}
-
-// ビューをONにすると、メモの全体像が見えるよう大画面表示も一緒に開く。
-// OFFにすると大画面表示も閉じて元の画面に戻る。
-function toggleViewOnlyMode() {
-  state.viewOnlyMode = !state.viewOnlyMode;
-  renderEditor();
-  setLargeEditorOpen(state.viewOnlyMode);
-  showToast(state.viewOnlyMode ? "ビューにしました。" : "ビューを解除しました。");
 }
 
 function currentWorkspaceRootRef() {
@@ -7300,7 +7271,7 @@ function updateMemoTodoButton() {
   if (!btn) return;
   const note = state.selectedId ? getNotes().find(n => n.id === state.selectedId) : null;
   const existingTodo = note ? getTodoForNote(note.id) : null;
-  const readOnly = isReadOnlyMode();
+  const readOnly = isGuestReadOnly();
   const added = Boolean(existingTodo);
 
   btn.classList.toggle("is-added", added);
@@ -7318,7 +7289,7 @@ function updateMemoTodoButton() {
     setButtonContent(btn, "✓", "追加済み");
   } else {
     btn.disabled = readOnly;
-    btn.title = readOnly ? (isViewOnlyMode() ? "ビュー中です" : "ホストが閲覧専用に設定しています") : "選択中のメモをTODOに追加";
+    btn.title = readOnly ? "ホストが閲覧専用に設定しています" : "選択中のメモをTODOに追加";
     btn.setAttribute("aria-label", "TODO追加");
     setButtonContent(btn, "📋", "TODO追加");
   }
@@ -7703,11 +7674,6 @@ function renderNode(note, treeCtx) {
 
 function renderEditor() {
   state.memoFormatRange = null;
-  if (els.viewOnlyBtn) {
-    els.viewOnlyBtn.classList.toggle("active", isViewOnlyMode());
-    els.viewOnlyBtn.setAttribute("aria-pressed", String(isViewOnlyMode()));
-    els.viewOnlyBtn.title = isViewOnlyMode() ? "ビューを解除" : "ビューにする（誤編集を防ぐ）";
-  }
   let note = getSelectedNote();
   const closedLock = note ? getClosedNoteLocks(note.id)[0] : null;
   if (closedLock) {
@@ -7718,9 +7684,6 @@ function renderEditor() {
     const emptyMessage = closedLock
       ? "鍵付きメモです。開くにはパスワードを入力してください"
       : NO_SELECTION_MESSAGE;
-    if (els.notePreview) els.notePreview.hidden = true;
-    els.contentInput.hidden = false;
-    els.titleInput.style.display = "";
     els.titleInput.value         = "";
     els.titleInput.placeholder   = emptyMessage;
     els.titleInput.readOnly      = true;
@@ -7747,7 +7710,7 @@ function renderEditor() {
     updateUndoButton();
     return;
   }
-  const readOnly = isReadOnlyMode();
+  const readOnly = isGuestReadOnly();
   els.checkBtn.disabled = readOnly;
   els.largeEditorBtn.disabled = false;
   els.mediaBtn.disabled = readOnly;
@@ -7755,7 +7718,7 @@ function renderEditor() {
   els.deleteBtn.disabled = (isCollabActive() && isRootNote) || readOnly;
   els.deleteBtn.title = isCollabActive() && isRootNote
     ? "共同作業中は親メモを削除できません"
-    : readOnly ? (isViewOnlyMode() ? "ビュー中です" : "ホストが閲覧専用に設定しています") : "選択中のメモを削除";
+    : readOnly ? "ホストが閲覧専用に設定しています" : "選択中のメモを削除";
   els.checkBtn.classList.toggle("active", Boolean(note.checked));
   els.checkBtn.title = note.checked ? "チェックを外す" : "チェックを付ける";
   setButtonContent(els.checkBtn, "✓");
@@ -7776,7 +7739,7 @@ function renderEditor() {
   els.titleInput.readOnly = !titleEditable;
   els.titleInput.title = titleEditable
     ? ""
-    : readOnly ? (isViewOnlyMode() ? "ビュー中です" : "ホストが閲覧専用に設定しています") : "共同作業中、親メモの名前を変更できるのはホストだけです";
+    : readOnly ? "ホストが閲覧専用に設定しています" : "共同作業中、親メモの名前を変更できるのはホストだけです";
   els.titleInput.value = note.title;
 
   let html = contentToHtml(note.content);
@@ -7797,22 +7760,6 @@ function renderEditor() {
 
   els.contentInput.innerHTML = html;
   ensureMediaTextLines();
-
-  // ビュー中は、編集フォームではなくダウンロード（PDF出力）と同じ整形ロジックで
-  // 組んだ静的なプレビューを表示する。画像サイズなどが編集画面と違って見やすい。
-  const showPreview = isViewOnlyMode() && Boolean(els.notePreview);
-  if (els.notePreview) els.notePreview.hidden = !showPreview;
-  els.contentInput.hidden = showPreview;
-  els.titleInput.style.display = showPreview ? "none" : "";
-  if (showPreview) {
-    if (els.notePreviewTitle) els.notePreviewTitle.textContent = note.title || "無題";
-    if (els.notePreviewBody) {
-      const previewHtml = getPrintableContent(note);
-      els.notePreviewBody.innerHTML = previewHtml;
-      els.notePreviewBody.classList.toggle("is-empty", !previewHtml);
-    }
-  }
-
   els.breadcrumb.textContent = getParentChain(note).join(" / ");
   const src = note.source_file ? ` / 読み込み元: ${note.source_file}` : "";
   const syncDisplayMapId = getNoteSyncDisplayMapId(note);
@@ -7821,7 +7768,7 @@ function renderEditor() {
   els.selectedInfo.textContent = `作成: ${note.created_at} / 更新: ${note.updated_at}${src}${sync}`;
   applySyncPairStyle(els.selectedInfo, syncDisplayMapId, Boolean(syncDisplayMapId));
   renderCollabCaretFlags();
-  els.saveStatus.textContent   = readOnly ? (isViewOnlyMode() ? "ビュー中" : "閲覧専用（ホストが編集を制限中）") : "保存済み";
+  els.saveStatus.textContent   = readOnly ? "閲覧専用（ホストが編集を制限中）" : "保存済み";
   updateEmptyState();
   updateUndoButton();
 }
@@ -13709,11 +13656,11 @@ function showCtxMenu(x, y, noteId) {
   state.contextNoteId = noteId;
   const note  = getNotes().find(n => n.id === noteId);
   const accessLocked = Boolean(note) && isNoteAccessLocked(note.id);
-  const readOnly = isReadOnlyMode();
+  const readOnly = isGuestReadOnly();
   els.contextMenu.querySelectorAll("[data-action]").forEach(button => {
     if (readOnly && button.dataset.action !== "open-lock") {
       button.disabled = true;
-      button.title = isViewOnlyMode() ? "ビュー中です" : "ホストが閲覧専用に設定しています";
+      button.title = "ホストが閲覧専用に設定しています";
       return;
     }
     button.disabled = accessLocked
@@ -13741,7 +13688,7 @@ function showCtxMenu(x, y, noteId) {
     } else {
       todoBtn.textContent = "📋　TODOに追加";
       todoBtn.disabled = accessLocked || readOnly;
-      todoBtn.title = readOnly ? (isViewOnlyMode() ? "ビュー中です" : "ホストが閲覧専用に設定しています") : "";
+      todoBtn.title = readOnly ? "ホストが閲覧専用に設定しています" : "";
     }
   }
   const siblingTopBtn = els.contextMenu.querySelector('[data-action="move-sibling-top"]');
@@ -14356,7 +14303,6 @@ els.checkBtn.addEventListener("click", () => {
   if (!state.selectedId) { showToast("先にメモを選択してください。"); return; }
   toggleCheckedNote(state.selectedId);
 });
-els.viewOnlyBtn?.addEventListener("click", toggleViewOnlyMode);
 renderMemoTextColorPalette();
 renderMemoHighlightPalette();
 setMemoFormatEnabled(false);

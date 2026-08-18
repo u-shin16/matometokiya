@@ -1096,42 +1096,6 @@ body.has-large-editor-open .note-head {
   opacity: 0;
 }
 
-/* ビュー中に表示する、ダウンロード（PDF出力）と同じ整形ロジックで組んだ
-   静的プレビュー。編集フォームの見た目と区別できるよう、印刷物寄りの
-   タイポグラフィにする。 */
-.note-preview {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  padding: 32px 36px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
-  color: var(--text);
-}
-
-.note-preview-title {
-  margin: 0 0 20px;
-  padding-bottom: 16px;
-  border-bottom: 2px solid var(--line);
-  font-size: 32px;
-  font-weight: 800;
-  line-height: 1.3;
-  word-break: break-word;
-}
-
-.note-preview-body {
-  font-size: 16px;
-  line-height: 1.9;
-  word-break: break-word;
-}
-
-.note-preview-body.is-empty::before {
-  content: "本文はありません。";
-  color: var(--muted);
-}
-
 /* ── インラインメディア（Apple Notes 風） ────────────────── */
 
 /* figure ラッパー：テキストの流れの中に自然に挿入される */
