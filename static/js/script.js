@@ -332,6 +332,7 @@ const els = {
   claudeConnectMcpBtn:     document.getElementById("claudeConnectMcpBtn"),
   claudeConnectRevokeBtn: document.getElementById("claudeConnectRevokeBtn"),
   claudeConnectIncludeLockedToggle: document.getElementById("claudeConnectIncludeLockedToggle"),
+  claudeConnectLockedToggleRow: document.getElementById("claudeConnectLockedToggleRow"),
   claudeConnectInfoBtn: document.getElementById("claudeConnectInfoBtn"),
   claudeConnectInfoBox: document.getElementById("claudeConnectInfoBox"),
   appCreatorInfoBtn: document.getElementById("appCreatorInfoBtn"),
@@ -1202,6 +1203,8 @@ function applyClaudeConnectState(connected) {
   if (!els.claudeConnectStatus) return;
   els.claudeConnectStatus.textContent = connected ? "連携済みです。" : "まだ連携していません。";
   if (els.claudeConnectRevokeBtn) els.claudeConnectRevokeBtn.hidden = !connected;
+  // 連携していない状態では効果がない設定なので出さない。
+  if (els.claudeConnectLockedToggleRow) els.claudeConnectLockedToggleRow.hidden = !connected;
   // 連携済みのときは普段押す必要がないので、ボタンではなく控えめな
   // 文字リンクにして残す（コマンドを控え忘れた人の復旧手段はこれだけ）。
   if (els.claudeConnectMcpBtn) {
