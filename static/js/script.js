@@ -6609,6 +6609,14 @@ function renderDestinationPicker() {
     const hasKids = getChildNotesForCard(note.id).length > 0;
     item.textContent = (note.title || "無題") + (hasKids ? " ▸" : "");
     item.addEventListener("click", () => {
+      // 子メモが無いメモは潜っても空の一覧になるだけなので、
+      // クリックした時点でそのメモの下を選んだものとして確定する。
+      if (!hasKids) {
+        const onChoose = destinationPickerOnChoose;
+        hideDestinationPicker();
+        onChoose?.(note.id);
+        return;
+      }
       destinationPickerStack.push({ id: note.id, title: note.title || "無題" });
       renderDestinationPicker();
     });
