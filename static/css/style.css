@@ -3988,17 +3988,27 @@ body.has-mindmap-memo-fullscreen {
 
 .ai-file-view-btn {
   flex: 0 0 auto;
+  width: 30px;
   height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--primary);
+  border: 1px solid var(--line);
   border-radius: 9px;
-  background: var(--primary-soft);
-  color: #1d4ed8;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 800;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
+}
+
+.ai-file-view-btn:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+/* プレビューを開いている間だけ「選択中」だと分かるよう青くする。 */
+.ai-file-view-btn[aria-pressed="true"] {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: #1d4ed8;
 }
 
 .ai-file-preview {

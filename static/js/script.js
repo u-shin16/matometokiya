@@ -7874,8 +7874,14 @@ function formatFileSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function aiFileViewBtnFor(previewEl) {
+  const field = AI_FILE_FIELDS.find(item => els[item.preview] === previewEl);
+  return field ? els[field.viewBtn] : null;
+}
+
 function closeAiFilePreview(previewEl) {
   if (!previewEl) return;
+  aiFileViewBtnFor(previewEl)?.setAttribute("aria-pressed", "false");
   const url = aiFilePreviewUrls.get(previewEl);
   if (url) {
     URL.revokeObjectURL(url);
@@ -7930,6 +7936,7 @@ function renderAiFilePreview(file, previewEl) {
   }
 
   previewEl.hidden = false;
+  aiFileViewBtnFor(previewEl)?.setAttribute("aria-pressed", "true");
 }
 
 function syncAiFileClearButtons() {
