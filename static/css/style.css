@@ -2543,6 +2543,16 @@ body.has-large-editor-open .note-head {
   gap: 4px;
 }
 
+/* カードと違って背景が白なので、そのままだとボタンの輪郭が見えない */
+.trash-preview-actions .note-grid-card-icon-btn {
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+}
+
+.trash-preview-actions .note-grid-card-icon-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+
 .trash-preview-title {
   font-size: 18px;
   font-weight: 700;
