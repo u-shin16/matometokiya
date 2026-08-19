@@ -1749,19 +1749,6 @@ body.has-large-editor-open .note-head {
   font-weight: 700;
 }
 
-/* 階層ポップオーバーを開いている間は、開いているカード以外を反応させない */
-#trashItems.has-tree-popover .note-grid-card:hover,
-#trashItems.has-tree-popover .note-grid-card:focus-within {
-  border-color: var(--line);
-  background: var(--panel-soft);
-  transform: none;
-}
-
-#trashItems.has-tree-popover .note-grid-card.is-tree-open {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-}
-
 .note-children-popover #noteChildrenPopoverItems,
 #quickMemoMovePopoverItems {
   max-height: 400px;
