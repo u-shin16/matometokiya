@@ -177,7 +177,14 @@
         </div>
         <div id="trashItems" class="note-grid-items"></div>
         <div id="trashPreview" class="trash-preview" hidden>
-          <button id="trashPreviewBack" class="quick-memo-move-back-btn" type="button">◀ 戻る</button>
+          <div class="trash-preview-head-row">
+            <button id="trashPreviewBack" class="quick-memo-move-back-btn" type="button">◀ 戻る</button>
+            <div class="trash-preview-actions">
+              <button id="trashPreviewTreeBtn" class="note-grid-card-icon-btn trash-card-tree-btn" type="button" title="階層を確認" aria-label="階層を確認" hidden>階層</button>
+              <button id="trashPreviewRestoreBtn" class="note-grid-card-icon-btn" type="button" title="復元" aria-label="復元">↩</button>
+              <button id="trashPreviewPurgeBtn" class="note-grid-card-icon-btn danger" type="button" title="完全に削除" aria-label="完全に削除">🗑</button>
+            </div>
+          </div>
           <p id="trashPreviewTitle" class="trash-preview-title"></p>
           <div id="trashPreviewBody" class="trash-preview-body"></div>
         </div>

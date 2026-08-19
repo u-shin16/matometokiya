@@ -132,6 +132,9 @@ const els = {
   trashPreviewBack:   document.getElementById("trashPreviewBack"),
   trashPreviewTitle:  document.getElementById("trashPreviewTitle"),
   trashPreviewBody:   document.getElementById("trashPreviewBody"),
+  trashPreviewTreeBtn:    document.getElementById("trashPreviewTreeBtn"),
+  trashPreviewRestoreBtn: document.getElementById("trashPreviewRestoreBtn"),
+  trashPreviewPurgeBtn:   document.getElementById("trashPreviewPurgeBtn"),
   noteChildrenPopover:      document.getElementById("noteChildrenPopover"),
   noteChildrenPopoverTitle: document.getElementById("noteChildrenPopoverTitle"),
   noteChildrenPopoverItems: document.getElementById("noteChildrenPopoverItems"),
@@ -6878,9 +6881,26 @@ function trashCardTreeText(note) {
 }
 
 // カードは3行までしか出せないので、「階層」ボタンで全体を見せる。
+let trashTreeAnchor = null;
+
+// カードの「階層」ボタンとプレビューの「階層」ボタンで共通に使う開閉処理。
+function toggleTrashTreePopover(noteId, anchorEl) {
+  const note = state.trashNotes.find(n => n.id === noteId);
+  if (!note) return;
+  // フォーカスが残るとカードが選択中の見た目のままになるので外す。
+  anchorEl?.blur();
+  if (!els.trashTreePopover?.hidden && els.trashTreePopover?.dataset.noteId === noteId) {
+    hideTrashTreePopover();
+    return;
+  }
+  els.trashTreePopover.dataset.noteId = noteId;
+  showTrashTreePopover(anchorEl, note);
+}
+
 function showTrashTreePopover(anchorEl, note) {
   if (!els.trashTreePopover || !anchorEl || !note) return;
   hideNoteChildrenPopover();
+  trashTreeAnchor = anchorEl;
   els.trashTreePopoverTitle.textContent = `「${note.title || "無題"}」の階層`;
   els.trashTreePopoverBody.textContent = [
     note.title || "無題",
@@ -6902,6 +6922,7 @@ function setTrashTreeCardHover(on) {
 
 function hideTrashTreePopover() {
   setTrashTreeCardHover(false);
+  trashTreeAnchor = null;
   if (!els.trashTreePopover || els.trashTreePopover.hidden) return;
   els.trashTreePopover.hidden = true;
 }
@@ -7126,9 +7147,18 @@ function closeTrashOverlay() {
   hideTrashTreePopover();
 }
 
+// 今プレビューしている項目（右上の階層・復元・完全削除ボタン用）。
+let trashPreviewTarget = null; // { kind: "note" | "quickMemo", id }
+
 // bodyNodeを渡すと画像なども含めてそのまま描画する（渡さなければ文字だけ）。
-function showTrashPreview(title, bodyText, bodyNode = null) {
+function showTrashPreview(title, bodyText, bodyNode = null, target = null) {
   if (!els.trashDialog || !els.trashPreview) return;
+  trashPreviewTarget = target;
+  if (els.trashPreviewTreeBtn) {
+    // 階層は子メモがある階層メモの時だけ意味がある。
+    const note = target?.kind === "note" ? state.trashNotes.find(n => n.id === target.id) : null;
+    els.trashPreviewTreeBtn.hidden = !(note && trashChildNotes(note.id).length > 0);
+  }
   els.trashPreviewTitle.textContent = title || "";
   els.trashPreviewTitle.hidden = !title;
   els.trashPreviewBody.innerHTML = "";
@@ -7144,9 +7174,23 @@ function showTrashPreview(title, bodyText, bodyNode = null) {
 }
 
 function hideTrashPreview() {
+  trashPreviewTarget = null;
+  hideTrashTreePopover();
   if (!els.trashDialog || !els.trashPreview) return;
   els.trashDialog.classList.remove("is-previewing");
   els.trashPreview.hidden = true;
+}
+
+// プレビュー右上の復元・完全削除。実行後に対象がゴミ箱から消えていれば
+// （＝取り消されずに実行されたら）プレビューも閉じて一覧へ戻す。
+async function runTrashPreviewAction(action) {
+  const target = trashPreviewTarget;
+  if (!target) return;
+  await TRASH_ACTIONS[target.kind]?.[action]?.(target.id);
+  const remaining = target.kind === "note"
+    ? state.trashNotes.some(n => n.id === target.id)
+    : state.trashQuickMemos.some(m => m.id === target.id);
+  if (!remaining) hideTrashPreview();
 }
 
 async function restoreTrashedNote(noteId) {
@@ -14548,19 +14592,7 @@ const TRASH_ACTIONS = {
   note: {
     restore: restoreTrashedNote,
     purge: permanentlyDeleteTrashedNote,
-    tree: (id, anchorEl) => {
-      const note = state.trashNotes.find(n => n.id === id);
-      if (!note) return;
-      // 押したままだとボタンにフォーカスが残り、カードが
-      // :focus-within で青いままになるので外す。
-      anchorEl?.blur();
-      if (!els.trashTreePopover?.hidden && els.trashTreePopover?.dataset.noteId === id) {
-        hideTrashTreePopover();
-        return;
-      }
-      els.trashTreePopover.dataset.noteId = id;
-      showTrashTreePopover(anchorEl, note);
-    },
+    tree: (id, anchorEl) => toggleTrashTreePopover(id, anchorEl),
     view: id => {
       const note = state.trashNotes.find(n => n.id === id);
       if (!note) return;
@@ -14569,7 +14601,7 @@ const TRASH_ACTIONS = {
       const head = metaText
         ? `${trashNoteLocationText(note)}・${metaText}`
         : trashNoteLocationText(note);
-      showTrashPreview(note.title || "無題", head, buildTrashNotePreviewNode(note));
+      showTrashPreview(note.title || "無題", head, buildTrashNotePreviewNode(note), { kind: "note", id });
     },
   },
   quickMemo: {
@@ -14577,7 +14609,7 @@ const TRASH_ACTIONS = {
     purge: permanentlyDeleteTrashedQuickMemo,
     view: id => {
       const memo = state.trashQuickMemos.find(m => m.id === id);
-      if (memo) showTrashPreview("クイックメモ", memo.text || "");
+      if (memo) showTrashPreview("クイックメモ", memo.text || "", null, { kind: "quickMemo", id });
     },
   },
 };
@@ -14600,6 +14632,7 @@ els.trashTreePopover?.addEventListener("mouseleave", () => setTrashTreeCardHover
 document.addEventListener("mouseover", e => {
   if (els.trashTreePopover?.hidden) return;
   if (els.trashTreePopover.contains(e.target)) return;
+  if (trashTreeAnchor?.contains(e.target)) return;
   const card = e.target.closest(".note-grid-card");
   if (card && card.dataset.id === els.trashTreePopover.dataset.noteId) return;
   hideTrashTreePopover();
@@ -14609,6 +14642,11 @@ els.trashFilterSelect?.addEventListener("change", () => {
   renderTrashOverlay();
 });
 els.trashPreviewBack?.addEventListener("click", hideTrashPreview);
+els.trashPreviewTreeBtn?.addEventListener("click", () => {
+  if (trashPreviewTarget?.kind === "note") toggleTrashTreePopover(trashPreviewTarget.id, els.trashPreviewTreeBtn);
+});
+els.trashPreviewRestoreBtn?.addEventListener("click", () => void runTrashPreviewAction("restore"));
+els.trashPreviewPurgeBtn?.addEventListener("click", () => void runTrashPreviewAction("purge"));
 els.noteHistoryBtn?.addEventListener("click", e => {
   e.stopPropagation();
   if (els.noteHistoryOverlay?.hidden) openNoteHistoryOverlay();

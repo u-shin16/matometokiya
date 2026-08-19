@@ -2524,9 +2524,23 @@ body.has-large-editor-open .note-head {
   flex: 1;
 }
 
+.trash-preview-head-row,
 .trash-preview-title,
 .trash-preview-body {
   align-self: stretch;
+}
+
+/* 「◀ 戻る」の右端に、階層・復元・完全削除を並べる */
+.trash-preview-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.trash-preview-actions {
+  display: flex;
+  gap: 4px;
 }
 
 .trash-preview-title {
