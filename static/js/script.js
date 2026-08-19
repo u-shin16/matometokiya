@@ -2247,6 +2247,12 @@ function normalizeNoteDoc(doc) {
   return { ...data, id: doc.id, locked: Boolean(data.locked) };
 }
 
+// ゴミ箱へ送ったメモは削除せず deleted:true を立てて残してあるだけなので、
+// Firestoreから読み直した時に通常のメモ一覧へ混ぜてしまわないよう必ず除く。
+function activeNoteDocs(docs) {
+  return docs.filter(doc => !(doc.data() || {}).deleted);
+}
+
 function selectFirstAvailableNote() {
   const roots = orderTreeChildren(null, getNotes().filter(n => n.parent_id === null));
   state.selectedId = roots.find(note => !isNoteAccessLocked(note.id))?.id ?? null;
@@ -2359,7 +2365,7 @@ function applyNotesSnapshot(snap) {
     hasUnsavedEditorChange()
   );
 
-  state.data = { notes: snap.docs.map(normalizeNoteDoc) };
+  state.data = { notes: activeNoteDocs(snap.docs).map(normalizeNoteDoc) };
   if (!state.selectedId || !getSelectedNote() || isNoteAccessLocked(state.selectedId)) {
     selectFirstAvailableNote();
     if (previousSelectedId !== state.selectedId) setLargeEditorOpen(false);
@@ -8091,9 +8097,7 @@ async function loadNotes() {
     console.warn("[loadNotes] サーバーから取得できなかったためキャッシュを使用します", err);
     snap = await notesCollection().get();
   }
-  state.data = {
-    notes: snap.docs.map(d => ({ ...d.data(), id: d.id, locked: Boolean(d.data().locked) })),
-  };
+  state.data = { notes: activeNoteDocs(snap.docs).map(normalizeNoteDoc) };
   if (!state.selectedId || !getSelectedNote() || isNoteAccessLocked(state.selectedId)) {
     const roots = orderTreeChildren(null, getNotes().filter(n => n.parent_id === null));
     state.selectedId = roots.find(note => !isNoteAccessLocked(note.id))?.id ?? null;
