@@ -6881,7 +6881,7 @@ function trashNoteLocationText(note) {
   return chain.length ? chain.join(" > ") : "ルート直下";
 }
 
-function buildTrashCard({ kind, id, restoreLabel, purgeLabel, previewLabel, body, extraClass = "" }) {
+function buildTrashCard({ kind, id, restoreLabel, purgeLabel, body, extraClass = "" }) {
   const card = document.createElement("div");
   card.className = `note-grid-card${extraClass ? ` ${extraClass}` : ""}`;
   card.dataset.id = id;
@@ -6896,15 +6896,6 @@ function buildTrashCard({ kind, id, restoreLabel, purgeLabel, previewLabel, body
 
   const actions = document.createElement("div");
   actions.className = "note-grid-card-actions";
-
-  const previewBtn = document.createElement("button");
-  previewBtn.type = "button";
-  previewBtn.className = "note-grid-card-icon-btn";
-  previewBtn.dataset.action = "view";
-  previewBtn.title = "プレビュー";
-  previewBtn.setAttribute("aria-label", previewLabel || "プレビュー");
-  previewBtn.textContent = "👁";
-  actions.appendChild(previewBtn);
 
   const restoreBtn = document.createElement("button");
   restoreBtn.type = "button";
@@ -6955,7 +6946,6 @@ function buildTrashNoteCard(note) {
     id: note.id,
     restoreLabel: `「${note.title || "無題"}」を復元`,
     purgeLabel: `「${note.title || "無題"}」を完全に削除`,
-    previewLabel: `「${note.title || "無題"}」をプレビュー`,
     extraClass: childrenText ? "has-children" : "",
     body: childrenText ? [title, location, children, preview, date] : [title, location, preview, date],
   });
@@ -6982,7 +6972,6 @@ function buildTrashQuickMemoCard(memo) {
     id: memo.id,
     restoreLabel: "クイックメモを復元",
     purgeLabel: "クイックメモを完全に削除",
-    previewLabel: "クイックメモをプレビュー",
     body: [title, preview, date],
   });
 }
