@@ -3329,6 +3329,31 @@ body.has-management-open {
   word-break: break-word;
 }
 
+/* MCP登録コマンド（既定はマスク表示、「表示」で実物） */
+.app-account-claude-mcp-command {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1.6;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.app-account-claude-warning {
+  margin: 6px 0 0;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
 .app-account-claude-help {
   font-size: 12px;
   color: var(--text);

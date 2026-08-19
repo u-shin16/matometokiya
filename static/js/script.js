@@ -326,6 +326,11 @@ const els = {
   appAccountDeleteBtn: document.getElementById("appAccountDeleteBtn"),
   claudeConnectStatus:   document.getElementById("claudeConnectStatus"),
   claudeConnectCodeBox:  document.getElementById("claudeConnectCodeBox"),
+  claudeConnectMcpBox:     document.getElementById("claudeConnectMcpBox"),
+  claudeConnectMcpCommand: document.getElementById("claudeConnectMcpCommand"),
+  claudeConnectMcpCopyBtn: document.getElementById("claudeConnectMcpCopyBtn"),
+  claudeConnectMcpRevealBtn: document.getElementById("claudeConnectMcpRevealBtn"),
+  claudeConnectMcpBtn:     document.getElementById("claudeConnectMcpBtn"),
   claudeConnectCode:     document.getElementById("claudeConnectCode"),
   claudeConnectMessage:  document.getElementById("claudeConnectMessage"),
   claudeConnectCopyBtn:  document.getElementById("claudeConnectCopyBtn"),
@@ -1208,6 +1213,76 @@ function applyClaudeConnectState(connected) {
   els.claudeConnectStatus.textContent = connected ? "連携済みです。" : "まだ連携していません。";
   if (els.claudeConnectStartBtn) els.claudeConnectStartBtn.hidden = connected;
   if (els.claudeConnectRevokeBtn) els.claudeConnectRevokeBtn.hidden = !connected;
+  // 連携済みなら、コマンドを紛失した人向けに「再発行」として出し続ける。
+  if (els.claudeConnectMcpBtn) {
+    els.claudeConnectMcpBtn.textContent = connected ? "コマンドを再発行" : "Claude Codeと連携する";
+  }
+}
+
+// MCP登録コマンドは、サーバーがハッシュしか保存しないため発行時の1回しか出せない。
+// 画面には既定でマスクして出し、コピーは実物を渡す。
+let claudeMcpCommand = "";
+
+function maskMcpCommand(command) {
+  return String(command).replace(/(Bearer\s+)[^"']+/, (_, prefix) => `${prefix}${"•".repeat(20)}`);
+}
+
+function renderClaudeMcpCommand() {
+  if (!els.claudeConnectMcpCommand) return;
+  const revealed = els.claudeConnectMcpRevealBtn?.getAttribute("aria-pressed") === "true";
+  els.claudeConnectMcpCommand.textContent = revealed ? claudeMcpCommand : maskMcpCommand(claudeMcpCommand);
+}
+
+function hideClaudeMcpCommand() {
+  claudeMcpCommand = "";
+  if (els.claudeConnectMcpBox) els.claudeConnectMcpBox.hidden = true;
+  els.claudeConnectMcpRevealBtn?.setAttribute("aria-pressed", "false");
+  if (els.claudeConnectMcpCommand) els.claudeConnectMcpCommand.textContent = "";
+}
+
+async function handleClaudeConnectMcp() {
+  const user = auth?.currentUser;
+  const btn = els.claudeConnectMcpBtn;
+  if (!user || !btn) return;
+  // 再発行は今のトークンを失効させるので、必ず確認する。
+  if (els.claudeConnectRevokeBtn && !els.claudeConnectRevokeBtn.hidden) {
+    const ok = await showConfirm(
+      "コマンドを再発行しますか？今使っているコマンド（トークン）は使えなくなり、登録し直しが必要になります。",
+      "再発行する"
+    );
+    if (!ok) return;
+  }
+  btn.disabled = true;
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/v1/claude-connect/mcp-command", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "連携用コマンドの発行に失敗しました。");
+    claudeMcpCommand = String(data.command || "");
+    els.claudeConnectMcpRevealBtn?.setAttribute("aria-pressed", "false");
+    renderClaudeMcpCommand();
+    if (els.claudeConnectMcpBox) els.claudeConnectMcpBox.hidden = false;
+    if (els.claudeConnectCodeBox) els.claudeConnectCodeBox.hidden = true;
+    els.claudeConnectStatus.textContent = "連携しました。下のコマンドをターミナルで1回実行してください。";
+    applyClaudeConnectState(true);
+  } catch (e) {
+    showToast(e.message || "連携用コマンドの発行に失敗しました。");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleClaudeConnectMcpCopy() {
+  if (!claudeMcpCommand) return;
+  try {
+    await navigator.clipboard.writeText(claudeMcpCommand);
+    showToast("コピーしました。ターミナルに貼り付けて実行してください。");
+  } catch (e) {
+    showToast("コピーできませんでした。「表示」を押して手動でコピーしてください。");
+  }
 }
 
 function setClaudeConnectConnected(connected) {
@@ -1338,6 +1413,7 @@ async function handleClaudeConnectRevoke() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "連携の解除に失敗しました。");
     setClaudeConnectConnected(false);
+    hideClaudeMcpCommand();
     showToast("連携を解除しました。");
   } catch (e) {
     showToast(e.message || "連携の解除に失敗しました。");
@@ -15558,6 +15634,14 @@ if (auth) {
   els.claudeConnectStartBtn?.addEventListener("click", handleClaudeConnectStart);
   els.claudeConnectRevokeBtn?.addEventListener("click", handleClaudeConnectRevoke);
   els.claudeConnectCopyBtn?.addEventListener("click", handleClaudeConnectCopy);
+  els.claudeConnectMcpBtn?.addEventListener("click", () => void handleClaudeConnectMcp());
+  els.claudeConnectMcpCopyBtn?.addEventListener("click", () => void handleClaudeConnectMcpCopy());
+  els.claudeConnectMcpRevealBtn?.addEventListener("click", () => {
+    const revealed = els.claudeConnectMcpRevealBtn.getAttribute("aria-pressed") === "true";
+    els.claudeConnectMcpRevealBtn.setAttribute("aria-pressed", String(!revealed));
+    els.claudeConnectMcpRevealBtn.textContent = revealed ? "表示" : "隠す";
+    renderClaudeMcpCommand();
+  });
   els.claudeConnectRefreshBtn?.addEventListener("click", () => void refreshClaudeConnectStatus());
   els.claudeConnectIncludeLockedToggle?.addEventListener("change", handleClaudeConnectIncludeLockedChange);
   els.claudeConnectInfoBtn?.addEventListener("click", toggleClaudeConnectInfo);

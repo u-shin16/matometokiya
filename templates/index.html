@@ -1442,9 +1442,20 @@
         <div id="claudeConnectInfoBox" class="app-account-claude-info-box" hidden>
           <p>連携すると、Claude Code（AIアシスタント）からあなたのTodoとメモを読み取れるようになります。「〇〇というメモを作って」「チェックつけて」「このメモ消して」のように話しかけるだけで操作できます。鍵付きメモの内容は、下のチェックを入れない限り渡りません。</p>
           <p>「メモを消して」と頼んだ場合はゴミ箱に移動するだけで、完全には削除されません。いつでもゴミ箱から元に戻せます。</p>
+          <p>「Claude Codeと連携する」を押すと、ターミナルに貼り付けるだけの登録コマンドが出ます。アプリのソースコードを用意する必要はありません。「コードを発行（スクリプト用）」は、まとめときやのリポジトリを手元に置いてスクリプトから使う人向けの従来の方法です。</p>
           <p>鍵付きメモは、パスワードなど他人に見られたくない内容を書く場所として使っている場合が多いはずです。オンにすると、その内容もClaude Codeから読めるようになります。心当たりがなければオフのままにしてください。</p>
         </div>
         <p id="claudeConnectStatus" class="app-account-claude-status">確認中…</p>
+        <div id="claudeConnectMcpBox" class="app-account-claude-code" hidden>
+          <p class="app-account-claude-code-title">登録コマンド</p>
+          <p class="app-account-claude-code-label">パソコンのターミナル（Claude Codeのチャット欄ではありません）に貼り付けて、1回だけ実行してください。</p>
+          <p id="claudeConnectMcpCommand" class="app-account-claude-mcp-command"></p>
+          <div class="app-account-claude-code-actions">
+            <button id="claudeConnectMcpCopyBtn" class="app-account-action-btn" type="button">コピーする</button>
+            <button id="claudeConnectMcpRevealBtn" class="app-account-claude-refresh-btn" type="button" title="コマンドを表示する" aria-label="コマンドを表示する" aria-pressed="false">表示</button>
+          </div>
+          <p class="app-account-claude-warning">このコマンドが見られるのは今だけです。画面を閉じると二度と表示できません（そのときは「コマンドを再発行」してください）。コマンドにはあなた専用の鍵が含まれるので、人に見せないでください。</p>
+        </div>
         <div id="claudeConnectCodeBox" class="app-account-claude-code" hidden>
           <p class="app-account-claude-code-title">コード</p>
           <p id="claudeConnectCode" class="app-account-claude-code-value"></p>
@@ -1460,7 +1471,8 @@
           <span>鍵付きメモの内容もClaude連携で取得できるようにする</span>
         </label>
         <div class="app-account-claude-actions">
-          <button id="claudeConnectStartBtn" class="app-account-action-btn" type="button">連携する</button>
+          <button id="claudeConnectMcpBtn" class="app-account-action-btn" type="button">Claude Codeと連携する</button>
+          <button id="claudeConnectStartBtn" class="app-account-action-btn" type="button">コードを発行（スクリプト用）</button>
           <button id="claudeConnectRevokeBtn" class="app-account-action-btn danger" type="button" hidden>連携を解除</button>
         </div>
       </div>
