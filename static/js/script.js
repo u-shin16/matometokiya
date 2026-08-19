@@ -6843,27 +6843,35 @@ function trashCardMediaText(note) {
 }
 
 // 元の場所・子メモ件数・画像件数を1行にまとめる（カードの行数を増やさない）。
-// 子メモは孫まで含めた総数と直下の数がずれるので、ずれる時だけ両方出す。
 function trashCardMetaText(note) {
   const total = collectTrashNoteTree(note).length - 1;
-  const direct = trashChildNotes(note.id).length;
   const mediaText = trashCardMediaText(note);
-  const childText = total === 0
-    ? ""
-    : total === direct ? `子メモ${direct}件` : `子メモ${direct}件（孫まで${total}件）`;
-  return [childText, mediaText].filter(Boolean).join("・");
+  return [total ? `子メモ${total}件` : "", mediaText].filter(Boolean).join("・");
 }
 
-const TRASH_CARD_CHILD_LIMIT = 5;
+const TRASH_CARD_TREE_LINE_LIMIT = 3;
 
-// 孫メモまで並べると同じ階層のように見えて誤解を招くので、直下の子メモだけ出す。
-// 件数はメタ行にあるので、ここはタイトルだけを並べる。
-function trashCardChildrenText(note) {
-  const children = trashChildNotes(note.id);
-  if (children.length === 0) return "";
-  const titles = children.slice(0, TRASH_CARD_CHILD_LIMIT).map(item => item.title || "無題");
-  const rest = children.length - titles.length;
-  return `${titles.join(" ／ ")}${rest > 0 ? ` ／ ほか${rest}件` : ""}`;
+// 親子関係を文章で説明すると分かりにくいので、記号でそのまま木に描く。
+//   ├ cc
+//   │ └ mm
+//   │   └ kk
+//   └ nn
+function buildTrashCardTreeLines(noteId, prefix = "", lines = []) {
+  const children = trashChildNotes(noteId);
+  children.forEach((child, index) => {
+    const isLast = index === children.length - 1;
+    lines.push(`${prefix}${isLast ? "└" : "├"} ${child.title || "無題"}`);
+    buildTrashCardTreeLines(child.id, `${prefix}${isLast ? "  " : "│ "}`, lines);
+  });
+  return lines;
+}
+
+function trashCardTreeText(note) {
+  const lines = buildTrashCardTreeLines(note.id);
+  if (lines.length === 0) return "";
+  if (lines.length <= TRASH_CARD_TREE_LINE_LIMIT) return lines.join("\n");
+  const rest = lines.length - TRASH_CARD_TREE_LINE_LIMIT;
+  return [...lines.slice(0, TRASH_CARD_TREE_LINE_LIMIT), `…ほか${rest}件`].join("\n");
 }
 
 // 復元すると子メモごと戻るので、プレビューでも親メモの本文の下に
@@ -6879,7 +6887,7 @@ function buildTrashNotePreviewNode(note) {
     if (depth > 0) {
       const heading = document.createElement("p");
       heading.className = "trash-preview-note-title";
-      heading.textContent = item.title || "無題";
+      heading.textContent = `└ ${item.title || "無題"}`;
       section.appendChild(heading);
     }
 
@@ -6966,10 +6974,10 @@ function buildTrashNoteCard(note) {
     meta.appendChild(rest);
   }
 
-  const childrenText = trashCardChildrenText(note);
-  const children = document.createElement("span");
-  children.className = "trash-card-children";
-  children.textContent = childrenText;
+  const treeText = trashCardTreeText(note);
+  const tree = document.createElement("span");
+  tree.className = "trash-card-tree";
+  tree.textContent = treeText;
 
   const preview = document.createElement("span");
   preview.className = "note-grid-card-preview";
@@ -6980,7 +6988,7 @@ function buildTrashNoteCard(note) {
   date.textContent = `削除: ${formatListDate(note.deleted_at)}`;
 
   const body = [title, meta];
-  if (childrenText) body.push(children);
+  if (treeText) body.push(tree);
   body.push(preview, date);
 
   return buildTrashCard({
@@ -6988,7 +6996,7 @@ function buildTrashNoteCard(note) {
     id: note.id,
     restoreLabel: `「${note.title || "無題"}」を復元`,
     purgeLabel: `「${note.title || "無題"}」を完全に削除`,
-    extraClass: childrenText ? "has-children" : "",
+    extraClass: treeText ? "has-children" : "",
     body,
   });
 }
@@ -14489,9 +14497,10 @@ const TRASH_ACTIONS = {
     view: id => {
       const note = state.trashNotes.find(n => n.id === id);
       if (!note) return;
-      const childrenText = trashCardChildrenText(note);
-      const head = childrenText
-        ? `${trashNoteLocationText(note)}\n${childrenText}`
+      // 階層そのものは本文側に木で出るので、ここは場所と件数だけ。
+      const metaText = trashCardMetaText(note);
+      const head = metaText
+        ? `${trashNoteLocationText(note)}・${metaText}`
         : trashNoteLocationText(note);
       showTrashPreview(note.title || "無題", head, buildTrashNotePreviewNode(note));
     },
