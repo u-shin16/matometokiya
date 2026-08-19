@@ -6779,9 +6779,45 @@ function collectTrashSubtreeIds(noteId) {
 }
 
 function trashNotePreviewText(note) {
-  const childCount = state.trashNotes.filter(n => n.parent_id === note.id).length;
-  const body = contentToPlainText(note.content || "");
-  return childCount ? `（子メモ${childCount}件を含む）\n${body}` : body;
+  return contentToPlainText(note.content || "");
+}
+
+function trashChildNotes(noteId) {
+  return state.trashNotes
+    .filter(n => n.parent_id === noteId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
+// ゴミ箱の項目は親メモ単位なので、中に何が入っているのかカードだけでは
+// 分からない。子孫メモのタイトルを浅い順に並べて見せる。
+function collectTrashNoteTree(note, depth = 0, out = []) {
+  out.push({ note, depth });
+  trashChildNotes(note.id).forEach(child => collectTrashNoteTree(child, depth + 1, out));
+  return out;
+}
+
+const TRASH_CARD_CHILD_LIMIT = 5;
+
+function trashCardChildrenText(note) {
+  const descendants = collectTrashNoteTree(note).slice(1);
+  if (descendants.length === 0) return "";
+  const titles = descendants.slice(0, TRASH_CARD_CHILD_LIMIT).map(item => item.note.title || "無題");
+  const rest = descendants.length - titles.length;
+  return `子メモ${descendants.length}件：${titles.join(" ／ ")}${rest > 0 ? ` ／ ほか${rest}件` : ""}`;
+}
+
+// 復元すると子メモごと戻るので、プレビューでも親メモの本文の下に
+// 子孫メモの中身を続けて並べ、まとめて確認できるようにする。
+function buildTrashNoteFullText(note) {
+  return collectTrashNoteTree(note)
+    .map(({ note: item, depth }) => {
+      const body = contentToPlainText(item.content || "").trim();
+      if (depth === 0) return body;
+      const heading = `${"　".repeat(depth - 1)}【${item.title || "無題"}】`;
+      return body ? `${heading}\n${body}` : heading;
+    })
+    .filter(section => section)
+    .join("\n\n");
 }
 
 // 削除される前にどこの子メモだったかをゴミ箱の一覧・プレビューで
@@ -6799,7 +6835,7 @@ function trashNoteLocationText(note) {
   return chain.length ? chain.join(" > ") : "ルート直下";
 }
 
-function buildTrashCard({ kind, id, restoreLabel, purgeLabel, body }) {
+function buildTrashCard({ kind, id, restoreLabel, purgeLabel, previewLabel, body }) {
   const card = document.createElement("div");
   card.className = "note-grid-card";
   card.dataset.id = id;
@@ -6814,6 +6850,15 @@ function buildTrashCard({ kind, id, restoreLabel, purgeLabel, body }) {
 
   const actions = document.createElement("div");
   actions.className = "note-grid-card-actions";
+
+  const previewBtn = document.createElement("button");
+  previewBtn.type = "button";
+  previewBtn.className = "note-grid-card-icon-btn";
+  previewBtn.dataset.action = "view";
+  previewBtn.title = "プレビュー";
+  previewBtn.setAttribute("aria-label", previewLabel || "プレビュー");
+  previewBtn.textContent = "👁";
+  actions.appendChild(previewBtn);
 
   const restoreBtn = document.createElement("button");
   restoreBtn.type = "button";
@@ -6846,6 +6891,11 @@ function buildTrashNoteCard(note) {
   location.className = "trash-card-location";
   location.textContent = trashNoteLocationText(note);
 
+  const childrenText = trashCardChildrenText(note);
+  const children = document.createElement("span");
+  children.className = "trash-card-children";
+  children.textContent = childrenText;
+
   const preview = document.createElement("span");
   preview.className = "note-grid-card-preview";
   preview.textContent = trashNotePreviewText(note);
@@ -6859,7 +6909,8 @@ function buildTrashNoteCard(note) {
     id: note.id,
     restoreLabel: `「${note.title || "無題"}」を復元`,
     purgeLabel: `「${note.title || "無題"}」を完全に削除`,
-    body: [title, location, preview, date],
+    previewLabel: `「${note.title || "無題"}」をプレビュー`,
+    body: childrenText ? [title, location, children, preview, date] : [title, location, preview, date],
   });
 }
 
@@ -6884,6 +6935,7 @@ function buildTrashQuickMemoCard(memo) {
     id: memo.id,
     restoreLabel: "クイックメモを復元",
     purgeLabel: "クイックメモを完全に削除",
+    previewLabel: "クイックメモをプレビュー",
     body: [title, preview, date],
   });
 }
@@ -14355,7 +14407,12 @@ const TRASH_ACTIONS = {
     purge: permanentlyDeleteTrashedNote,
     view: id => {
       const note = state.trashNotes.find(n => n.id === id);
-      if (note) showTrashPreview(note.title || "無題", `${trashNoteLocationText(note)}\n\n${trashNotePreviewText(note)}`);
+      if (!note) return;
+      const childrenText = trashCardChildrenText(note);
+      const head = childrenText
+        ? `${trashNoteLocationText(note)}\n${childrenText}`
+        : trashNoteLocationText(note);
+      showTrashPreview(note.title || "無題", `${head}\n\n${buildTrashNoteFullText(note)}`);
     },
   },
   quickMemo: {

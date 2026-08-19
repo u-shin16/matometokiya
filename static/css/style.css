@@ -2411,6 +2411,18 @@ body.has-large-editor-open .note-head {
   white-space: nowrap;
 }
 
+/* ゴミ箱：中に入っている子メモのタイトル一覧 */
+.trash-card-children {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 .note-grid-card-preview {
   flex: 1;
   color: var(--muted);
