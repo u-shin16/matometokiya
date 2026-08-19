@@ -6890,7 +6890,18 @@ function showTrashTreePopover(anchorEl, note) {
   positionPopoverNearAnchor(els.trashTreePopover, anchorEl, els.trashTreePopoverBody);
 }
 
+// ポップオーバーの上にカーソルがある間は、どのメモの階層を見ているのかが
+// 分かるよう、元のカードをホバー中と同じ青色にする。
+function setTrashTreeCardHover(on) {
+  els.trashItems?.querySelectorAll(".note-grid-card.is-tree-hover")
+    .forEach(el => el.classList.remove("is-tree-hover"));
+  const id = els.trashTreePopover?.dataset.noteId;
+  if (!on || !id) return;
+  els.trashItems?.querySelector(`.note-grid-card[data-id="${id}"]`)?.classList.add("is-tree-hover");
+}
+
 function hideTrashTreePopover() {
+  setTrashTreeCardHover(false);
   if (!els.trashTreePopover || els.trashTreePopover.hidden) return;
   els.trashTreePopover.hidden = true;
 }
@@ -14582,6 +14593,8 @@ els.trashItems?.addEventListener("click", e => {
   else if (action === "tree") handlers.tree?.(item.dataset.id, actionEl);
   else if (action === "view") handlers.view(item.dataset.id);
 });
+els.trashTreePopover?.addEventListener("mouseenter", () => setTrashTreeCardHover(true));
+els.trashTreePopover?.addEventListener("mouseleave", () => setTrashTreeCardHover(false));
 // 階層ポップオーバーを出したまま別のカードを見に行った時は、
 // どのメモの階層なのか分からなくなるので閉じる。
 els.trashItems?.addEventListener("mouseover", e => {

@@ -2381,6 +2381,12 @@ body.has-large-editor-open .note-head {
   transform: translateY(-2px);
 }
 
+/* 階層ポップオーバーにカーソルがある間、元のカードをホバー中と同じ見た目にする */
+.note-grid-card.is-tree-hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
 .note-grid-card.is-active {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--primary-soft);
