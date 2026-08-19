@@ -2381,6 +2381,13 @@ body.has-large-editor-open .note-head {
   color: inherit;
   text-align: left;
   cursor: pointer;
+  /* 中身が多くてもカードの高さを超えて復元・削除ボタンの上へ
+     はみ出さないようにする。足りない分は本文プレビューを削る。 */
+  overflow: hidden;
+}
+
+.note-grid-card-open > * {
+  flex-shrink: 0;
 }
 
 .note-grid-card-title-row {
@@ -2411,6 +2418,11 @@ body.has-large-editor-open .note-head {
   white-space: nowrap;
 }
 
+/* ゴミ箱：元の場所と子メモ一覧の行が増えるぶん、カードを少し高くする */
+#trashItems .note-grid-card {
+  height: 240px;
+}
+
 /* ゴミ箱：中に入っている子メモのタイトル一覧 */
 .trash-card-children {
   color: var(--text);
@@ -2424,7 +2436,10 @@ body.has-large-editor-open .note-head {
 }
 
 .note-grid-card-preview {
-  flex: 1;
+  /* 高さが足りない時に縮むのはこの本文プレビューだけにする
+     （タイトル・子メモ一覧・日付は必ず残す）。 */
+  flex: 1 1 0;
+  min-height: 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
@@ -2433,6 +2448,11 @@ body.has-large-editor-open .note-head {
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   white-space: pre-line;
+}
+
+/* ゴミ箱：子メモ一覧の行が入るぶん、本文プレビューは短くする */
+.note-grid-card.has-children .note-grid-card-preview {
+  -webkit-line-clamp: 2;
 }
 
 .note-grid-card.has-more .note-grid-card-preview {

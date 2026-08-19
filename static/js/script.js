@@ -6835,9 +6835,9 @@ function trashNoteLocationText(note) {
   return chain.length ? chain.join(" > ") : "ルート直下";
 }
 
-function buildTrashCard({ kind, id, restoreLabel, purgeLabel, previewLabel, body }) {
+function buildTrashCard({ kind, id, restoreLabel, purgeLabel, previewLabel, body, extraClass = "" }) {
   const card = document.createElement("div");
-  card.className = "note-grid-card";
+  card.className = `note-grid-card${extraClass ? ` ${extraClass}` : ""}`;
   card.dataset.id = id;
   card.dataset.kind = kind;
 
@@ -6910,6 +6910,7 @@ function buildTrashNoteCard(note) {
     restoreLabel: `「${note.title || "無題"}」を復元`,
     purgeLabel: `「${note.title || "無題"}」を完全に削除`,
     previewLabel: `「${note.title || "無題"}」をプレビュー`,
+    extraClass: childrenText ? "has-children" : "",
     body: childrenText ? [title, location, children, preview, date] : [title, location, preview, date],
   });
 }
