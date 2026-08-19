@@ -286,10 +286,12 @@
               <span>ファイル（任意）</span>
               <span class="ai-file-row">
                 <input id="noteAiFile" class="ai-file-input" type="file" accept=".txt,.md,.csv,.json,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp,.heic,.heif">
+                <button id="noteAiFileViewBtn" class="ai-file-view-btn" type="button" title="添付ファイルを確認" hidden>確認</button>
                 <button id="noteAiFileClearBtn" class="ai-file-clear-btn" type="button" title="添付ファイルを外す" aria-label="添付ファイルを外す" hidden>×</button>
               </span>
               <small>画像・文書／10MBまで</small>
             </label>
+            <div id="noteAiFilePreview" class="ai-file-preview" hidden></div>
             <label class="mindmap-field">
               <span>追加先</span>
               <button id="noteAiDestinationBtn" type="button" class="ai-destination-btn">ルート直下</button>
@@ -992,10 +994,12 @@
               <span>ファイル（任意）</span>
               <span class="ai-file-row">
                 <input id="mindMapAiFile" class="ai-file-input" type="file" accept=".txt,.md,.csv,.json,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp,.heic,.heif">
+                <button id="mindMapAiFileViewBtn" class="ai-file-view-btn" type="button" title="添付ファイルを確認" hidden>確認</button>
                 <button id="mindMapAiFileClearBtn" class="ai-file-clear-btn" type="button" title="添付ファイルを外す" aria-label="添付ファイルを外す" hidden>×</button>
               </span>
               <small>画像・文書／10MBまで</small>
             </label>
+            <div id="mindMapAiFilePreview" class="ai-file-preview" hidden></div>
             <button id="mindMapAiGenerateBtn" class="icon-btn mindmap-ai-generate-btn" type="button">
               <span class="btn-label">生成</span>
             </button>

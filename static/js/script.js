@@ -218,6 +218,8 @@ const els = {
   mindMapAiPrompt:       document.getElementById("mindMapAiPrompt"),
   mindMapAiFile:         document.getElementById("mindMapAiFile"),
   mindMapAiFileClearBtn: document.getElementById("mindMapAiFileClearBtn"),
+  mindMapAiFileViewBtn:  document.getElementById("mindMapAiFileViewBtn"),
+  mindMapAiFilePreview:  document.getElementById("mindMapAiFilePreview"),
   mindMapAiGenerateBtn:  document.getElementById("mindMapAiGenerateBtn"),
   mindMapAiError:        document.getElementById("mindMapAiError"),
   mindMapAddChildBtn: document.getElementById("mindMapAddChildBtn"),
@@ -260,6 +262,8 @@ const els = {
   noteAiPrompt:     document.getElementById("noteAiPrompt"),
   noteAiFile:       document.getElementById("noteAiFile"),
   noteAiFileClearBtn: document.getElementById("noteAiFileClearBtn"),
+  noteAiFileViewBtn: document.getElementById("noteAiFileViewBtn"),
+  noteAiFilePreview: document.getElementById("noteAiFilePreview"),
   noteAiDestinationBtn: document.getElementById("noteAiDestinationBtn"),
   noteAiGenerateBtn: document.getElementById("noteAiGenerateBtn"),
   noteAiError:      document.getElementById("noteAiError"),
@@ -7847,23 +7851,119 @@ async function readAiResponse(res) {
   }
 }
 
-// 添付ファイルを選んだ時だけ「×」（添付を外す）ボタンを出す。
-function syncAiFileClearButtons() {
-  [[els.noteAiFile, els.noteAiFileClearBtn], [els.mindMapAiFile, els.mindMapAiFileClearBtn]]
-    .forEach(([input, btn]) => {
-      if (input && btn) btn.hidden = !input.files?.length;
-    });
+// AIメモ／AIマインドマップの「ファイル（任意）」欄。添付を選んだ時だけ
+// 「確認」（中身のプレビュー）と「×」（添付を外す）を出す。
+const AI_FILE_FIELDS = [
+  { key: "note",    input: "noteAiFile",    clearBtn: "noteAiFileClearBtn",    viewBtn: "noteAiFileViewBtn",    preview: "noteAiFilePreview" },
+  { key: "mindmap", input: "mindMapAiFile", clearBtn: "mindMapAiFileClearBtn", viewBtn: "mindMapAiFileViewBtn", preview: "mindMapAiFilePreview" },
+];
+const AI_FILE_TEXT_EXTENSIONS = new Set(["txt", "md", "csv", "json"]);
+const AI_FILE_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "heic", "heif"]);
+const aiFilePreviewUrls = new Map(); // プレビュー要素 -> objectURL（解放用）
+
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes)) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function setupAiFileClearButton(fileInput, clearBtn) {
-  if (!fileInput || !clearBtn) return;
-  fileInput.addEventListener("change", syncAiFileClearButtons);
-  clearBtn.addEventListener("click", e => {
-    // labelの中に置いているので、そのままだとファイル選択が再度開いてしまう。
+function closeAiFilePreview(previewEl) {
+  if (!previewEl) return;
+  const url = aiFilePreviewUrls.get(previewEl);
+  if (url) {
+    URL.revokeObjectURL(url);
+    aiFilePreviewUrls.delete(previewEl);
+  }
+  previewEl.innerHTML = "";
+  previewEl.hidden = true;
+}
+
+function renderAiFilePreview(file, previewEl) {
+  closeAiFilePreview(previewEl);
+  if (!file || !previewEl) return;
+
+  const name = document.createElement("p");
+  name.className = "ai-file-preview-name";
+  name.textContent = file.name;
+  previewEl.appendChild(name);
+
+  const meta = document.createElement("p");
+  meta.className = "ai-file-preview-meta";
+  meta.textContent = formatFileSize(file.size);
+  previewEl.appendChild(meta);
+
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  if (AI_FILE_IMAGE_EXTENSIONS.has(extension)) {
+    const url = URL.createObjectURL(file);
+    aiFilePreviewUrls.set(previewEl, url);
+    const img = document.createElement("img");
+    img.className = "ai-file-preview-image";
+    img.alt = file.name;
+    img.src = url;
+    // HEICなどブラウザが表示できない画像形式もあるので、その時は文言に切り替える。
+    img.addEventListener("error", () => {
+      img.remove();
+      meta.textContent = `${formatFileSize(file.size)}／この形式は画面上でプレビューできません`;
+    });
+    previewEl.appendChild(img);
+  } else if (AI_FILE_TEXT_EXTENSIONS.has(extension)) {
+    const body = document.createElement("pre");
+    body.className = "ai-file-preview-text";
+    body.textContent = "読み込み中...";
+    previewEl.appendChild(body);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || "");
+      body.textContent = text.slice(0, 2000) + (text.length > 2000 ? "\n…（以降は省略）" : "");
+    };
+    reader.onerror = () => { body.textContent = "内容を読み込めませんでした。"; };
+    reader.readAsText(file.slice(0, 200 * 1024));
+  } else {
+    meta.textContent = `${formatFileSize(file.size)}／この形式は画面上でプレビューできません`;
+  }
+
+  previewEl.hidden = false;
+}
+
+function syncAiFileClearButtons() {
+  AI_FILE_FIELDS.forEach(field => {
+    const input = els[field.input];
+    const file = input?.files?.[0] || null;
+    if (els[field.clearBtn]) els[field.clearBtn].hidden = !file;
+    if (els[field.viewBtn])  els[field.viewBtn].hidden  = !file;
+    // 添付を外した／選び直した時は開きっぱなしのプレビューを閉じる。
+    if (!file) closeAiFilePreview(els[field.preview]);
+    else if (!els[field.preview]?.hidden) renderAiFilePreview(file, els[field.preview]);
+  });
+}
+
+function setupAiFileField(field) {
+  const input    = els[field.input];
+  const clearBtn = els[field.clearBtn];
+  const viewBtn  = els[field.viewBtn];
+  const preview  = els[field.preview];
+  if (!input) return;
+
+  input.addEventListener("change", syncAiFileClearButtons);
+
+  // どちらのボタンもlabelの中にあるので、止めないとファイル選択が再度開く。
+  clearBtn?.addEventListener("click", e => {
     e.preventDefault();
     e.stopPropagation();
-    fileInput.value = "";
+    input.value = "";
     syncAiFileClearButtons();
+  });
+
+  viewBtn?.addEventListener("click", e => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!preview) return;
+    if (!preview.hidden) {
+      closeAiFilePreview(preview);
+      return;
+    }
+    renderAiFilePreview(input.files?.[0] || null, preview);
   });
 }
 
@@ -14643,8 +14743,7 @@ els.noteAiDestinationBtn?.addEventListener("click", () => {
     updateNoteAiDestinationLabel();
   });
 });
-setupAiFileClearButton(els.noteAiFile, els.noteAiFileClearBtn);
-setupAiFileClearButton(els.mindMapAiFile, els.mindMapAiFileClearBtn);
+AI_FILE_FIELDS.forEach(setupAiFileField);
 els.noteAiGenerateBtn?.addEventListener("click", generateNoteWithAI);
 els.noteAiPrompt?.addEventListener("keydown", e => {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generateNoteWithAI(); }
