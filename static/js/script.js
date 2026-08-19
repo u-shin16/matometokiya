@@ -6839,17 +6839,28 @@ function trashCardMediaText(note) {
   const parts = [];
   if (images) parts.push(`画像${images}件`);
   if (videos) parts.push(`動画${videos}件`);
-  return parts.length ? `🖼 ${parts.join("・")}` : "";
+  return parts.join("・");
+}
+
+// 元の場所・子メモ件数・画像件数を1行にまとめる（カードの行数を増やさない）。
+function trashCardMetaText(note) {
+  const childCount = collectTrashNoteTree(note).length - 1;
+  const mediaText = trashCardMediaText(note);
+  return [
+    childCount ? `子メモ${childCount}件` : "",
+    mediaText,
+  ].filter(Boolean).join("・");
 }
 
 const TRASH_CARD_CHILD_LIMIT = 5;
 
+// 件数はメタ行に出すので、ここはタイトルだけを並べる。
 function trashCardChildrenText(note) {
   const descendants = collectTrashNoteTree(note).slice(1);
   if (descendants.length === 0) return "";
   const titles = descendants.slice(0, TRASH_CARD_CHILD_LIMIT).map(item => item.note.title || "無題");
   const rest = descendants.length - titles.length;
-  return `子メモ${descendants.length}件：${titles.join(" ／ ")}${rest > 0 ? ` ／ ほか${rest}件` : ""}`;
+  return `${titles.join(" ／ ")}${rest > 0 ? ` ／ ほか${rest}件` : ""}`;
 }
 
 // 復元すると子メモごと戻るので、プレビューでも親メモの本文の下に
@@ -6937,19 +6948,25 @@ function buildTrashNoteCard(note) {
   title.className = "note-grid-card-title";
   title.textContent = note.title || "無題";
 
+  // 「元の場所 ・ 子メモ○件 ・ 画像○件」を1行にまとめる。
+  const meta = document.createElement("span");
+  meta.className = "trash-card-meta";
   const location = document.createElement("span");
   location.className = "trash-card-location";
   location.textContent = trashNoteLocationText(note);
+  meta.appendChild(location);
+  const metaText = trashCardMetaText(note);
+  if (metaText) {
+    const rest = document.createElement("span");
+    rest.className = "trash-card-meta-rest";
+    rest.textContent = `・${metaText}`;
+    meta.appendChild(rest);
+  }
 
   const childrenText = trashCardChildrenText(note);
   const children = document.createElement("span");
   children.className = "trash-card-children";
   children.textContent = childrenText;
-
-  const mediaText = trashCardMediaText(note);
-  const media = document.createElement("span");
-  media.className = "trash-card-media";
-  media.textContent = mediaText;
 
   const preview = document.createElement("span");
   preview.className = "note-grid-card-preview";
@@ -6959,9 +6976,8 @@ function buildTrashNoteCard(note) {
   date.className = "note-grid-card-date";
   date.textContent = `削除: ${formatListDate(note.deleted_at)}`;
 
-  const body = [title, location];
+  const body = [title, meta];
   if (childrenText) body.push(children);
-  if (mediaText) body.push(media);
   body.push(preview, date);
 
   return buildTrashCard({

@@ -2418,33 +2418,32 @@ body.has-large-editor-open .note-head {
   white-space: nowrap;
 }
 
-/* ゴミ箱：元の場所と子メモ一覧の行が増えるぶん、カードを少し高くする */
+/* ゴミ箱：メタ行と子メモ一覧のぶん、カードを少し高くする */
 #trashItems .note-grid-card {
-  height: 240px;
+  height: 228px;
 }
 
-/* ゴミ箱：画像だけのメモでも中身があると分かるようにする件数表示 */
-.trash-card-media {
-  align-self: flex-start;
-  border-radius: 999px;
-  padding: 2px 8px;
-  background: var(--panel);
-  color: var(--muted);
+/* ゴミ箱：元の場所・子メモ件数・画像件数をまとめた1行 */
+.trash-card-meta {
   font-size: 11px;
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.trash-card-meta-rest {
+  color: var(--muted);
 }
 
 /* ゴミ箱：中に入っている子メモのタイトル一覧 */
 .trash-card-children {
-  color: var(--text);
+  color: var(--muted);
   font-size: 11px;
-  font-weight: 700;
   line-height: 1.5;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .note-grid-card-preview {
@@ -2464,7 +2463,7 @@ body.has-large-editor-open .note-head {
 
 /* ゴミ箱：子メモ一覧の行が入るぶん、本文プレビューは短くする */
 .note-grid-card.has-children .note-grid-card-preview {
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
 }
 
 .note-grid-card.has-more .note-grid-card-preview {
