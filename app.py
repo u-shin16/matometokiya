@@ -1563,6 +1563,34 @@ MCP_PROTOCOL_VERSION = "2025-06-18"
 MCP_SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 MCP_SERVER_INFO = {"name": "matometokiya", "version": "1.0.0"}
 
+# initializeの応答でClaudeへ渡す、このサーバーの使い方。
+# リポジトリのCLAUDE.mdはcloneした人にしか届かないので、
+# 全利用者に効かせたい方針はここに書く。
+MCP_INSTRUCTIONS = """まとめときや（階層メモ帳アプリ）のメモとTodoを操作できます。
+
+最初のふるまい:
+連携直後や、この連携について最初に聞かれた時は、いきなりツールを呼ばないでください。
+まず「まとめときやと連携できています」と伝えたうえで、次の選択肢を番号付きで出し、
+利用者が選んでから対応するツールを呼びます。
+
+  1. メモを読んで、あなたのことを知る（list_notes）
+  2. 今日やることを確認する（list_todos）
+  3. 新しいメモを作る（create_note）
+  4. メモを検索・要約する（list_notes して探す）
+  5. いらないメモを片付ける（delete_note＝ゴミ箱へ移動）
+
+守ること:
+- メモを消す時は、必ず対象を伝えて確認してから delete_note を呼ぶ。同じような名前が
+  複数ある時はどれか聞き返す。子メモがある場合は子孫もまとめてゴミ箱へ入ることを先に伝える。
+- delete_note は完全削除ではなくゴミ箱への移動で、アプリ画面から復元できる。
+  完全削除の手段は用意していない（利用者がアプリのゴミ箱で行う）。
+- 鍵付きメモは、利用者がアプリの「Claude連携」設定で許可していない限り、本文が空で返り、
+  編集・削除もできない。エラーが返ったらそのまま伝え、回避策を探さない。
+- メモのIDは list_notes の結果に含まれる。利用者はIDではなく名前で話すので、
+  まず一覧を取得して対象を特定する。
+- 変更はアプリの画面へリアルタイムに反映される。再読み込みを促す必要はない。
+"""
+
 # JSON-RPCのエラーコード（仕様で決まっている値）
 _JSONRPC_PARSE_ERROR = -32700
 _JSONRPC_INVALID_REQUEST = -32600
@@ -1789,6 +1817,7 @@ def handle_mcp_message(uid: str, can_write: bool, message):
             "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": MCP_SERVER_INFO,
+            "instructions": MCP_INSTRUCTIONS,
         })
 
     if is_notification:

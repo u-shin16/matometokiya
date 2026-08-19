@@ -1010,6 +1010,16 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(payload["result"]["protocolVersion"], "2025-03-26")
         self.assertEqual(payload["result"]["serverInfo"]["name"], "matometokiya")
 
+    def test_initialize_includes_instructions(self):
+        response = self._post(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}, self.READ_TOKEN
+        )
+        instructions = response.get_json()["result"]["instructions"]
+        self.assertIn("まとめときや", instructions)
+        # 連携直後にいきなりTodoを取りに行かせないための指示が入っていること
+        self.assertIn("いきなりツールを呼ばないでください", instructions)
+        self.assertIn("ゴミ箱", instructions)
+
     def test_initialize_falls_back_for_unknown_version(self):
         response = self._post(
             {"jsonrpc": "2.0", "id": 1, "method": "initialize",
