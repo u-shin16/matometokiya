@@ -1128,5 +1128,47 @@ class McpServerTests(unittest.TestCase):
         self.assertTrue(result["isError"])
 
 
+class ClaudeConnectMcpCommandTests(unittest.TestCase):
+    """MCP登録コマンドの発行（ログイン中の本人のみ）。"""
+
+    UID = "firebase-user-123"
+
+    def setUp(self):
+        app_module.app.config.update(TESTING=True)
+        self.client = app_module.app.test_client()
+
+    def test_requires_login(self):
+        response = self.client.post("/api/v1/claude-connect/mcp-command")
+        self.assertEqual(response.status_code, 401)
+
+    def test_returns_command_for_logged_in_user(self):
+        issued = {
+            "command": "claude mcp add --scope user ...",
+            "token": "w-token",
+            "connected_at": "2026-08-19T00:00:00+00:00",
+        }
+        with (
+            patch.object(
+                app_module, "verify_firebase_id_token", return_value=(self.UID, None)
+            ),
+            patch.object(app_module, "issue_claude_mcp_command", return_value=issued) as issue,
+        ):
+            response = self.client.post(
+                "/api/v1/claude-connect/mcp-command",
+                headers={"Authorization": "Bearer some-id-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), issued)
+        issue.assert_called_once_with(self.UID)
+
+    def test_command_includes_user_scope_and_endpoint(self):
+        command = app_module.build_mcp_add_command("secret-token")
+        self.assertIn("--scope user", command)
+        self.assertIn("--transport http", command)
+        self.assertIn(f"{app_module.SITE_URL}/mcp", command)
+        self.assertIn('--header "Authorization: Bearer secret-token"', command)
+
+
 if __name__ == "__main__":
     unittest.main()

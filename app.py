@@ -1077,8 +1077,16 @@ def exchange_pairing_code(code: str) -> dict | None:
         return None
 
     # このコードが実際に引き換えられた今の時点で初めて、トークンを有効化し
-    # 「連携済み」にする。古いトークンがあればここで失効させる
-    # （1ユーザー1組のトークンにする）。
+    # 「連携済み」にする。
+    _activate_claude_tokens(uid, read_token, write_token)
+    return {"read_token": read_token, "write_token": write_token}
+
+
+def _activate_claude_tokens(uid: str, read_token: str, write_token: str) -> datetime:
+    """トークンを有効化して「連携済み」にする。古いトークンはここで失効させる
+    （1ユーザー1組のトークンにする）。保存するのはハッシュだけで、平文のトークンは
+    サーバーに残さない（＝後から再表示できない）。"""
+    db = get_firestore_client()
     _revoke_user_tokens(uid)
 
     read_hash = hashlib.sha256(read_token.encode("utf-8")).hexdigest()
@@ -1099,8 +1107,30 @@ def exchange_pairing_code(code: str) -> dict | None:
         },
         merge=True,
     )
+    return now
 
-    return {"read_token": read_token, "write_token": write_token}
+
+def build_mcp_add_command(write_token: str) -> str:
+    """利用者がターミナルへ貼り付ける1行。--scope user を付けないと、
+    実行したフォルダでしか使えない設定になってしまう。"""
+    return (
+        "claude mcp add --scope user --transport http matometokiya "
+        f"{SITE_URL}/mcp "
+        f'--header "Authorization: Bearer {write_token}"'
+    )
+
+
+def issue_claude_mcp_command(uid: str) -> dict:
+    """ログイン中の本人向けに、その場でトークンを発行してMCP登録コマンドを組み立てる。
+    8桁コードを経由しない導線。平文のトークンを渡せるのはこの応答の1回だけ。"""
+    read_token = secrets.token_urlsafe(32)
+    write_token = secrets.token_urlsafe(32)
+    connected_at = _activate_claude_tokens(uid, read_token, write_token)
+    return {
+        "command": build_mcp_add_command(write_token),
+        "token": write_token,
+        "connected_at": connected_at.isoformat(),
+    }
 
 
 def get_claude_connect_status(uid: str) -> str | None:
@@ -1867,6 +1897,29 @@ def api_claude_connect_start():
         app.logger.exception("Claude連携の開始に失敗しました。")
         return (
             jsonify(error="連携の開始に失敗しました。時間をおいて再度お試しください。"),
+            502,
+            {"Cache-Control": "no-store"},
+        )
+
+    response = jsonify(**result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/v1/claude-connect/mcp-command")
+def api_claude_connect_mcp_command():
+    """MCP登録コマンド（トークン入り）を発行して返す。ログイン中の本人のみ。
+    呼ぶたびに新しいトークンを発行し、それまでのトークンは失効する。"""
+    uid, auth_error = verify_firebase_id_token()
+    if auth_error is not None:
+        return auth_error
+
+    try:
+        result = issue_claude_mcp_command(uid)
+    except Exception:
+        app.logger.exception("MCP登録コマンドの発行に失敗しました。")
+        return (
+            jsonify(error="連携用コマンドの発行に失敗しました。時間をおいて再度お試しください。"),
             502,
             {"Cache-Control": "no-store"},
         )
