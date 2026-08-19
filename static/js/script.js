@@ -1217,8 +1217,11 @@ function applyClaudeConnectState(connected) {
   // 文字リンクにして残す（コマンドを控え忘れた人の復旧手段はこれだけ）。
   if (els.claudeConnectMcpBtn) {
     els.claudeConnectMcpBtn.textContent = connected
-      ? "コマンドを忘れた場合は再発行"
+      ? "別の端末で使う・コマンドを紛失した・人に見られた場合は再発行"
       : "Claude Codeと連携する";
+    els.claudeConnectMcpBtn.title = connected
+      ? "新しいコマンドを発行します。今のコマンド（鍵）は使えなくなります。"
+      : "";
     els.claudeConnectMcpBtn.classList.toggle("app-account-action-btn", !connected);
     els.claudeConnectMcpBtn.classList.toggle("app-account-claude-reissue-link", connected);
   }
