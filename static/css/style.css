@@ -2423,6 +2423,18 @@ body.has-large-editor-open .note-head {
   height: 240px;
 }
 
+/* ゴミ箱：画像だけのメモでも中身があると分かるようにする件数表示 */
+.trash-card-media {
+  align-self: flex-start;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 /* ゴミ箱：中に入っている子メモのタイトル一覧 */
 .trash-card-children {
   color: var(--text);

@@ -6829,6 +6829,19 @@ function collectTrashNoteTree(note, depth = 0, out = []) {
   return out;
 }
 
+// 画像だけのメモはカードの本文プレビューが空になり、何も入っていない
+// ように見えてしまう。カードに画像を出すと崩れるので、件数だけ知らせる。
+// （imgタグを数えるだけ。DOMに入れると画像の読み込みが走るので文字列で数える）
+function trashCardMediaText(note) {
+  const html = noteContentHtmlWithMedia(note);
+  const images = (html.match(/<img\b/gi) || []).length;
+  const videos = (html.match(/<video\b/gi) || []).length;
+  const parts = [];
+  if (images) parts.push(`画像${images}件`);
+  if (videos) parts.push(`動画${videos}件`);
+  return parts.length ? `🖼 ${parts.join("・")}` : "";
+}
+
 const TRASH_CARD_CHILD_LIMIT = 5;
 
 function trashCardChildrenText(note) {
@@ -6933,6 +6946,11 @@ function buildTrashNoteCard(note) {
   children.className = "trash-card-children";
   children.textContent = childrenText;
 
+  const mediaText = trashCardMediaText(note);
+  const media = document.createElement("span");
+  media.className = "trash-card-media";
+  media.textContent = mediaText;
+
   const preview = document.createElement("span");
   preview.className = "note-grid-card-preview";
   preview.textContent = trashNotePreviewText(note);
@@ -6941,13 +6959,18 @@ function buildTrashNoteCard(note) {
   date.className = "note-grid-card-date";
   date.textContent = `削除: ${formatListDate(note.deleted_at)}`;
 
+  const body = [title, location];
+  if (childrenText) body.push(children);
+  if (mediaText) body.push(media);
+  body.push(preview, date);
+
   return buildTrashCard({
     kind: "note",
     id: note.id,
     restoreLabel: `「${note.title || "無題"}」を復元`,
     purgeLabel: `「${note.title || "無題"}」を完全に削除`,
     extraClass: childrenText ? "has-children" : "",
-    body: childrenText ? [title, location, children, preview, date] : [title, location, preview, date],
+    body,
   });
 }
 
