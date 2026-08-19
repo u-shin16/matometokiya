@@ -955,5 +955,178 @@ class ClaudeConnectApiTests(unittest.TestCase):
         self.assertEqual(response.get_json(), tokens)
 
 
+class McpServerTests(unittest.TestCase):
+    """MCP（Claude Codeから直接つなぐ入口）のJSON-RPC応答。"""
+
+    READ_TOKEN = "test-read-token-that-is-long-enough"
+    WRITE_TOKEN = "test-write-token-that-is-long-enough"
+    UID = "firebase-user-123"
+
+    def setUp(self):
+        app_module.app.config.update(TESTING=True)
+        self.client = app_module.app.test_client()
+        self.env = {
+            "MATOME_TODO_API_UID": self.UID,
+            "MATOME_TODO_API_TOKEN_SHA256": hashlib.sha256(
+                self.READ_TOKEN.encode("utf-8")
+            ).hexdigest(),
+            "MATOME_TODO_API_WRITE_TOKEN_SHA256": hashlib.sha256(
+                self.WRITE_TOKEN.encode("utf-8")
+            ).hexdigest(),
+        }
+
+    def _post(self, body, token):
+        with patch.dict(os.environ, self.env, clear=False):
+            return self.client.post(
+                "/mcp", json=body, headers={"Authorization": f"Bearer {token}"}
+            )
+
+    def test_rejects_missing_token(self):
+        response = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
+        self.assertEqual(response.status_code, 401)
+
+    def test_rejects_wrong_token(self):
+        with patch.dict(os.environ, self.env, clear=False), patch.object(
+            app_module, "_lookup_user_token_uid", return_value=None
+        ):
+            response = self.client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+                headers={"Authorization": "Bearer nope-nope-nope-nope-nope"},
+            )
+        self.assertEqual(response.status_code, 401)
+
+    def test_get_is_not_allowed(self):
+        self.assertEqual(self.client.get("/mcp").status_code, 405)
+
+    def test_initialize_echoes_supported_protocol_version(self):
+        response = self._post(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"protocolVersion": "2025-03-26"}},
+            self.READ_TOKEN,
+        )
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["result"]["protocolVersion"], "2025-03-26")
+        self.assertEqual(payload["result"]["serverInfo"]["name"], "matometokiya")
+
+    def test_initialize_falls_back_for_unknown_version(self):
+        response = self._post(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"protocolVersion": "1999-01-01"}},
+            self.READ_TOKEN,
+        )
+        self.assertEqual(
+            response.get_json()["result"]["protocolVersion"],
+            app_module.MCP_PROTOCOL_VERSION,
+        )
+
+    def test_notification_gets_no_body(self):
+        response = self._post(
+            {"jsonrpc": "2.0", "method": "notifications/initialized"}, self.READ_TOKEN
+        )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.get_data(), b"")
+
+    def test_unknown_method_returns_json_rpc_error(self):
+        response = self._post({"jsonrpc": "2.0", "id": 7, "method": "wat"}, self.READ_TOKEN)
+        payload = response.get_json()
+        self.assertEqual(payload["id"], 7)
+        self.assertEqual(payload["error"]["code"], -32601)
+
+    def test_read_token_lists_read_tools_only(self):
+        response = self._post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, self.READ_TOKEN)
+        names = [tool["name"] for tool in response.get_json()["result"]["tools"]]
+        self.assertEqual(names, ["list_notes", "list_todos"])
+
+    def test_write_token_lists_write_tools_too(self):
+        response = self._post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, self.WRITE_TOKEN)
+        names = [tool["name"] for tool in response.get_json()["result"]["tools"]]
+        self.assertIn("create_note", names)
+        self.assertIn("delete_note", names)
+        self.assertIn("list_notes", names)
+
+    def test_call_list_notes(self):
+        notes = [{"id": "note-1", "title": "見出し", "content": "本文"}]
+        with patch.object(app_module, "get_claude_include_locked_notes", return_value=False), \
+             patch.object(app_module, "fetch_all_notes_for_uid", return_value=notes) as fetch:
+            response = self._post(
+                {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                 "params": {"name": "list_notes", "arguments": {}}},
+                self.READ_TOKEN,
+            )
+
+        result = response.get_json()["result"]
+        self.assertFalse(result["isError"])
+        self.assertIn("見出し", result["content"][0]["text"])
+        fetch.assert_called_once_with(self.UID, False)
+
+    def test_call_create_note_with_read_token_is_rejected(self):
+        response = self._post(
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+             "params": {"name": "create_note", "arguments": {"title": "x"}}},
+            self.READ_TOKEN,
+        )
+        result = response.get_json()["result"]
+        self.assertTrue(result["isError"])
+        self.assertIn("書き込み", result["content"][0]["text"])
+
+    def test_call_create_note(self):
+        note = {"id": "note-9", "title": "おにぎり", "content": "説明", "parent_id": None}
+        with patch.object(app_module, "create_note_for_uid", return_value=note) as create:
+            response = self._post(
+                {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                 "params": {"name": "create_note", "arguments": {"title": "おにぎり", "content": "説明"}}},
+                self.WRITE_TOKEN,
+            )
+
+        result = response.get_json()["result"]
+        self.assertFalse(result["isError"])
+        self.assertIn("note-9", result["content"][0]["text"])
+        create.assert_called_once_with(self.UID, "おにぎり", "説明", None)
+
+    def test_call_delete_note_moves_to_trash(self):
+        with patch.object(
+            app_module, "_note_ref",
+            return_value=SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": False})),
+        ), patch.object(app_module, "delete_note_for_uid", return_value=True) as delete:
+            response = self._post(
+                {"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+                 "params": {"name": "delete_note", "arguments": {"note_id": "note-1"}}},
+                self.WRITE_TOKEN,
+            )
+
+        result = response.get_json()["result"]
+        self.assertFalse(result["isError"])
+        self.assertIn("moved_to_trash", result["content"][0]["text"])
+        delete.assert_called_once_with(self.UID, "note-1")
+
+    def test_call_delete_note_blocks_locked_note(self):
+        with patch.object(
+            app_module, "_note_ref",
+            return_value=SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": True})),
+        ), patch.object(app_module, "get_claude_include_locked_notes", return_value=False), \
+             patch.object(app_module, "delete_note_for_uid") as delete:
+            response = self._post(
+                {"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+                 "params": {"name": "delete_note", "arguments": {"note_id": "note-1"}}},
+                self.WRITE_TOKEN,
+            )
+
+        result = response.get_json()["result"]
+        self.assertTrue(result["isError"])
+        self.assertIn("鍵付き", result["content"][0]["text"])
+        delete.assert_not_called()
+
+    def test_call_update_note_requires_a_field(self):
+        response = self._post(
+            {"jsonrpc": "2.0", "id": 8, "method": "tools/call",
+             "params": {"name": "update_note", "arguments": {"note_id": "note-1"}}},
+            self.WRITE_TOKEN,
+        )
+        result = response.get_json()["result"]
+        self.assertTrue(result["isError"])
+
+
 if __name__ == "__main__":
     unittest.main()

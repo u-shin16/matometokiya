@@ -1523,6 +1523,309 @@ def api_claude_connect_locked_notes_setting_post():
     return response
 
 
+# ── MCPサーバー（Claude Code / Claude Desktop から直接つなぐための入口）──────
+# 上のREST API（/api/v1/...）と中身は同じで、入口だけをMCPの作法に合わせたもの。
+# これがあると利用者はこのリポジトリをcloneしなくても、
+#   claude mcp add --transport http matometokiya <URL>/mcp --header "Authorization: Bearer <トークン>"
+# の1コマンドだけで連携できる。
+
+MCP_PROTOCOL_VERSION = "2025-06-18"
+MCP_SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+MCP_SERVER_INFO = {"name": "matometokiya", "version": "1.0.0"}
+
+# JSON-RPCのエラーコード（仕様で決まっている値）
+_JSONRPC_PARSE_ERROR = -32700
+_JSONRPC_INVALID_REQUEST = -32600
+_JSONRPC_METHOD_NOT_FOUND = -32601
+_JSONRPC_INVALID_PARAMS = -32602
+
+_MCP_READ_TOOLS = [
+    {
+        "name": "list_notes",
+        "description": "まとめときやの全メモを階層つきで取得する。鍵付きメモの本文は、利用者がアプリの「Claude連携」設定で許可している場合だけ含まれる。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "list_todos",
+        "description": "まとめときやの未完了Todoを取得する。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"project": {"type": "string", "description": "絞り込むプロジェクト名（省略可）"}},
+            "additionalProperties": False,
+        },
+    },
+]
+
+_MCP_WRITE_TOOLS = [
+    {
+        "name": "create_note",
+        "description": "まとめときやに新しいメモを作成する。parent_idを省略するとルート直下に作る。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "メモのタイトル"},
+                "content": {"type": "string", "description": "メモの本文"},
+                "parent_id": {"type": "string", "description": "親メモのID（省略時はルート直下）"},
+            },
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "update_note",
+        "description": "既存メモのタイトル・本文・チェック状態を更新する。指定した項目だけが変わる。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "note_id": {"type": "string", "description": "更新するメモのID"},
+                "title": {"type": "string"},
+                "content": {"type": "string"},
+                "checked": {"type": "boolean", "description": "チェックマークの有無"},
+            },
+            "required": ["note_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "delete_note",
+        "description": "メモとその子孫メモをゴミ箱へ移動する。完全削除ではなく、アプリのゴミ箱から復元できる。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"note_id": {"type": "string", "description": "ゴミ箱へ移すメモのID"}},
+            "required": ["note_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "complete_todo",
+        "description": "Todoを完了にする。元になっているメモにもチェックが付く。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"todo_id": {"type": "string", "description": "完了にするTodoのID"}},
+            "required": ["todo_id"],
+            "additionalProperties": False,
+        },
+    },
+]
+
+
+class McpToolError(Exception):
+    """ツール実行を利用者向けメッセージで失敗させる。"""
+
+
+def _mcp_unauthorized(message: str):
+    return (
+        jsonify(error=message),
+        401,
+        {
+            "Cache-Control": "no-store",
+            "WWW-Authenticate": 'Bearer realm="matometokiya-mcp"',
+        },
+    )
+
+
+def authenticate_mcp_request():
+    """MCPはヘッダー1本しか持てないため、読み取り用・書き込み用どちらのトークンでも
+    受け付ける。書き込み用トークンの場合だけ、書き込み系ツールも使えるようにする。
+    返り値は (uid, 書き込み可否, エラー応答)。"""
+    token = _get_bearer_token()
+    if token is None:
+        return None, False, _mcp_unauthorized("Bearerトークンが必要です。")
+
+    presented_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    admin_uid = _is_valid_admin_token(_TODO_API_WRITE_TOKEN_HASH_ENV, presented_hash)
+    if admin_uid:
+        return admin_uid, True, None
+    admin_uid = _is_valid_admin_token(_TODO_API_TOKEN_HASH_ENV, presented_hash)
+    if admin_uid:
+        return admin_uid, False, None
+
+    try:
+        uid = _lookup_user_token_uid(presented_hash, _API_TOKEN_TYPE_WRITE)
+        if uid:
+            return uid, True, None
+        uid = _lookup_user_token_uid(presented_hash, _API_TOKEN_TYPE_READ)
+        if uid:
+            return uid, False, None
+    except Exception:
+        app.logger.exception("MCPのトークン確認に失敗しました。")
+        return None, False, (jsonify(error="トークンの確認に失敗しました。"), 502, {"Cache-Control": "no-store"})
+
+    return None, False, _mcp_unauthorized("Bearerトークンが正しくありません。")
+
+
+def mcp_tools_for(can_write: bool):
+    return _MCP_READ_TOOLS + _MCP_WRITE_TOOLS if can_write else list(_MCP_READ_TOOLS)
+
+
+def _mcp_require_unlocked_note(uid: str, note_id: str, action: str):
+    """鍵付きメモは、アプリ側でトグルを許可していない限り触らせない
+    （読めないメモをClaudeが書き換え・削除できてしまうのを防ぐ）。"""
+    existing = _note_ref(uid, note_id).get()
+    if existing.exists and (existing.to_dict() or {}).get("locked") and not get_claude_include_locked_notes(uid):
+        raise McpToolError(f"鍵付きメモです。アプリの「Claude連携」設定で許可してから{action}してください。")
+
+
+def _mcp_note_id_arg(arguments: dict) -> str:
+    note_id = str(arguments.get("note_id") or "").strip()
+    if not note_id or len(note_id) > 200:
+        raise McpToolError("note_idを正しく指定してください。")
+    return note_id
+
+
+def run_mcp_tool(uid: str, can_write: bool, name: str, arguments: dict):
+    """ツール1個を実行して、Claudeへ返す文字列を組み立てる。
+    中身はRESTのAPIと同じ関数を呼ぶだけで、鍵付きメモの扱いなどの安全策も同じ。"""
+    if name in {tool["name"] for tool in _MCP_WRITE_TOOLS} and not can_write:
+        raise McpToolError("このトークンでは書き込みできません。書き込み用トークンで連携し直してください。")
+
+    if name == "list_notes":
+        include_locked = get_claude_include_locked_notes(uid)
+        notes = fetch_all_notes_for_uid(uid, include_locked)
+        return json.dumps({"count": len(notes), "notes": notes}, ensure_ascii=False)
+
+    if name == "list_todos":
+        project = str(arguments.get("project") or "").strip() or None
+        todos = fetch_incomplete_todos_for_uid(uid, project)
+        return json.dumps({"count": len(todos), "todos": todos}, ensure_ascii=False)
+
+    if name == "create_note":
+        title = str(arguments.get("title") or "")
+        content = str(arguments.get("content") or "")
+        parent_id = arguments.get("parent_id")
+        parent_id = str(parent_id) if parent_id else None
+        note = create_note_for_uid(uid, title, content, parent_id)
+        if note is None:
+            raise McpToolError("指定されたparent_idのメモが見つかりません。")
+        return json.dumps({"id": note["id"], "title": note["title"], "parent_id": note["parent_id"]}, ensure_ascii=False)
+
+    if name == "update_note":
+        note_id = _mcp_note_id_arg(arguments)
+        if "title" not in arguments and "content" not in arguments and "checked" not in arguments:
+            raise McpToolError("title、content、checkedのいずれかを指定してください。")
+        _mcp_require_unlocked_note(uid, note_id, "編集")
+        title = str(arguments["title"]) if "title" in arguments else None
+        content = str(arguments["content"]) if "content" in arguments else None
+        checked = bool(arguments["checked"]) if "checked" in arguments else None
+        note = update_note_for_uid(uid, note_id, title, content, checked)
+        if note is None:
+            raise McpToolError("指定されたメモが見つかりません。")
+        return json.dumps(
+            {"id": note_id, "title": note["title"], "checked": bool(note.get("checked"))},
+            ensure_ascii=False,
+        )
+
+    if name == "delete_note":
+        note_id = _mcp_note_id_arg(arguments)
+        _mcp_require_unlocked_note(uid, note_id, "削除")
+        if not delete_note_for_uid(uid, note_id):
+            raise McpToolError("指定されたメモが見つかりません。")
+        return json.dumps({"id": note_id, "moved_to_trash": True}, ensure_ascii=False)
+
+    if name == "complete_todo":
+        todo_id = str(arguments.get("todo_id") or "").strip()
+        if not todo_id or len(todo_id) > 200:
+            raise McpToolError("todo_idを正しく指定してください。")
+        if not mark_todo_done_for_uid(uid, todo_id):
+            raise McpToolError("指定されたTodoが見つかりません。")
+        return json.dumps({"id": todo_id, "done": True}, ensure_ascii=False)
+
+    raise McpToolError(f"未知のツールです: {name}")
+
+
+def _mcp_result(request_id, result):
+    return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+def _mcp_error(request_id, code: int, message: str):
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+
+
+def handle_mcp_message(uid: str, can_write: bool, message):
+    """JSON-RPCメッセージ1件を処理する。通知（idなし）の場合はNoneを返す。"""
+    if not isinstance(message, dict):
+        return _mcp_error(None, _JSONRPC_INVALID_REQUEST, "リクエストの形式が正しくありません。")
+
+    method = message.get("method")
+    request_id = message.get("id")
+    params = message.get("params") if isinstance(message.get("params"), dict) else {}
+    is_notification = "id" not in message
+
+    if method == "initialize":
+        requested = str(params.get("protocolVersion") or "")
+        version = requested if requested in MCP_SUPPORTED_PROTOCOL_VERSIONS else MCP_PROTOCOL_VERSION
+        return _mcp_result(request_id, {
+            "protocolVersion": version,
+            "capabilities": {"tools": {"listChanged": False}},
+            "serverInfo": MCP_SERVER_INFO,
+        })
+
+    if is_notification:
+        # notifications/initialized など。応答してはいけない。
+        return None
+
+    if method == "ping":
+        return _mcp_result(request_id, {})
+
+    if method == "tools/list":
+        return _mcp_result(request_id, {"tools": mcp_tools_for(can_write)})
+
+    if method == "tools/call":
+        name = str(params.get("name") or "")
+        arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+        if not name:
+            return _mcp_error(request_id, _JSONRPC_INVALID_PARAMS, "ツール名が指定されていません。")
+        try:
+            text = run_mcp_tool(uid, can_write, name, arguments)
+        except McpToolError as error:
+            return _mcp_result(request_id, {
+                "content": [{"type": "text", "text": str(error)}],
+                "isError": True,
+            })
+        except Exception:
+            app.logger.exception("MCPツールの実行に失敗しました。")
+            return _mcp_result(request_id, {
+                "content": [{"type": "text", "text": "処理に失敗しました。時間をおいて試してください。"}],
+                "isError": True,
+            })
+        return _mcp_result(request_id, {"content": [{"type": "text", "text": text}], "isError": False})
+
+    return _mcp_error(request_id, _JSONRPC_METHOD_NOT_FOUND, f"未対応のメソッドです: {method}")
+
+
+@app.post("/mcp")
+def api_mcp():
+    """MCP（Model Context Protocol）のHTTP入口。Claude Codeから
+    `claude mcp add --transport http` で登録して使う。"""
+    uid, can_write, auth_error = authenticate_mcp_request()
+    if auth_error is not None:
+        return auth_error
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return jsonify(_mcp_error(None, _JSONRPC_PARSE_ERROR, "JSONを解釈できませんでした。")), 400
+
+    messages = payload if isinstance(payload, list) else [payload]
+    responses = [response for response in (handle_mcp_message(uid, can_write, m) for m in messages) if response]
+
+    if not responses:
+        # 通知だけだった場合は本文なしで受領を返す。
+        return "", 202, {"Cache-Control": "no-store"}
+
+    body = responses if isinstance(payload, list) else responses[0]
+    response = jsonify(body)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/mcp")
+@app.delete("/mcp")
+def api_mcp_unsupported_methods():
+    """サーバー発のSSEストリームやセッション終了には対応していない。"""
+    return jsonify(error="POSTのみ対応しています。"), 405, {"Allow": "POST"}
+
+
 @app.post("/api/v1/todos/<todo_id>/complete")
 def api_complete_todo(todo_id):
     uid, auth_error = authenticate_todo_write_api_request()
