@@ -14540,6 +14540,9 @@ const TRASH_ACTIONS = {
     tree: (id, anchorEl) => {
       const note = state.trashNotes.find(n => n.id === id);
       if (!note) return;
+      // 押したままだとボタンにフォーカスが残り、カードが
+      // :focus-within で青いままになるので外す。
+      anchorEl?.blur();
       if (!els.trashTreePopover?.hidden && els.trashTreePopover?.dataset.noteId === id) {
         hideTrashTreePopover();
         return;
