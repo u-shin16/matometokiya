@@ -3329,6 +3329,23 @@ body.has-management-open {
   word-break: break-word;
 }
 
+/* 連携済みのときの「再発行」は、普段は押さないので文字リンク扱いにする */
+.app-account-claude-reissue-link {
+  align-self: flex-start;
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.app-account-claude-reissue-link:hover {
+  color: var(--text);
+}
+
 /* MCP登録コマンド（既定はマスク表示、「表示」で実物） */
 .app-account-claude-mcp-command {
   margin: 6px 0;

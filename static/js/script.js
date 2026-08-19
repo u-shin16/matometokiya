@@ -1213,9 +1213,14 @@ function applyClaudeConnectState(connected) {
   els.claudeConnectStatus.textContent = connected ? "連携済みです。" : "まだ連携していません。";
   if (els.claudeConnectStartBtn) els.claudeConnectStartBtn.hidden = connected;
   if (els.claudeConnectRevokeBtn) els.claudeConnectRevokeBtn.hidden = !connected;
-  // 連携済みなら、コマンドを紛失した人向けに「再発行」として出し続ける。
+  // 連携済みのときは普段押す必要がないので、ボタンではなく控えめな
+  // 文字リンクにして残す（コマンドを控え忘れた人の復旧手段はこれだけ）。
   if (els.claudeConnectMcpBtn) {
-    els.claudeConnectMcpBtn.textContent = connected ? "コマンドを再発行" : "Claude Codeと連携する";
+    els.claudeConnectMcpBtn.textContent = connected
+      ? "コマンドを忘れた場合は再発行"
+      : "Claude Codeと連携する";
+    els.claudeConnectMcpBtn.classList.toggle("app-account-action-btn", !connected);
+    els.claudeConnectMcpBtn.classList.toggle("app-account-claude-reissue-link", connected);
   }
 }
 
