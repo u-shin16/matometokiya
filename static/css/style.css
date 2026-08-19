@@ -2539,6 +2539,17 @@ body.has-large-editor-open .note-head {
   margin: 8px 0;
 }
 
+/* ゴミ箱のプレビューは読むだけなので、拡大カーソルや
+   ホバーの反応を出さない（押せそうに見えないようにする）。 */
+.trash-preview-note-body .inline-media-figure img.inline-media,
+.trash-preview-note-body .inline-media-figure video.inline-media {
+  cursor: default;
+}
+
+.trash-preview-note-body .inline-media-figure:hover img.inline-media {
+  filter: none;
+}
+
 .note-grid-card-more {
   align-self: flex-start;
   border: 0;
