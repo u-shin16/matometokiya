@@ -1,7 +1,7 @@
 {% extends "seo_base.html" %}
 
 {% block title %}階層メモ アプリ｜{{ site_name }}{% endblock %}
-{% block description %}やることやアイデアが頭の中でごちゃごちゃになっていませんか。{{ site_name }}は、思いついたことを階層メモとマインドマップで整理できる無料アプリです。AI自動生成や共同編集にも対応しています。{% endblock %}
+{% block description %}やることやアイデアが頭の中でごちゃごちゃになっていませんか。{{ site_name }}は、思いついたことを階層メモとマインドマップで整理できる無料アプリです。AI自動生成や共同編集、Claude Code連携（MCP）にも対応しています。{% endblock %}
 
 {% block structured_data %}
 <script type="application/ld+json">{{ webapp_jsonld | tojson }}</script>
@@ -44,6 +44,11 @@
       <h3>合言葉だけで始められる共同編集</h3>
       <p>4桁の合言葉を伝えるだけで、家族やチームと同じメモをリアルタイムに編集できます。</p>
     </div>
+    <div class="seo-card">
+      <div class="seo-card-icon" aria-hidden="true">🤖</div>
+      <h3>Claude Codeと連携できる</h3>
+      <p>AIアシスタントのClaude Codeから、あなたのメモを直接読み書きできます。「今日やること教えて」と話しかけるだけです。</p>
+    </div>
   </div>
 
   <h2>使い方は3ステップ</h2>
@@ -52,6 +57,22 @@
     <li><strong>子メモで階層化する</strong><span>細かい内容を子メモとして追加し、必要ならマインドマップにも変換します。</span></li>
     <li><strong>必要ならAIや共同編集も使う</strong><span>手が止まったらAI生成、人と一緒に考えたいときは共同編集を使いましょう。</span></li>
   </ol>
+
+  <h2>Claude Codeから、話しかけるだけでメモを操作</h2>
+  <p>
+    {{ site_name }}は<strong>MCP（Model Context Protocol）</strong>に対応しています。AIアシスタントのClaude Codeとつなぐと、
+    アプリを開かなくてもメモやTodoの確認・作成・整理を頼めるようになります。
+    たまったメモを読ませて「自分が何に興味を持っているか」をまとめてもらう、といった使い方もできます。
+  </p>
+  <ol class="seo-steps">
+    <li><strong>登録コマンドを発行する</strong><span>アプリのアカウント画面「Claude連携」で「Claude Codeと連携する」を押します。</span></li>
+    <li><strong>ターミナルに貼り付けて1回実行する</strong><span>表示されたコマンドをコピーして実行するだけ。設定ファイルの編集は必要ありません。</span></li>
+    <li><strong>あとは話しかけるだけ</strong><span>「今日やること教えて」「買い物リストってメモ作って」「このメモいらない」で操作できます。</span></li>
+  </ol>
+  <p class="seo-hero-note">
+    Claude Code（Anthropicの開発者向けツール）をお使いの方向けの機能です。使っていない場合は、何も設定する必要はありません。
+    鍵付きメモの内容は、設定でオンにしない限りAIには渡りません。「メモを消して」と頼んだ場合もゴミ箱へ移動するだけで、いつでも元に戻せます。
+  </p>
 
   <h2>よくある質問</h2>
   <ul class="seo-faq-list">
