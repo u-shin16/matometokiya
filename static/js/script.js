@@ -5036,6 +5036,17 @@ function snapshotFromNote(note) {
   };
 }
 
+// エディタのDOMが今どのメモを表示しているか。選択中のメモ（state.selectedId）を
+// 切り替えたのに renderEditor() を通っていない状態で保存すると、前のメモの
+// タイトル・本文が新しく選ばれたメモへ書き込まれてしまうため、その照合に使う。
+function markEditorNote(noteId) {
+  els.contentInput.dataset.noteId = noteId || "";
+}
+
+function isEditorShowingNote(noteId) {
+  return Boolean(noteId) && els.contentInput.dataset.noteId === noteId;
+}
+
 function snapshotFromEditor(noteId) {
   if (!noteId) return null;
   return {
@@ -5164,6 +5175,7 @@ async function applyUndoSnapshot(snapshot) {
     expandAncestors(note);
     els.titleInput.value = snapshot.title;
     els.contentInput.innerHTML = snapshot.content;
+    markEditorNote(snapshot.noteId);
     updateEmptyState();
 
     const upd = await updateNote(snapshot.noteId, {
@@ -7279,12 +7291,19 @@ function closeNoteHistoryOverlay() {
   els.noteHistoryBtn?.setAttribute("aria-expanded", "false");
 }
 
-async function deleteRootNoteFromGrid(noteId) {
+// 開いていないメモを削除する時の共通処理。今エディタに出ているメモを先に
+// 保存し、そのうえで削除対象へ選択を切り替える。この順番を守らないと、
+// 直前まで開いていたメモのタイトル・本文が削除対象へ保存されてしまう。
+async function deleteNoteById(noteId) {
   if (!await ensureNoteAccess(noteId)) return;
   await saveCurrentEditorNow();
   selectNote(noteId);
-  closeNoteGridOverlay();
   await deleteSelectedNote();
+}
+
+async function deleteRootNoteFromGrid(noteId) {
+  closeNoteGridOverlay();
+  await deleteNoteById(noteId);
 }
 
 // ── TODOリスト ────────────────────────────────────────────────────────────────
@@ -7759,6 +7778,7 @@ function renderEditor() {
     const emptyMessage = closedLock
       ? "鍵付きメモです。開くにはパスワードを入力してください"
       : NO_SELECTION_MESSAGE;
+    markEditorNote(null);
     els.titleInput.value         = "";
     els.titleInput.placeholder   = emptyMessage;
     els.titleInput.readOnly      = true;
@@ -7816,6 +7836,7 @@ function renderEditor() {
     ? ""
     : readOnly ? "ホストが閲覧専用に設定しています" : "共同作業中、親メモの名前を変更できるのはホストだけです";
   els.titleInput.value = note.title;
+  markEditorNote(note.id);
 
   let html = contentToHtml(note.content);
 
@@ -8125,6 +8146,8 @@ async function saveCurrentEditorNow() {
   if (_isComposing || state.isApplyingUndo) return;
   const note = getSelectedNote();
   if (!note) return;
+  // 画面に出ているのが別のメモなら、その内容をこのメモへ保存してはいけない。
+  if (!isEditorShowingNote(note.id)) return;
 
   clearTimeout(state.saveTimer);
   const before = snapshotFromNote(note);
@@ -8349,6 +8372,7 @@ function scheduleSave() {
   updateUndoButton();
   state.saveTimer = setTimeout(async () => {
     if (_isComposing || state.isApplyingUndo) return;
+    if (!isEditorShowingNote(note.id)) return;
     try {
       const before = snapshotFromNote(note);
       const next = snapshotFromEditor(note.id);
@@ -14101,8 +14125,7 @@ els.contextMenu.addEventListener("click", async e => {
     case "toggle-lock": await toggleNoteLock(id); break;
     case "relock-note": await relockNote(id); break;
     case "delete":
-      state.selectedId = id;
-      await deleteSelectedNote();
+      await deleteNoteById(id);
       break;
   }
 });
