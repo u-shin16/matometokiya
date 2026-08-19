@@ -6887,10 +6887,21 @@ function showTrashTreePopover(anchorEl, note) {
     ...buildTrashCardTreeLines(note.id),
   ].join("\n");
   els.trashTreePopover.hidden = false;
+  // ポップオーバーを開いている間は、他のカードにカーソルを合わせても
+  // 反応させない（今どのカードの階層を見ているのか分かりにくくなるため）。
+  markTrashTreeOpenCard(anchorEl.closest(".note-grid-card"));
   positionPopoverNearAnchor(els.trashTreePopover, anchorEl, els.trashTreePopoverBody);
 }
 
+function markTrashTreeOpenCard(card) {
+  els.trashItems?.querySelectorAll(".note-grid-card.is-tree-open")
+    .forEach(el => el.classList.remove("is-tree-open"));
+  els.trashItems?.classList.toggle("has-tree-popover", Boolean(card));
+  card?.classList.add("is-tree-open");
+}
+
 function hideTrashTreePopover() {
+  markTrashTreeOpenCard(null);
   if (!els.trashTreePopover || els.trashTreePopover.hidden) return;
   els.trashTreePopover.hidden = true;
 }
