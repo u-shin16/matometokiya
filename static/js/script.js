@@ -1326,7 +1326,7 @@ async function handleClaudeConnectMcpCopy() {
   if (!claudeMcpCommand) return;
   try {
     await navigator.clipboard.writeText(claudeMcpCommand);
-    showToast("コピーしました。ターミナルに貼り付けて実行してください。");
+    showToast("コピーしました。ターミナルにだけ貼り付けてください（人に見せないでください）。");
   } catch (e) {
     showToast("コピーできませんでした。「表示」を押して手動でコピーしてください。");
   }

@@ -1442,6 +1442,7 @@
         <div id="claudeConnectInfoBox" class="app-account-claude-info-box" hidden>
           <p>連携すると、Claude Code（AIアシスタント）からあなたのTodoとメモを読み取れるようになります。「〇〇というメモを作って」「チェックつけて」「このメモ消して」のように話しかけるだけで操作できます。鍵付きメモの内容は、下のチェックを入れない限り渡りません。</p>
           <p>「メモを消して」と頼んだ場合はゴミ箱に移動するだけで、完全には削除されません。いつでもゴミ箱から元に戻せます。</p>
+          <p>この機能は Claude Code（Anthropicの開発者向けツール）を使っている人向けです。使っていなければ設定は不要です。</p>
           <p>「Claude Codeと連携する」を押すと、ターミナルに貼り付けるだけの登録コマンドが出ます。アプリのソースコードを用意する必要はありません。</p>
           <p>鍵付きメモは、パスワードなど他人に見られたくない内容を書く場所として使っている場合が多いはずです。オンにすると、その内容もClaude Codeから読めるようになります。心当たりがなければオフのままにしてください。</p>
         </div>
@@ -1449,12 +1450,12 @@
         <div id="claudeConnectMcpBox" class="app-account-claude-code" hidden>
           <p class="app-account-claude-code-title">登録コマンド</p>
           <p class="app-account-claude-code-label">パソコンのターミナル（Claude Codeのチャット欄ではありません）に貼り付けて、1回だけ実行してください。</p>
+          <p class="app-account-claude-warning">このコマンドにはあなた専用の鍵が入っています。ターミナル以外へ貼らないでください。見られるのは今だけで、閉じると再表示できません。</p>
           <p id="claudeConnectMcpCommand" class="app-account-claude-mcp-command"></p>
           <div class="app-account-claude-code-actions">
             <button id="claudeConnectMcpCopyBtn" class="app-account-action-btn" type="button">コピーする</button>
             <button id="claudeConnectMcpRevealBtn" class="app-account-claude-refresh-btn" type="button" title="コマンドを表示する" aria-label="コマンドを表示する" aria-pressed="false">表示</button>
           </div>
-          <p class="app-account-claude-warning">このコマンドが見られるのは今だけです。画面を閉じると二度と表示できません（そのときは「コマンドを再発行」してください）。コマンドにはあなた専用の鍵が含まれるので、人に見せないでください。</p>
         </div>
         <label id="claudeConnectLockedToggleRow" class="auth-remember app-account-claude-locked-toggle" hidden>
           <input id="claudeConnectIncludeLockedToggle" type="checkbox">

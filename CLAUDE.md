@@ -2,15 +2,23 @@
 
 このリポジトリでClaude Codeを使う人向けの指示書です。まとめときやと連携（アカウント画面の「Claude連携」）を済ませたユーザーが、日本語で頼んだことをそのまま実行できるようにするための対応表とルールを書いています。
 
-## 前提
+## まずMCPで繋がっているか確認する
 
-- 連携が済んでいると、このディレクトリの`.env`に`MATOME_TODO_API_URL`・`MATOME_TODO_API_TOKEN`（読み取り用）・`MATOME_TODO_API_WRITE_TOKEN`（書き込み用）が入っています
-- まだ連携していない場合は、アプリのアカウント画面で「連携する」を押して8桁コードを出してもらい、`python scripts/connect_matome.py <コード>`を実行します
+**利用者がやりたいことは、たいていMCPツールで足ります。**アプリのアカウント画面「Claude連携」から発行したコマンドを1回実行すると、`list_notes`・`create_note`・`update_note`・`delete_note`・`list_todos`・`complete_todo`が使えるようになります（cloneも`.env`も不要）。
+
+MCPが使える場合は、以下のスクリプトではなくMCPツールを使ってください。使い方や削除の作法はサーバー側の`instructions`（`app.py`の`MCP_INSTRUCTIONS`）から渡されます。
+
+以下は、MCPが使えない場合や、このリポジトリで開発作業をする時のための旧手段です。
+
+## 前提（スクリプトを使う場合）
+
+- このディレクトリの`.env`に`MATOME_TODO_API_URL`・`MATOME_TODO_API_TOKEN`（読み取り用）・`MATOME_TODO_API_WRITE_TOKEN`（書き込み用）が必要です
+- トークンの発行は`POST /api/v1/claude-connect/mcp-command`（MCP用）か、旧方式のペアリングコード（`POST /api/v1/claude-connect/start` → `python scripts/connect_matome.py <コード>`）です。**どちらか一方しか有効になりません**（1ユーザー1組のため、新しく発行すると古いトークンは失効します）
 - 各スクリプトは`.env`を自動で読み込みます
 
 ## 言われたこと → 実行すること
 
-| ユーザーの言い方 | 実行するコマンド |
+| ユーザーの言い方 | 実行するコマンド（MCPが使えない場合） |
 | --- | --- |
 | 「Todoを見せて」「今日やること教えて」 | `python scripts/fetch_matome_todos.py` |
 | 「このTodo終わった」「〇〇完了にして」 | `python scripts/complete_matome_todo.py <TodoのID>` |
@@ -22,9 +30,9 @@
 
 メモのIDは`fetch_matome_notes.py`の出力に含まれています。ユーザーはIDではなくメモの名前で言ってくるので、まず一覧を取得して対象を特定してください。
 
-## メモを消すときのルール
+## メモを消すときのルール（MCPでもスクリプトでも同じ）
 
-「消して」と言われたら、**削除ではなくゴミ箱への移動**として扱ってください。`delete_matome_note.py`（`DELETE /api/v1/notes/<id>`）はアプリの削除ボタンと同じソフトデリートで、Firestoreのドキュメント自体は残り、アプリ画面のゴミ箱からいつでも復元できます。
+「消して」と言われたら、**削除ではなくゴミ箱への移動**として扱ってください。`delete_note`ツール／`delete_matome_note.py`（`DELETE /api/v1/notes/<id>`）はアプリの削除ボタンと同じソフトデリートで、Firestoreのドキュメント自体は残り、アプリ画面のゴミ箱からいつでも復元できます。
 
 守ること：
 
