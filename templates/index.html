@@ -284,7 +284,10 @@
             </label>
             <label class="mindmap-field ai-file-field">
               <span>ファイル（任意）</span>
-              <input id="noteAiFile" class="ai-file-input" type="file" accept=".txt,.md,.csv,.json,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp,.heic,.heif">
+              <span class="ai-file-row">
+                <input id="noteAiFile" class="ai-file-input" type="file" accept=".txt,.md,.csv,.json,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp,.heic,.heif">
+                <button id="noteAiFileClearBtn" class="ai-file-clear-btn" type="button" title="添付ファイルを外す" aria-label="添付ファイルを外す" hidden>×</button>
+              </span>
               <small>画像・文書／10MBまで</small>
             </label>
             <label class="mindmap-field">
@@ -987,7 +990,10 @@
             </label>
             <label class="mindmap-field ai-file-field">
               <span>ファイル（任意）</span>
-              <input id="mindMapAiFile" class="ai-file-input" type="file" accept=".txt,.md,.csv,.json,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp,.heic,.heif">
+              <span class="ai-file-row">
+                <input id="mindMapAiFile" class="ai-file-input" type="file" accept=".txt,.md,.csv,.json,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp,.heic,.heif">
+                <button id="mindMapAiFileClearBtn" class="ai-file-clear-btn" type="button" title="添付ファイルを外す" aria-label="添付ファイルを外す" hidden>×</button>
+              </span>
               <small>画像・文書／10MBまで</small>
             </label>
             <button id="mindMapAiGenerateBtn" class="icon-btn mindmap-ai-generate-btn" type="button">

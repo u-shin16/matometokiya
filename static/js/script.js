@@ -217,6 +217,7 @@ const els = {
   mindMapAiMapName:      document.getElementById("mindMapAiMapName"),
   mindMapAiPrompt:       document.getElementById("mindMapAiPrompt"),
   mindMapAiFile:         document.getElementById("mindMapAiFile"),
+  mindMapAiFileClearBtn: document.getElementById("mindMapAiFileClearBtn"),
   mindMapAiGenerateBtn:  document.getElementById("mindMapAiGenerateBtn"),
   mindMapAiError:        document.getElementById("mindMapAiError"),
   mindMapAddChildBtn: document.getElementById("mindMapAddChildBtn"),
@@ -258,6 +259,7 @@ const els = {
   noteAiTitle:      document.getElementById("noteAiTitle"),
   noteAiPrompt:     document.getElementById("noteAiPrompt"),
   noteAiFile:       document.getElementById("noteAiFile"),
+  noteAiFileClearBtn: document.getElementById("noteAiFileClearBtn"),
   noteAiDestinationBtn: document.getElementById("noteAiDestinationBtn"),
   noteAiGenerateBtn: document.getElementById("noteAiGenerateBtn"),
   noteAiError:      document.getElementById("noteAiError"),
@@ -7830,6 +7832,41 @@ function prepareAiRequest(promptInput, fileInput, errorElement) {
   return { prompt, fetchOptions: { method: "POST", body } };
 }
 
+// サーバー（Flask）はJSONで返すが、その手前のNginxが弾いた時などは
+// HTMLのエラーページが返ってくる。そのままres.json()すると
+// 「Unexpected token '<'」という利用者に意味の分からない文言になるため、
+// 読めなかった場合は状況に応じた日本語のメッセージへ置き換える。
+async function readAiResponse(res) {
+  try {
+    return await res.json();
+  } catch {
+    if (res.status === 413) {
+      return { error: "ファイルが大きすぎて送信できませんでした。サイズを小さくして試してください。" };
+    }
+    return { error: `生成に失敗しました（HTTP ${res.status}）。時間をおいて試してください。` };
+  }
+}
+
+// 添付ファイルを選んだ時だけ「×」（添付を外す）ボタンを出す。
+function syncAiFileClearButtons() {
+  [[els.noteAiFile, els.noteAiFileClearBtn], [els.mindMapAiFile, els.mindMapAiFileClearBtn]]
+    .forEach(([input, btn]) => {
+      if (input && btn) btn.hidden = !input.files?.length;
+    });
+}
+
+function setupAiFileClearButton(fileInput, clearBtn) {
+  if (!fileInput || !clearBtn) return;
+  fileInput.addEventListener("change", syncAiFileClearButtons);
+  clearBtn.addEventListener("click", e => {
+    // labelの中に置いているので、そのままだとファイル選択が再度開いてしまう。
+    e.preventDefault();
+    e.stopPropagation();
+    fileInput.value = "";
+    syncAiFileClearButtons();
+  });
+}
+
 function updateNoteAiDestinationLabel() {
   if (!els.noteAiDestinationBtn) return;
   const parent = state.noteAiParentId ? getNotes().find(n => n.id === state.noteAiParentId) : null;
@@ -7840,6 +7877,7 @@ function openNoteAiPanel() {
   if (els.noteAiTitle)  els.noteAiTitle.value  = "";
   if (els.noteAiPrompt) els.noteAiPrompt.value = "";
   if (els.noteAiFile)   els.noteAiFile.value = "";
+  syncAiFileClearButtons();
   if (els.noteAiError)  els.noteAiError.hidden = true;
   if (els.noteAiGenerateBtn) els.noteAiGenerateBtn.disabled = false;
   state.noteAiParentId = null;
@@ -7868,9 +7906,10 @@ async function generateNoteWithAI() {
   if (errEl) errEl.hidden = true;
   try {
     const res = await fetch("/api/ai-note", requestData.fetchOptions);
-    const json = await res.json();
+    const json = await readAiResponse(res);
     if (!res.ok) throw new Error(json.error || "生成に失敗しました");
     const tree = json.tree;
+    if (!tree) throw new Error(json.error || "生成結果を読み取れませんでした。");
     const userTitle = els.noteAiTitle?.value.trim();
     if (userTitle) tree.title = userTitle;
     closeNoteAiPanel();
@@ -8565,6 +8604,7 @@ function openMindMapAiPanel() {
   if (els.mindMapAiMapName) els.mindMapAiMapName.value = "";
   if (els.mindMapAiPrompt) els.mindMapAiPrompt.value = "";
   if (els.mindMapAiFile) els.mindMapAiFile.value = "";
+  syncAiFileClearButtons();
   if (els.mindMapAiError) els.mindMapAiError.hidden = true;
   if (els.mindMapAiGenerateBtn) els.mindMapAiGenerateBtn.disabled = false;
   if (els.mindMapAiPanel) {
@@ -8588,9 +8628,10 @@ async function generateMindMapWithAI() {
   if (errEl) errEl.hidden = true;
   try {
     const res = await fetch("/api/ai-mindmap", requestData.fetchOptions);
-    const json = await res.json();
+    const json = await readAiResponse(res);
     if (!res.ok) throw new Error(json.error || "生成に失敗しました");
     const tree = json.tree;
+    if (!tree) throw new Error(json.error || "生成結果を読み取れませんでした。");
     const userTitle = els.mindMapAiMapName?.value.trim();
     closeMindMapAiPanel();
     if (state.mindMap) await saveMindMapNow();
@@ -14602,6 +14643,8 @@ els.noteAiDestinationBtn?.addEventListener("click", () => {
     updateNoteAiDestinationLabel();
   });
 });
+setupAiFileClearButton(els.noteAiFile, els.noteAiFileClearBtn);
+setupAiFileClearButton(els.mindMapAiFile, els.mindMapAiFileClearBtn);
 els.noteAiGenerateBtn?.addEventListener("click", generateNoteWithAI);
 els.noteAiPrompt?.addEventListener("keydown", e => {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generateNoteWithAI(); }

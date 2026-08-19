@@ -3956,6 +3956,36 @@ body.has-mindmap-memo-fullscreen {
   cursor: pointer;
 }
 
+.ai-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-file-row .ai-file-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-file-clear-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ai-file-clear-btn:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
 .mindmap-ai-error {
   color: #dc2626;
   font-size: 13px;
