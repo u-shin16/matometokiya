@@ -3313,22 +3313,6 @@ body.has-management-open {
   margin-top: 10px;
 }
 
-.app-account-claude-code-value {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  margin: 4px 0;
-}
-
-.app-account-claude-code-message {
-  font-size: 13px;
-  font-weight: 400;
-  letter-spacing: normal;
-  color: var(--text);
-  margin: 4px 0;
-  word-break: break-word;
-}
-
 /* 連携済みのときの「再発行」は、普段は押さないので文字リンク扱いにする */
 .app-account-claude-reissue-link {
   align-self: flex-start;
