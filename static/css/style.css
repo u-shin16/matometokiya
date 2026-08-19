@@ -2501,6 +2501,44 @@ body.has-large-editor-open .note-head {
   padding: 4px 2px;
 }
 
+/* 元の場所・子メモ一覧の見出し行 */
+.trash-preview-head {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* 親メモの本文の下に、子メモを階層ぶん字下げして並べる */
+.trash-preview-note {
+  padding-left: calc(var(--trash-preview-depth, 0) * 16px);
+  margin-bottom: 14px;
+}
+
+.trash-preview-note-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+/* 本文はエディタと同じHTMLをそのまま描くので、
+   pre-wrapのままだとタグ間の改行が余白として出てしまう。 */
+.trash-preview-note-body {
+  white-space: normal;
+}
+
+.trash-preview-note-body img,
+.trash-preview-note-body video {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.trash-preview-note-body .inline-media-figure {
+  margin: 8px 0;
+}
+
 .note-grid-card-more {
   align-self: flex-start;
   border: 0;

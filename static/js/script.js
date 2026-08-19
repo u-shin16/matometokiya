@@ -4923,6 +4923,27 @@ function contentToHtml(content) {
   return linkifyPlainTextToHtml(raw);
 }
 
+// メモ本文のHTML。旧 media 配列で持っている画像・動画は本文HTMLに
+// 含まれないことがあるので、末尾にfigureとして足す（一度contentへ
+// 書き込まれた後はスキップされる）。エディタ表示とゴミ箱のプレビューで
+// 同じ見た目にするため共通化している。
+function noteContentHtmlWithMedia(note) {
+  let html = contentToHtml(note.content);
+  for (const item of (note.media ?? [])) {
+    if (!item.downloadURL || html.includes(item.downloadURL)) continue;
+    const url     = escapeHtmlAttr(item.downloadURL);
+    const isVideo = (item.mime_type || "").startsWith("video/") ||
+                    /\.(mp4|mov|avi|webm|m4v|mkv)$/i.test(item.filename || "");
+    const alt     = escapeHtmlAttr(item.original_name || "");
+    html += isVideo
+      ? `<figure class="inline-media-figure" contenteditable="false" draggable="false">` +
+        `<video src="${url}" class="inline-media" controls preload="metadata" draggable="false"></video></figure>`
+      : `<figure class="inline-media-figure" contenteditable="false" draggable="false" data-original-src="${url}" data-original-alt="${alt}">` +
+        `<img src="${url}" alt="${alt}" class="inline-media" draggable="false"></figure>`;
+  }
+  return html;
+}
+
 function contentToPlainText(content) {
   const raw = String(content ?? "");
   if (!raw) return "";
@@ -6820,16 +6841,29 @@ function trashCardChildrenText(note) {
 
 // 復元すると子メモごと戻るので、プレビューでも親メモの本文の下に
 // 子孫メモの中身を続けて並べ、まとめて確認できるようにする。
-function buildTrashNoteFullText(note) {
-  return collectTrashNoteTree(note)
-    .map(({ note: item, depth }) => {
-      const body = contentToPlainText(item.content || "").trim();
-      if (depth === 0) return body;
-      const heading = `${"　".repeat(depth - 1)}【${item.title || "無題"}】`;
-      return body ? `${heading}\n${body}` : heading;
-    })
-    .filter(section => section)
-    .join("\n\n");
+// 画像・動画もエディタと同じHTMLで描いて、そのまま見えるようにする。
+function buildTrashNotePreviewNode(note) {
+  const fragment = document.createDocumentFragment();
+  collectTrashNoteTree(note).forEach(({ note: item, depth }) => {
+    const section = document.createElement("div");
+    section.className = "trash-preview-note";
+    section.style.setProperty("--trash-preview-depth", String(Math.max(depth - 1, 0)));
+
+    if (depth > 0) {
+      const heading = document.createElement("p");
+      heading.className = "trash-preview-note-title";
+      heading.textContent = item.title || "無題";
+      section.appendChild(heading);
+    }
+
+    const body = document.createElement("div");
+    body.className = "trash-preview-note-body";
+    body.innerHTML = noteContentHtmlWithMedia(item);
+    section.appendChild(body);
+
+    fragment.appendChild(section);
+  });
+  return fragment;
 }
 
 // 削除される前にどこの子メモだったかをゴミ箱の一覧・プレビューで
@@ -7007,11 +7041,19 @@ function closeTrashOverlay() {
   hideTrashPreview();
 }
 
-function showTrashPreview(title, bodyText) {
+// bodyNodeを渡すと画像なども含めてそのまま描画する（渡さなければ文字だけ）。
+function showTrashPreview(title, bodyText, bodyNode = null) {
   if (!els.trashDialog || !els.trashPreview) return;
   els.trashPreviewTitle.textContent = title || "";
   els.trashPreviewTitle.hidden = !title;
-  els.trashPreviewBody.textContent = bodyText || "";
+  els.trashPreviewBody.innerHTML = "";
+  if (bodyText) {
+    const head = document.createElement("p");
+    head.className = "trash-preview-head";
+    head.textContent = bodyText;
+    els.trashPreviewBody.appendChild(head);
+  }
+  if (bodyNode) els.trashPreviewBody.appendChild(bodyNode);
   els.trashDialog.classList.add("is-previewing");
   els.trashPreview.hidden = false;
 }
@@ -7838,23 +7880,7 @@ function renderEditor() {
   els.titleInput.value = note.title;
   markEditorNote(note.id);
 
-  let html = contentToHtml(note.content);
-
-  // 旧 media 配列 → インライン figure に変換（一度 content に書き込まれるとスキップ）
-  for (const item of (note.media ?? [])) {
-    if (!item.downloadURL || html.includes(item.downloadURL)) continue;
-    const url     = escapeHtmlAttr(item.downloadURL);
-    const isVideo = (item.mime_type || "").startsWith("video/") ||
-                    /\.(mp4|mov|avi|webm|m4v|mkv)$/i.test(item.filename || "");
-    const alt     = escapeHtmlAttr(item.original_name || "");
-    html += isVideo
-      ? `<figure class="inline-media-figure" contenteditable="false" draggable="false">` +
-        `<video src="${url}" class="inline-media" controls preload="metadata" draggable="false"></video></figure>`
-      : `<figure class="inline-media-figure" contenteditable="false" draggable="false" data-original-src="${url}" data-original-alt="${alt}">` +
-        `<img src="${url}" alt="${alt}" class="inline-media" draggable="false"></figure>`;
-  }
-
-  els.contentInput.innerHTML = html;
+  els.contentInput.innerHTML = noteContentHtmlWithMedia(note);
   ensureMediaTextLines();
   els.breadcrumb.textContent = getParentChain(note).join(" / ");
   const src = note.source_file ? ` / 読み込み元: ${note.source_file}` : "";
@@ -14436,7 +14462,7 @@ const TRASH_ACTIONS = {
       const head = childrenText
         ? `${trashNoteLocationText(note)}\n${childrenText}`
         : trashNoteLocationText(note);
-      showTrashPreview(note.title || "無題", `${head}\n\n${buildTrashNoteFullText(note)}`);
+      showTrashPreview(note.title || "無題", head, buildTrashNotePreviewNode(note));
     },
   },
   quickMemo: {
