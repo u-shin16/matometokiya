@@ -2385,6 +2385,9 @@ body.has-large-editor-open .note-head {
 .note-grid-card.is-tree-hover {
   border-color: var(--primary);
   background: var(--primary-soft);
+  /* ポップオーバーへカーソルを移した瞬間にカードが沈まないよう、
+     浮き上がりもホバー中と同じままにする。 */
+  transform: translateY(-2px);
 }
 
 .note-grid-card.is-active {
