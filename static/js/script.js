@@ -1233,7 +1233,53 @@ function renderClaudeMcpCommand() {
   els.claudeConnectMcpCommand.textContent = revealed ? claudeMcpCommand : maskMcpCommand(claudeMcpCommand);
 }
 
+// 登録コマンドを出したあと、Claude Codeが実際につないでくるまで待つ。
+// つながった時点でコマンドを画面から消す（用済みなので出しっぱなしにしない）。
+let claudeMcpIssuedAt = "";
+let claudeMcpWatchTimer = null;
+
+function stopClaudeMcpWatch() {
+  if (claudeMcpWatchTimer) {
+    clearInterval(claudeMcpWatchTimer);
+    claudeMcpWatchTimer = null;
+  }
+}
+
+function startClaudeMcpWatch() {
+  stopClaudeMcpWatch();
+  const startedAt = Date.now();
+  claudeMcpWatchTimer = setInterval(async () => {
+    // 30分待っても使われなければ、無駄な通信をやめる。
+    if (Date.now() - startedAt > 30 * 60 * 1000 || els.claudeConnectMcpBox?.hidden) {
+      stopClaudeMcpWatch();
+      return;
+    }
+    const user = auth?.currentUser;
+    if (!user) return;
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/v1/claude-connect/status", {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok) return;
+      const used = data.mcp_connected_at;
+      if (!used || !claudeMcpIssuedAt) return;
+      if (new Date(used) <= new Date(claudeMcpIssuedAt)) return;
+      stopClaudeMcpWatch();
+      hideClaudeMcpCommand();
+      if (els.claudeConnectStatus) {
+        els.claudeConnectStatus.textContent = "連携済みです。Claude Codeからの接続を確認しました。";
+      }
+      showToast("Claude Codeから接続されました。登録コマンドは不要になったので閉じます。");
+    } catch (e) {
+      console.error("[claudeConnect] mcp watch error", e);
+    }
+  }, 3000);
+}
+
 function hideClaudeMcpCommand() {
+  stopClaudeMcpWatch();
   claudeMcpCommand = "";
   if (els.claudeConnectMcpBox) els.claudeConnectMcpBox.hidden = true;
   els.claudeConnectMcpRevealBtn?.setAttribute("aria-pressed", "false");
@@ -1262,11 +1308,13 @@ async function handleClaudeConnectMcp() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "連携用コマンドの発行に失敗しました。");
     claudeMcpCommand = String(data.command || "");
+    claudeMcpIssuedAt = String(data.connected_at || new Date().toISOString());
     els.claudeConnectMcpRevealBtn?.setAttribute("aria-pressed", "false");
     renderClaudeMcpCommand();
     if (els.claudeConnectMcpBox) els.claudeConnectMcpBox.hidden = false;
     els.claudeConnectStatus.textContent = "連携しました。下のコマンドをターミナルで1回実行してください。";
     applyClaudeConnectState(true);
+    startClaudeMcpWatch();
   } catch (e) {
     showToast(e.message || "連携用コマンドの発行に失敗しました。");
   } finally {

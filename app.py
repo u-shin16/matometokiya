@@ -1713,6 +1713,21 @@ def authenticate_mcp_request():
     return None, False, _mcp_unauthorized("Bearerトークンが正しくありません。")
 
 
+def record_mcp_connected(uid: str) -> None:
+    """Claude CodeがMCPでつないできたことを記録する。"""
+    get_firestore_client().collection("users").document(uid).set(
+        {"claude_mcp_connected_at": datetime.now(timezone.utc)}, merge=True
+    )
+
+
+def get_claude_mcp_connected_at(uid: str) -> str | None:
+    doc = get_firestore_client().collection("users").document(uid).get()
+    if not doc.exists:
+        return None
+    value = (doc.to_dict() or {}).get("claude_mcp_connected_at")
+    return _serialize_firestore_value(value) if value else None
+
+
 def mcp_tools_for(can_write: bool):
     return _MCP_READ_TOOLS + _MCP_WRITE_TOOLS if can_write else list(_MCP_READ_TOOLS)
 
@@ -1811,6 +1826,12 @@ def handle_mcp_message(uid: str, can_write: bool, message):
     is_notification = "id" not in message
 
     if method == "initialize":
+        # 画面側が「登録コマンドが実際に使われたか」を判定できるよう、
+        # Claude Codeがつないできた時刻を残す（失敗しても応答は返す）。
+        try:
+            record_mcp_connected(uid)
+        except Exception:
+            app.logger.exception("MCP接続時刻の記録に失敗しました。")
         requested = str(params.get("protocolVersion") or "")
         version = requested if requested in MCP_SUPPORTED_PROTOCOL_VERSIONS else MCP_PROTOCOL_VERSION
         return _mcp_result(request_id, {
@@ -1996,11 +2017,16 @@ def api_claude_connect_status():
 
     try:
         connected_at = get_claude_connect_status(uid)
+        mcp_connected_at = get_claude_mcp_connected_at(uid)
     except Exception:
         app.logger.exception("Claude連携状況の取得に失敗しました。")
         return jsonify(error="状況の取得に失敗しました。"), 502, {"Cache-Control": "no-store"}
 
-    response = jsonify(connected=connected_at is not None, connected_at=connected_at)
+    response = jsonify(
+        connected=connected_at is not None,
+        connected_at=connected_at,
+        mcp_connected_at=mcp_connected_at,
+    )
     response.headers["Cache-Control"] = "no-store"
     return response
 

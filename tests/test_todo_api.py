@@ -976,10 +976,26 @@ class McpServerTests(unittest.TestCase):
         }
 
     def _post(self, body, token):
-        with patch.dict(os.environ, self.env, clear=False):
+        # initializeはFirestoreへ接続時刻を書きに行くので、テストでは止めておく。
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "record_mcp_connected"),
+        ):
             return self.client.post(
                 "/mcp", json=body, headers={"Authorization": f"Bearer {token}"}
             )
+
+    def test_initialize_records_connection_time(self):
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "record_mcp_connected") as record,
+        ):
+            self.client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                headers={"Authorization": f"Bearer {self.READ_TOKEN}"},
+            )
+        record.assert_called_once_with(self.UID)
 
     def test_rejects_missing_token(self):
         response = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
