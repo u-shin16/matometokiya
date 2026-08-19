@@ -14582,6 +14582,14 @@ els.trashItems?.addEventListener("click", e => {
   else if (action === "tree") handlers.tree?.(item.dataset.id, actionEl);
   else if (action === "view") handlers.view(item.dataset.id);
 });
+// 階層ポップオーバーを出したまま別のカードを見に行った時は、
+// どのメモの階層なのか分からなくなるので閉じる。
+els.trashItems?.addEventListener("mouseover", e => {
+  if (els.trashTreePopover?.hidden) return;
+  const card = e.target.closest(".note-grid-card");
+  if (!card || card.dataset.id === els.trashTreePopover.dataset.noteId) return;
+  hideTrashTreePopover();
+});
 els.trashFilterSelect?.addEventListener("change", () => {
   state.trashFilter = els.trashFilterSelect.value;
   renderTrashOverlay();
