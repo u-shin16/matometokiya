@@ -14595,12 +14595,13 @@ els.trashItems?.addEventListener("click", e => {
 });
 els.trashTreePopover?.addEventListener("mouseenter", () => setTrashTreeCardHover(true));
 els.trashTreePopover?.addEventListener("mouseleave", () => setTrashTreeCardHover(false));
-// 階層ポップオーバーを出したまま別のカードを見に行った時は、
-// どのメモの階層なのか分からなくなるので閉じる。
-els.trashItems?.addEventListener("mouseover", e => {
+// 階層ポップオーバーと元のカード以外へカーソルが移ったら閉じる
+// （別のカードへ移った時も、一覧の外へ出た時も同じ扱い）。
+document.addEventListener("mouseover", e => {
   if (els.trashTreePopover?.hidden) return;
+  if (els.trashTreePopover.contains(e.target)) return;
   const card = e.target.closest(".note-grid-card");
-  if (!card || card.dataset.id === els.trashTreePopover.dataset.noteId) return;
+  if (card && card.dataset.id === els.trashTreePopover.dataset.noteId) return;
   hideTrashTreePopover();
 });
 els.trashFilterSelect?.addEventListener("change", () => {
