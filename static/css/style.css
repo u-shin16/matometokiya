@@ -1728,6 +1728,27 @@ body.has-large-editor-open .note-head {
   max-width: 260px;
 }
 
+/* ゴミ箱の「階層」ボタンで出す、子メモの木を丸ごと見せるポップオーバー */
+.trash-tree-popover {
+  max-width: 320px;
+}
+
+.trash-tree-popover-body {
+  max-height: 400px;
+  overflow: auto;
+  padding: 4px 6px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+}
+
+.trash-card-tree-btn {
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .note-children-popover #noteChildrenPopoverItems,
 #quickMemoMovePopoverItems {
   max-height: 400px;

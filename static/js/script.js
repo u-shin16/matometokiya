@@ -135,6 +135,9 @@ const els = {
   noteChildrenPopover:      document.getElementById("noteChildrenPopover"),
   noteChildrenPopoverTitle: document.getElementById("noteChildrenPopoverTitle"),
   noteChildrenPopoverItems: document.getElementById("noteChildrenPopoverItems"),
+  trashTreePopover:      document.getElementById("trashTreePopover"),
+  trashTreePopoverTitle: document.getElementById("trashTreePopoverTitle"),
+  trashTreePopoverBody:  document.getElementById("trashTreePopoverBody"),
   noteHistoryBtn:     document.getElementById("noteHistoryBtn"),
   noteHistoryOverlay: document.getElementById("noteHistoryOverlay"),
   noteHistoryItems:   document.getElementById("noteHistoryItems"),
@@ -6874,6 +6877,24 @@ function trashCardTreeText(note) {
   return [...lines.slice(0, TRASH_CARD_TREE_LINE_LIMIT), `…ほか${rest}件`].join("\n");
 }
 
+// カードは3行までしか出せないので、「階層」ボタンで全体を見せる。
+function showTrashTreePopover(anchorEl, note) {
+  if (!els.trashTreePopover || !anchorEl || !note) return;
+  hideNoteChildrenPopover();
+  els.trashTreePopoverTitle.textContent = `「${note.title || "無題"}」の階層`;
+  els.trashTreePopoverBody.textContent = [
+    note.title || "無題",
+    ...buildTrashCardTreeLines(note.id),
+  ].join("\n");
+  els.trashTreePopover.hidden = false;
+  positionPopoverNearAnchor(els.trashTreePopover, anchorEl, els.trashTreePopoverBody);
+}
+
+function hideTrashTreePopover() {
+  if (!els.trashTreePopover || els.trashTreePopover.hidden) return;
+  els.trashTreePopover.hidden = true;
+}
+
 // 復元すると子メモごと戻るので、プレビューでも親メモの本文の下に
 // 子孫メモの中身を続けて並べ、まとめて確認できるようにする。
 // 画像・動画もエディタと同じHTMLで描いて、そのまま見えるようにする。
@@ -6916,7 +6937,7 @@ function trashNoteLocationText(note) {
   return chain.length ? chain.join(" > ") : "ルート直下";
 }
 
-function buildTrashCard({ kind, id, restoreLabel, purgeLabel, body, extraClass = "" }) {
+function buildTrashCard({ kind, id, restoreLabel, purgeLabel, treeLabel, body, extraClass = "" }) {
   const card = document.createElement("div");
   card.className = `note-grid-card${extraClass ? ` ${extraClass}` : ""}`;
   card.dataset.id = id;
@@ -6931,6 +6952,17 @@ function buildTrashCard({ kind, id, restoreLabel, purgeLabel, body, extraClass =
 
   const actions = document.createElement("div");
   actions.className = "note-grid-card-actions";
+
+  if (treeLabel) {
+    const treeBtn = document.createElement("button");
+    treeBtn.type = "button";
+    treeBtn.className = "note-grid-card-icon-btn trash-card-tree-btn";
+    treeBtn.dataset.action = "tree";
+    treeBtn.title = "階層を確認";
+    treeBtn.setAttribute("aria-label", treeLabel);
+    treeBtn.textContent = "階層";
+    actions.appendChild(treeBtn);
+  }
 
   const restoreBtn = document.createElement("button");
   restoreBtn.type = "button";
@@ -6996,6 +7028,7 @@ function buildTrashNoteCard(note) {
     id: note.id,
     restoreLabel: `「${note.title || "無題"}」を復元`,
     purgeLabel: `「${note.title || "無題"}」を完全に削除`,
+    treeLabel: treeText ? `「${note.title || "無題"}」の階層を確認` : "",
     extraClass: treeText ? "has-children" : "",
     body,
   });
@@ -7030,6 +7063,7 @@ function buildTrashQuickMemoCard(memo) {
 // 右上の絞り込みで種類ごとに表示を絞れる。
 function renderTrashOverlay() {
   if (!els.trashItems) return;
+  hideTrashTreePopover();
   const filter = state.trashFilter;
 
   const entries = [
@@ -7078,6 +7112,7 @@ function closeTrashOverlay() {
   document.body.classList.remove("has-management-open");
   els.trashBtn?.setAttribute("aria-expanded", "false");
   hideTrashPreview();
+  hideTrashTreePopover();
 }
 
 // bodyNodeを渡すと画像なども含めてそのまま描画する（渡さなければ文字だけ）。
@@ -14206,6 +14241,9 @@ document.addEventListener("click", e => {
   if (!els.quickMemoMovePopover?.hidden && !els.quickMemoMovePopover.contains(e.target) && !destinationPickerAnchor?.contains(e.target)) {
     hideDestinationPicker();
   }
+  if (!els.trashTreePopover?.hidden && !els.trashTreePopover.contains(e.target) && !e.target.closest(".trash-card-tree-btn")) {
+    hideTrashTreePopover();
+  }
   const clickedMemoFormat = Boolean(
     els.memoFormatBar?.contains(e.target) ||
     els.memoFormatToggleBtn?.contains(e.target)
@@ -14305,6 +14343,11 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && !els.memoSettingsPanel?.hidden) {
     e.preventDefault();
     closeMemoSettingsPanel();
+    return;
+  }
+  if (e.key === "Escape" && !els.trashTreePopover?.hidden) {
+    e.preventDefault();
+    hideTrashTreePopover();
     return;
   }
   if (e.key === "Escape" && !els.noteChildrenPopover?.hidden) {
@@ -14494,6 +14537,16 @@ const TRASH_ACTIONS = {
   note: {
     restore: restoreTrashedNote,
     purge: permanentlyDeleteTrashedNote,
+    tree: (id, anchorEl) => {
+      const note = state.trashNotes.find(n => n.id === id);
+      if (!note) return;
+      if (!els.trashTreePopover?.hidden && els.trashTreePopover?.dataset.noteId === id) {
+        hideTrashTreePopover();
+        return;
+      }
+      els.trashTreePopover.dataset.noteId = id;
+      showTrashTreePopover(anchorEl, note);
+    },
     view: id => {
       const note = state.trashNotes.find(n => n.id === id);
       if (!note) return;
@@ -14519,9 +14572,11 @@ els.trashItems?.addEventListener("click", e => {
   if (!item) return;
   const handlers = TRASH_ACTIONS[item.dataset.kind];
   if (!handlers) return;
-  const action = e.target.closest("[data-action]")?.dataset.action;
+  const actionEl = e.target.closest("[data-action]");
+  const action = actionEl?.dataset.action;
   if (action === "restore") void handlers.restore(item.dataset.id);
   else if (action === "purge") void handlers.purge(item.dataset.id);
+  else if (action === "tree") handlers.tree?.(item.dataset.id, actionEl);
   else if (action === "view") handlers.view(item.dataset.id);
 });
 els.trashFilterSelect?.addEventListener("change", () => {
