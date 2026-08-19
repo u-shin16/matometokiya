@@ -6843,23 +6843,26 @@ function trashCardMediaText(note) {
 }
 
 // 元の場所・子メモ件数・画像件数を1行にまとめる（カードの行数を増やさない）。
+// 子メモは孫まで含めた総数と直下の数がずれるので、ずれる時だけ両方出す。
 function trashCardMetaText(note) {
-  const childCount = collectTrashNoteTree(note).length - 1;
+  const total = collectTrashNoteTree(note).length - 1;
+  const direct = trashChildNotes(note.id).length;
   const mediaText = trashCardMediaText(note);
-  return [
-    childCount ? `子メモ${childCount}件` : "",
-    mediaText,
-  ].filter(Boolean).join("・");
+  const childText = total === 0
+    ? ""
+    : total === direct ? `子メモ${direct}件` : `子メモ${direct}件（孫まで${total}件）`;
+  return [childText, mediaText].filter(Boolean).join("・");
 }
 
 const TRASH_CARD_CHILD_LIMIT = 5;
 
-// 件数はメタ行に出すので、ここはタイトルだけを並べる。
+// 孫メモまで並べると同じ階層のように見えて誤解を招くので、直下の子メモだけ出す。
+// 件数はメタ行にあるので、ここはタイトルだけを並べる。
 function trashCardChildrenText(note) {
-  const descendants = collectTrashNoteTree(note).slice(1);
-  if (descendants.length === 0) return "";
-  const titles = descendants.slice(0, TRASH_CARD_CHILD_LIMIT).map(item => item.note.title || "無題");
-  const rest = descendants.length - titles.length;
+  const children = trashChildNotes(note.id);
+  if (children.length === 0) return "";
+  const titles = children.slice(0, TRASH_CARD_CHILD_LIMIT).map(item => item.title || "無題");
+  const rest = children.length - titles.length;
   return `${titles.join(" ／ ")}${rest > 0 ? ` ／ ほか${rest}件` : ""}`;
 }
 
