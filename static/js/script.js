@@ -331,6 +331,10 @@ const els = {
   claudeConnectMcpRevealBtn: document.getElementById("claudeConnectMcpRevealBtn"),
   claudeConnectMcpBtn:     document.getElementById("claudeConnectMcpBtn"),
   claudeConnectRevokeBtn: document.getElementById("claudeConnectRevokeBtn"),
+  claudeConnectList: document.getElementById("claudeConnectList"),
+  claudeConnectDisconnectedBox: document.getElementById("claudeConnectDisconnectedBox"),
+  claudeConnectRemoveCommand: document.getElementById("claudeConnectRemoveCommand"),
+  claudeConnectRemoveCopyBtn: document.getElementById("claudeConnectRemoveCopyBtn"),
   claudeConnectIncludeLockedToggle: document.getElementById("claudeConnectIncludeLockedToggle"),
   claudeConnectLockedToggleRow: document.getElementById("claudeConnectLockedToggleRow"),
   claudeConnectInfoBtn: document.getElementById("claudeConnectInfoBtn"),
@@ -1201,21 +1205,100 @@ function toggleClaudeConnectInfo() {
 
 function applyClaudeConnectState(connected) {
   if (!els.claudeConnectStatus) return;
-  els.claudeConnectStatus.textContent = connected ? "連携済みです。" : "まだ連携していません。";
+  const count = claudeConnections.length;
+  els.claudeConnectStatus.textContent = connected
+    ? count > 1
+      ? `連携済みです（${count}件）。`
+      : "連携済みです。"
+    : "まだ連携していません。";
   if (els.claudeConnectRevokeBtn) els.claudeConnectRevokeBtn.hidden = !connected;
   // 連携していない状態では効果がない設定なので出さない。
   if (els.claudeConnectLockedToggleRow) els.claudeConnectLockedToggleRow.hidden = !connected;
   // 連携済みのときは普段押す必要がないので、ボタンではなく控えめな
-  // 文字リンクにして残す（コマンドを控え忘れた人の復旧手段はこれだけ）。
+  // 文字リンクにして残す。発行しても既存の連携は切れないので、
+  // 以前のような警告は出さない。
   if (els.claudeConnectMcpBtn) {
     els.claudeConnectMcpBtn.textContent = connected
-      ? "別の端末で使う・コマンドを紛失した・人に見られた場合は再発行"
+      ? "別の端末を追加する・コマンドを紛失した場合はこちら"
       : "Claude Codeと連携する";
     els.claudeConnectMcpBtn.title = connected
-      ? "新しいコマンドを発行します。今のコマンド（鍵）は使えなくなります。"
+      ? "新しいコマンドを発行します。いま使っている連携はそのまま使えます。"
       : "";
     els.claudeConnectMcpBtn.classList.toggle("app-account-action-btn", !connected);
     els.claudeConnectMcpBtn.classList.toggle("app-account-claude-reissue-link", connected);
+  }
+  renderClaudeConnectionList();
+}
+
+// 生きている連携の一覧。画面はこれだけを根拠に「連携済み」と出す。
+let claudeConnections = [];
+let claudeConnectDisconnected = false;
+
+function formatClaudeConnectionDate(value) {
+  if (!value) return "不明";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "不明";
+  return date.toLocaleString("ja-JP", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function renderClaudeConnectionList() {
+  const list = els.claudeConnectList;
+  if (list) {
+    list.textContent = "";
+    list.hidden = claudeConnections.length === 0;
+    claudeConnections.forEach((connection, index) => {
+      const item = document.createElement("li");
+      item.className = "app-account-claude-list-item";
+
+      const label = document.createElement("div");
+      label.className = "app-account-claude-list-label";
+      const title = document.createElement("span");
+      title.className = "app-account-claude-list-title";
+      title.textContent = `連携${index + 1}`;
+      const detail = document.createElement("span");
+      detail.className = "app-account-claude-list-detail";
+      detail.textContent = `登録 ${formatClaudeConnectionDate(connection.created_at)}／最後の利用 ${
+        connection.last_used_at ? formatClaudeConnectionDate(connection.last_used_at) : "まだなし"
+      }`;
+      label.append(title, detail);
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "app-account-action-btn danger";
+      button.textContent = "この連携を解除";
+      button.addEventListener("click", () => handleClaudeConnectionRevoke(connection.id));
+
+      item.append(label, button);
+      list.append(item);
+    });
+  }
+  if (els.claudeConnectDisconnectedBox) {
+    els.claudeConnectDisconnectedBox.hidden = !claudeConnectDisconnected;
+  }
+}
+
+async function handleClaudeConnectionRevoke(connectionId) {
+  const user = auth?.currentUser;
+  if (!user || !connectionId) return;
+  const ok = await showConfirm(
+    "この連携を解除しますか？この鍵を登録した端末からは使えなくなります。ほかの端末の連携はそのまま残ります。",
+    "解除する"
+  );
+  if (!ok) return;
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch(`/api/v1/claude-connect/connections/${encodeURIComponent(connectionId)}/revoke`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "連携の解除に失敗しました。");
+    claudeConnections = Array.isArray(data.connections) ? data.connections : [];
+    claudeConnectDisconnected = false;
+    applyClaudeConnectState(claudeConnections.length > 0);
+    showToast("この連携を解除しました。");
+  } catch (e) {
+    showToast(e.message || "連携の解除に失敗しました。");
   }
 }
 
@@ -1290,14 +1373,8 @@ async function handleClaudeConnectMcp() {
   const user = auth?.currentUser;
   const btn = els.claudeConnectMcpBtn;
   if (!user || !btn) return;
-  // 再発行は今のトークンを失効させるので、必ず確認する。
-  if (els.claudeConnectRevokeBtn && !els.claudeConnectRevokeBtn.hidden) {
-    const ok = await showConfirm(
-      "コマンドを再発行しますか？今使っているコマンド（トークン）は使えなくなり、登録し直しが必要になります。",
-      "再発行する"
-    );
-    if (!ok) return;
-  }
+  // 発行しても既存の連携は切れないので、確認は挟まない。
+  // （以前はここで古いトークンを失効させていたため、確認が必要だった）
   btn.disabled = true;
   try {
     const idToken = await user.getIdToken();
@@ -1309,16 +1386,32 @@ async function handleClaudeConnectMcp() {
     if (!res.ok) throw new Error(data.error || "連携用コマンドの発行に失敗しました。");
     claudeMcpCommand = String(data.command || "");
     claudeMcpIssuedAt = String(data.connected_at || new Date().toISOString());
+    if (data.remove_command && els.claudeConnectRemoveCommand) {
+      els.claudeConnectRemoveCommand.textContent = String(data.remove_command);
+    }
     els.claudeConnectMcpRevealBtn?.setAttribute("aria-pressed", "false");
     renderClaudeMcpCommand();
     if (els.claudeConnectMcpBox) els.claudeConnectMcpBox.hidden = false;
     els.claudeConnectStatus.textContent = "連携しました。下のコマンドをターミナルで1回実行してください。";
-    applyClaudeConnectState(true);
+    claudeConnectDisconnected = false;
+    // 一覧に今作った分を反映するため、サーバーから取り直す。
+    void refreshClaudeConnectStatus({ keepCommand: true });
     startClaudeMcpWatch();
   } catch (e) {
     showToast(e.message || "連携用コマンドの発行に失敗しました。");
   } finally {
     btn.disabled = false;
+  }
+}
+
+async function handleClaudeConnectRemoveCopy() {
+  const text = els.claudeConnectRemoveCommand?.textContent?.trim();
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("コピーしました。ターミナルで実行してから、上のコマンドを貼り付けてください。");
+  } catch (e) {
+    showToast("コピーできませんでした。手動でコピーしてください。");
   }
 }
 
@@ -1336,10 +1429,14 @@ function setClaudeConnectConnected(connected) {
   applyClaudeConnectState(connected);
 }
 
-async function refreshClaudeConnectStatus() {
+async function refreshClaudeConnectStatus(options = {}) {
   const user = auth?.currentUser;
   if (!user || !els.claudeConnectStatus) return;
-  els.claudeConnectStatus.textContent = "確認中…";
+  // 発行直後は「下のコマンドを実行してください」の案内を消したくないので、
+  // 一覧だけ取り直して文言はそのままにする。
+  const keepMessage = Boolean(options.keepCommand);
+  const previousMessage = els.claudeConnectStatus.textContent;
+  if (!keepMessage) els.claudeConnectStatus.textContent = "確認中…";
   try {
     const idToken = await user.getIdToken();
     const res = await fetch("/api/v1/claude-connect/status", {
@@ -1347,9 +1444,21 @@ async function refreshClaudeConnectStatus() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "状況の取得に失敗しました。");
+    claudeConnections = Array.isArray(data.connections) ? data.connections : [];
+    claudeConnectDisconnected = Boolean(data.disconnected);
+    if (data.remove_command && els.claudeConnectRemoveCommand) {
+      els.claudeConnectRemoveCommand.textContent = String(data.remove_command);
+    }
     setClaudeConnectConnected(Boolean(data.connected));
+    if (keepMessage) {
+      els.claudeConnectStatus.textContent = previousMessage;
+    } else if (claudeConnectDisconnected && els.claudeConnectStatus) {
+      els.claudeConnectStatus.textContent = "連携が切れています。";
+    }
   } catch (e) {
-    els.claudeConnectStatus.textContent = "状況を確認できませんでした。";
+    els.claudeConnectStatus.textContent = keepMessage
+      ? previousMessage
+      : "状況を確認できませんでした。";
     console.error("[claudeConnect] status error", e);
   }
   void refreshClaudeIncludeLockedSetting();
@@ -15641,6 +15750,7 @@ if (auth) {
   els.claudeConnectRevokeBtn?.addEventListener("click", handleClaudeConnectRevoke);
   els.claudeConnectMcpBtn?.addEventListener("click", () => void handleClaudeConnectMcp());
   els.claudeConnectMcpCopyBtn?.addEventListener("click", () => void handleClaudeConnectMcpCopy());
+  els.claudeConnectRemoveCopyBtn?.addEventListener("click", () => void handleClaudeConnectRemoveCopy());
   els.claudeConnectMcpRevealBtn?.addEventListener("click", () => {
     const revealed = els.claudeConnectMcpRevealBtn.getAttribute("aria-pressed") === "true";
     els.claudeConnectMcpRevealBtn.setAttribute("aria-pressed", String(!revealed));

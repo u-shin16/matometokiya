@@ -252,12 +252,16 @@ Authorization: Bearer <読み取り用 または 書き込み用トークン>
 ```text
 POST /api/v1/claude-connect/mcp-command
 Authorization: Bearer <FirebaseのIDトークン（ログイン中の本人）>
-→ {"command": "claude mcp add ...", "token": "...", "connected_at": "..."}
+→ {"command": "claude mcp add ...", "remove_command": "claude mcp remove matometokiya -s user",
+   "token": "...", "connection_id": "...", "connected_at": "..."}
 ```
 
-- 呼ぶたびに新しい読み書きトークンを発行し、**それまでのトークンは失効**します（1ユーザー1組）
+- 呼ぶたびに新しい読み書きトークンを発行し、**連携を1つ追加**します。**すでにある連携は失効しません**
+  - 以前は呼ぶたびに既存トークンを失効させていたため、登録コマンドをもう一度出しただけで、動いていた端末の連携が黙って切れていました（2026-08-20に実際に発生）。別端末を足したいだけの人まで巻き添えになるため、追加だけを行う形に変更しています
+  - 同時に持てる連携は`_MAX_CLAUDE_CONNECTIONS`（既定5件）まで。超える場合は409を返し、既存の連携には一切触れません
+- 不要になった鍵は、アカウント画面の一覧から1件ずつ解除します（`POST /api/v1/claude-connect/connections/<id>/revoke`）。「すべての連携を解除」は従来どおり`revoke`です
 - サーバーはトークンのSHA-256しか保存しないため、**平文を渡せるのはこの応答の1回だけ**です。画面でも既定はマスク表示で、「コピーする」だけが実物を扱います
-- 紛失・漏洩・別端末で使いたい場合は、画面の「再発行」から出し直します
+- `remove_command`は、`claude mcp add`が`already exists`で失敗したときに先に実行してもらう1行です。画面にも同じものを出します
 
 ## Claude CodeからTodoを取得・完了にする（REST API）
 
@@ -493,7 +497,8 @@ Authorization: Bearer <Firebase IDトークン>
 
 - `start`・`status`・`revoke`はログイン中のユーザー本人のみが呼べます（Firebase IDトークンで検証）
 - `exchange`はコード自体が認証情報を兼ねるため、ログイン不要です。コードは10分で失効し、1回使うと即座に無効になります
-- 新しく連携すると、そのユーザーの既存トークンは自動的に失効します（1ユーザー1組のトークン）
+- 新しく連携すると、連携が1つ増えます。既存のトークンは失効しません（同時に最大`_MAX_CLAUDE_CONNECTIONS`件）
+- `status`は`connections`（生きている連携の一覧）と`disconnected`（連携した記録はあるが鍵が1つも残っていない状態）を返します。画面はこれを見て「連携が切れています」と復旧手順を出します
 
 ### 実行
 

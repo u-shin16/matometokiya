@@ -33,12 +33,25 @@ class _FakeDocRef:
 
     def set(self, data, merge=False):
         if merge and self._key in self._store:
-            self._store[self._key].update(data)
+            self._apply(self._store[self._key], data)
         else:
-            self._store[self._key] = dict(data)
+            fresh: dict = {}
+            self._apply(fresh, data)
+            self._store[self._key] = fresh
 
     def update(self, data):
-        self._store[self._key].update(data)
+        self._apply(self._store[self._key], data)
+
+    @staticmethod
+    def _apply(target, data):
+        """DELETE_FIELD はキーの削除として扱う（本物のFirestoreと同じ挙動にする）。"""
+        from firebase_admin import firestore
+
+        for key, value in data.items():
+            if value is firestore.DELETE_FIELD:
+                target.pop(key, None)
+            else:
+                target[key] = value
 
     def delete(self):
         self._store.pop(self._key, None)
@@ -304,6 +317,11 @@ class TodoApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 401)
+        # 「トークンが違う」だけでは利用者が次に何をすればいいか分からないので、
+        # 復旧手順をそのままエラー文に入れる。
+        error = response.get_json()["error"]
+        self.assertIn("連携が切れています", error)
+        self.assertIn("claude mcp remove matometokiya -s user", error)
 
     def test_uses_server_side_uid_and_passes_project_filter(self):
         todos = [
@@ -796,8 +814,10 @@ class ClaudeConnectLogicTests(unittest.TestCase):
 
         user_doc = self.fake_db._collections["users"]["uid-1"]
         self.assertIn("claude_connected_at", user_doc)
-        self.assertIn("claude_read_token_hash", user_doc)
-        self.assertIn("claude_write_token_hash", user_doc)
+        connections = user_doc["claude_connections"]
+        self.assertEqual(len(connections), 1)
+        self.assertIn("read_hash", connections[0])
+        self.assertIn("write_hash", connections[0])
         self.assertEqual(len(self.fake_db._collections["api_tokens"]), 2)
 
     def test_exchange_returns_tokens_and_is_single_use(self):
@@ -837,6 +857,107 @@ class ClaudeConnectLogicTests(unittest.TestCase):
         self.assertIsNone(
             app_module._lookup_user_token_uid(read_hash, "write")
         )
+
+    def test_reissuing_keeps_existing_connection_alive(self):
+        """登録コマンドを再発行しても、先に登録した端末の連携は生き続ける。
+
+        ここが壊れると、別端末で使いたいだけの人や、コマンドを見失って
+        再発行した人の連携が黙って切れる（2026-08-20に実際に起きた）。"""
+        first = app_module.issue_claude_mcp_command("uid-1")
+        first_hash = hashlib.sha256(first["token"].encode("utf-8")).hexdigest()
+
+        second = app_module.issue_claude_mcp_command("uid-1")
+        second_hash = hashlib.sha256(second["token"].encode("utf-8")).hexdigest()
+
+        self.assertNotEqual(first["token"], second["token"])
+        self.assertEqual(app_module._lookup_user_token_uid(first_hash, "write"), "uid-1")
+        self.assertEqual(app_module._lookup_user_token_uid(second_hash, "write"), "uid-1")
+        self.assertEqual(len(app_module.list_claude_connections("uid-1")), 2)
+
+    def test_issue_returns_remove_command_for_already_exists(self):
+        result = app_module.issue_claude_mcp_command("uid-1")
+        self.assertEqual(result["remove_command"], app_module.MCP_REMOVE_COMMAND)
+        self.assertIn("claude mcp remove", result["remove_command"])
+
+    def test_revoke_one_connection_leaves_the_others(self):
+        first = app_module.issue_claude_mcp_command("uid-1")
+        second = app_module.issue_claude_mcp_command("uid-1")
+        first_hash = hashlib.sha256(first["token"].encode("utf-8")).hexdigest()
+        second_hash = hashlib.sha256(second["token"].encode("utf-8")).hexdigest()
+
+        self.assertTrue(app_module.revoke_claude_connection("uid-1", first["connection_id"]))
+
+        self.assertIsNone(app_module._lookup_user_token_uid(first_hash, "write"))
+        self.assertEqual(app_module._lookup_user_token_uid(second_hash, "write"), "uid-1")
+        remaining = app_module.list_claude_connections("uid-1")
+        self.assertEqual([c["id"] for c in remaining], [second["connection_id"]])
+
+    def test_revoke_one_connection_returns_false_for_unknown_id(self):
+        app_module.issue_claude_mcp_command("uid-1")
+        self.assertFalse(app_module.revoke_claude_connection("uid-1", "ffffffff"))
+
+    def test_rejects_new_connection_over_the_limit(self):
+        for _ in range(app_module._MAX_CLAUDE_CONNECTIONS):
+            app_module.issue_claude_mcp_command("uid-1")
+
+        with self.assertRaises(app_module.ClaudeConnectionLimitError):
+            app_module.issue_claude_mcp_command("uid-1")
+
+        # 上限で断っても、すでにある連携は1つも壊さない。
+        self.assertEqual(
+            len(app_module.list_claude_connections("uid-1")),
+            app_module._MAX_CLAUDE_CONNECTIONS,
+        )
+
+    def test_overview_reports_disconnected_when_tokens_are_gone(self):
+        """鍵だけ消えた状態を「連携済み」と表示しないこと。
+        画面が実態とずれると、利用者は切れたことに気づけない。"""
+        app_module.issue_claude_mcp_command("uid-1")
+        self.fake_db._collections["api_tokens"].clear()
+
+        overview = app_module.get_claude_connect_overview("uid-1")
+
+        self.assertFalse(overview["connected"])
+        self.assertTrue(overview["disconnected"])
+        self.assertEqual(overview["connections"], [])
+        self.assertEqual(overview["remove_command"], app_module.MCP_REMOVE_COMMAND)
+
+    def test_overview_is_not_disconnected_for_a_user_who_never_connected(self):
+        overview = app_module.get_claude_connect_overview("uid-never")
+        self.assertFalse(overview["connected"])
+        self.assertFalse(overview["disconnected"])
+
+    def test_old_single_pair_data_still_works(self):
+        """一覧形式になる前（1人1組だった頃）に連携した人が、
+        再連携なしでそのまま使えること。"""
+        read_hash = hashlib.sha256(b"old-read").hexdigest()
+        write_hash = hashlib.sha256(b"old-write").hexdigest()
+        self.fake_db._collections.setdefault("users", {})["uid-old"] = {
+            "claude_connected_at": datetime(2026, 8, 2, tzinfo=timezone.utc),
+            "claude_read_token_hash": read_hash,
+            "claude_write_token_hash": write_hash,
+        }
+        tokens = self.fake_db._collections.setdefault("api_tokens", {})
+        tokens[read_hash] = {"uid": "uid-old", "type": "read"}
+        tokens[write_hash] = {"uid": "uid-old", "type": "write"}
+
+        overview = app_module.get_claude_connect_overview("uid-old")
+        self.assertTrue(overview["connected"])
+        self.assertEqual(len(overview["connections"]), 1)
+
+        # 新しい端末を足しても、古い鍵は生きたまま。
+        app_module.issue_claude_mcp_command("uid-old")
+        self.assertEqual(app_module._lookup_user_token_uid(read_hash, "read"), "uid-old")
+        self.assertEqual(len(app_module.list_claude_connections("uid-old")), 2)
+
+    def test_records_last_used_at_on_lookup(self):
+        result = app_module.issue_claude_mcp_command("uid-1")
+        write_hash = hashlib.sha256(result["token"].encode("utf-8")).hexdigest()
+
+        app_module._lookup_user_token_uid(write_hash, "write")
+
+        self.assertIn("last_used_at", self.fake_db._collections["api_tokens"][write_hash])
+        self.assertIsNotNone(app_module.list_claude_connections("uid-1")[0]["last_used_at"])
 
     def test_revoke_deletes_token_hashes(self):
         result = app_module.start_claude_connect("uid-1")
@@ -931,6 +1052,83 @@ class ClaudeConnectApiTests(unittest.TestCase):
         response = self.client.post("/api/v1/claude-connect/revoke")
         self.assertEqual(response.status_code, 401)
 
+    def test_revoke_one_requires_login(self):
+        response = self.client.post("/api/v1/claude-connect/connections/abc123/revoke")
+        self.assertEqual(response.status_code, 401)
+
+    def test_revoke_one_returns_remaining_connections(self):
+        with (
+            patch.object(app_module, "verify_firebase_id_token", return_value=(self.UID, None)),
+            patch.object(app_module, "revoke_claude_connection", return_value=True) as revoke,
+            patch.object(
+                app_module,
+                "list_claude_connections",
+                return_value=[{"id": "keepme01", "created_at": None, "last_used_at": None}],
+            ),
+        ):
+            response = self.client.post(
+                "/api/v1/claude-connect/connections/abc123/revoke",
+                headers={"Authorization": "Bearer some-id-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([c["id"] for c in response.get_json()["connections"]], ["keepme01"])
+        revoke.assert_called_once_with(self.UID, "abc123")
+
+    def test_revoke_one_returns_404_for_unknown_connection(self):
+        with (
+            patch.object(app_module, "verify_firebase_id_token", return_value=(self.UID, None)),
+            patch.object(app_module, "revoke_claude_connection", return_value=False),
+        ):
+            response = self.client.post(
+                "/api/v1/claude-connect/connections/nope/revoke",
+                headers={"Authorization": "Bearer some-id-token"},
+            )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_status_returns_connection_list(self):
+        overview = {
+            "connected": True,
+            "connections": [{"id": "aaaa1111", "created_at": None, "last_used_at": None}],
+            "max_connections": 5,
+            "disconnected": False,
+            "remove_command": app_module.MCP_REMOVE_COMMAND,
+        }
+        with (
+            patch.object(app_module, "verify_firebase_id_token", return_value=(self.UID, None)),
+            patch.object(app_module, "get_claude_connect_status", return_value=None),
+            patch.object(app_module, "get_claude_mcp_connected_at", return_value=None),
+            patch.object(app_module, "get_claude_connect_overview", return_value=overview),
+        ):
+            response = self.client.get(
+                "/api/v1/claude-connect/status",
+                headers={"Authorization": "Bearer some-id-token"},
+            )
+
+        data = response.get_json()
+        self.assertTrue(data["connected"])
+        self.assertEqual(data["max_connections"], 5)
+        self.assertFalse(data["disconnected"])
+        self.assertEqual(data["remove_command"], app_module.MCP_REMOVE_COMMAND)
+
+    def test_mcp_command_returns_409_when_over_the_limit(self):
+        with (
+            patch.object(app_module, "verify_firebase_id_token", return_value=(self.UID, None)),
+            patch.object(
+                app_module,
+                "issue_claude_mcp_command",
+                side_effect=app_module.ClaudeConnectionLimitError("連携できるのは5件までです。"),
+            ),
+        ):
+            response = self.client.post(
+                "/api/v1/claude-connect/mcp-command",
+                headers={"Authorization": "Bearer some-id-token"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("5件までです", response.get_json()["error"])
+
     def test_exchange_rejects_malformed_code(self):
         response = self.client.post(
             "/api/v1/claude-connect/exchange", json={"code": "abc"}
@@ -953,6 +1151,49 @@ class ClaudeConnectApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), tokens)
+
+
+class McpStaysConnectedAfterReissueTests(unittest.TestCase):
+    """発行済みの端末がMCPを使い続けられることを、HTTPの入口ごと確かめる。
+
+    2026-08-20に、登録コマンドを出し直しただけで登録済みの端末が401になった。
+    ロジックだけでなく `/mcp` の応答まで通しで見ておく。"""
+
+    UID = "firebase-user-123"
+
+    def setUp(self):
+        app_module.app.config.update(TESTING=True)
+        self.client = app_module.app.test_client()
+        self.fake_db = FakeFirestoreClient()
+        patcher = patch.object(app_module, "get_firestore_client", return_value=self.fake_db)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _ping(self, token):
+        with patch.object(app_module, "record_mcp_connected"):
+            return self.client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    def test_first_device_still_works_after_second_device_is_added(self):
+        first = app_module.issue_claude_mcp_command(self.UID)
+        self.assertEqual(self._ping(first["token"]).status_code, 200)
+
+        second = app_module.issue_claude_mcp_command(self.UID)
+
+        self.assertEqual(self._ping(first["token"]).status_code, 200)
+        self.assertEqual(self._ping(second["token"]).status_code, 200)
+
+    def test_revoked_device_gets_recovery_instructions(self):
+        connection = app_module.issue_claude_mcp_command(self.UID)
+        app_module.revoke_claude_connection(self.UID, connection["connection_id"])
+
+        response = self._ping(connection["token"])
+
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("連携が切れています", response.get_json()["error"])
 
 
 class McpServerTests(unittest.TestCase):
@@ -1011,6 +1252,7 @@ class McpServerTests(unittest.TestCase):
                 headers={"Authorization": "Bearer nope-nope-nope-nope-nope"},
             )
         self.assertEqual(response.status_code, 401)
+        self.assertIn("連携が切れています", response.get_json()["error"])
 
     def test_get_is_not_allowed(self):
         self.assertEqual(self.client.get("/mcp").status_code, 405)

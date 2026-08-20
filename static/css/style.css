@@ -3365,6 +3365,101 @@ body.has-management-open {
   gap: 8px;
 }
 
+/* 連携が切れていることの案内。気づかないまま使えなくなるのを防ぐため、
+   状態表示のすぐ下に、復旧手順ごと出す。 */
+.app-account-claude-disconnected {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #fca5a5;
+  border-radius: 12px;
+  background: #fef2f2;
+  color: #7f1d1d;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.app-account-claude-disconnected p {
+  margin: 0;
+}
+
+.app-account-claude-disconnected p + p {
+  margin-top: 6px;
+}
+
+.app-account-claude-disconnected-title {
+  font-weight: 800;
+}
+
+.app-account-claude-disconnected code {
+  padding: 1px 4px;
+  border-radius: 6px;
+  background: rgba(127, 29, 29, 0.08);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* 生きている連携の一覧。どれを解除していいか分かるように、
+   登録日と最後に使われた日を並べる。 */
+.app-account-claude-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-account-claude-list-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.app-account-claude-list-label {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-account-claude-list-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.app-account-claude-list-detail {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.app-account-claude-list-item .app-account-action-btn {
+  flex: 0 0 auto;
+}
+
+/* already exists で失敗した人向けの後始末コマンド。 */
+.app-account-claude-remove {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  text-align: left;
+}
+
+.app-account-claude-remove-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.app-account-claude-remove-title code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .app-management-link {
   width: fit-content;
   color: #1d4ed8;
