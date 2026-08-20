@@ -520,9 +520,6 @@ _API_TOKEN_TYPE_WRITE = "write"
 # 無制限にすると使われていない鍵が残り続けるため上限を設ける。
 _MAX_CLAUDE_CONNECTIONS = 5
 
-# 最終利用日時の書き込み間隔。APIを叩くたびに書くと無駄なので間引く。
-_CLAUDE_LAST_USED_INTERVAL = timedelta(hours=1)
-
 # 連携が切れているときに、Claude Code側へ返す案内文。
 # 「トークンが違う」だけだと利用者が次に何をすればいいか分からないため、
 # 復旧手順そのものをエラーメッセージに含める。
@@ -534,37 +531,16 @@ _CLAUDE_RECONNECT_HINT = (
 )
 
 
-def _touch_token_last_used(doc_ref, data: dict) -> None:
-    """このトークンが最後に使われた日時を記録する。アカウント画面で
-    「どの連携が生きているか」を見せるために使う。毎回書くと無駄なので、
-    前回の記録から一定時間空いたときだけ書く。記録に失敗しても認証は通す。"""
-    last_used = data.get("last_used_at")
-    now = datetime.now(timezone.utc)
-    if isinstance(last_used, datetime):
-        if last_used.tzinfo is None:
-            last_used = last_used.replace(tzinfo=timezone.utc)
-        if now - last_used < _CLAUDE_LAST_USED_INTERVAL:
-            return
-    try:
-        doc_ref.set({"last_used_at": now}, merge=True)
-    except Exception:
-        app.logger.exception("トークンの最終利用日時を記録できませんでした。")
-
-
 def _lookup_user_token_uid(token_hash: str, token_type: str) -> str | None:
     """一般ユーザー用トークンのハッシュから、対応するuidをFirestoreの api_tokens コレクションで引く。"""
-    doc_ref = get_firestore_client().collection("api_tokens").document(token_hash)
-    doc = doc_ref.get()
+    doc = get_firestore_client().collection("api_tokens").document(token_hash).get()
     if not doc.exists:
         return None
     data = doc.to_dict() or {}
     if data.get("type") != token_type:
         return None
     uid = data.get("uid")
-    if not uid:
-        return None
-    _touch_token_last_used(doc_ref, data)
-    return str(uid)
+    return str(uid) if uid else None
 
 
 def _is_valid_admin_token(token_hash_env: str, presented_hash: str) -> str | None:
@@ -1103,66 +1079,27 @@ def _revoke_user_tokens(uid: str) -> None:
     _save_claude_connections(uid, [])
 
 
-def revoke_claude_connection(uid: str, connection_id: str) -> bool:
-    """指定した連携1つだけを解除する。ほかの端末の連携はそのまま残す。"""
-    user_data = _read_user_data(uid)
-    connections = _load_claude_connections(user_data)
-    remaining = [c for c in connections if str(c.get("id")) != str(connection_id)]
-    if len(remaining) == len(connections):
-        return False
+def live_claude_connections(uid: str) -> list[dict]:
+    """いま実際に使える連携だけを返す。
 
-    for connection in connections:
-        if str(connection.get("id")) == str(connection_id):
-            _delete_connection_tokens(connection)
-
-    _save_claude_connections(uid, remaining)
-    return True
-
-
-def list_claude_connections(uid: str) -> list[dict]:
-    """アカウント画面に出す連携の一覧。
-
-    実際に api_tokens が残っているかまで確認する。ここを usersドキュメントの
+    api_tokens が残っているかまで確認する。ここを usersドキュメントの
     「連携済み」フラグだけで判断すると、鍵が失効しているのに画面には
     「連携済み」と出たままになり、利用者が切れていることに気づけない。"""
     db = get_firestore_client()
     user_data = _read_user_data(uid)
     connections = _load_claude_connections(user_data)
 
-    alive: list[dict] = []
-    changed = False
-    for connection in connections:
-        read_doc = db.collection("api_tokens").document(str(connection.get("read_hash"))).get()
-        if not read_doc.exists:
-            # 鍵がもう無い＝切れている。一覧からも消して実態と合わせる。
-            changed = True
-            continue
-        write_hash = connection.get("write_hash")
-        write_doc = db.collection("api_tokens").document(str(write_hash)).get() if write_hash else None
-        last_used = _latest_datetime(
-            (read_doc.to_dict() or {}).get("last_used_at"),
-            (write_doc.to_dict() or {}).get("last_used_at") if write_doc is not None and write_doc.exists else None,
-        )
-        alive.append(
-            {
-                "id": str(connection.get("id") or str(connection.get("read_hash"))[:8]),
-                "created_at": _serialize_firestore_value(connection.get("created_at")),
-                "last_used_at": _serialize_firestore_value(last_used) if last_used else None,
-            }
-        )
+    alive = [
+        connection
+        for connection in connections
+        if db.collection("api_tokens").document(str(connection.get("read_hash"))).get().exists
+    ]
 
-    if changed:
-        kept = [c for c in connections if str(c.get("id")) in {a["id"] for a in alive}]
-        _save_claude_connections(uid, kept)
+    if len(alive) != len(connections):
+        # 鍵がもう無い分は一覧からも消して、実態と合わせる。
+        _save_claude_connections(uid, alive)
 
     return alive
-
-
-def _latest_datetime(*values):
-    found = [v for v in values if isinstance(v, datetime)]
-    if not found:
-        return None
-    return max(found)
 
 
 def start_claude_connect(uid: str) -> dict:
@@ -1324,10 +1261,10 @@ def get_claude_connect_overview(uid: str) -> dict:
     had_connected = bool(user_data.get("claude_connected_at")) or bool(
         user_data.get("claude_connections")
     )
-    connections = list_claude_connections(uid)
+    connections = live_claude_connections(uid)
     return {
         "connected": bool(connections),
-        "connections": connections,
+        "connection_count": len(connections),
         "max_connections": _MAX_CLAUDE_CONNECTIONS,
         "disconnected": had_connected and not connections,
         "remove_command": MCP_REMOVE_COMMAND,
@@ -2228,32 +2165,11 @@ def api_claude_connect_status():
         connected=overview["connected"],
         connected_at=connected_at,
         mcp_connected_at=mcp_connected_at,
-        connections=overview["connections"],
+        connection_count=overview["connection_count"],
         max_connections=overview["max_connections"],
         disconnected=overview["disconnected"],
         remove_command=overview["remove_command"],
     )
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.post("/api/v1/claude-connect/connections/<connection_id>/revoke")
-def api_claude_connect_revoke_one(connection_id: str):
-    """連携を1つだけ解除する。ほかの端末の連携は残す。"""
-    uid, auth_error = verify_firebase_id_token()
-    if auth_error is not None:
-        return auth_error
-
-    try:
-        removed = revoke_claude_connection(uid, connection_id)
-    except Exception:
-        app.logger.exception("Claude連携の個別解除に失敗しました。")
-        return jsonify(error="連携の解除に失敗しました。"), 502, {"Cache-Control": "no-store"}
-
-    if not removed:
-        return jsonify(error="その連携は見つかりませんでした。"), 404, {"Cache-Control": "no-store"}
-
-    response = jsonify(connections=list_claude_connections(uid))
     response.headers["Cache-Control"] = "no-store"
     return response
 
