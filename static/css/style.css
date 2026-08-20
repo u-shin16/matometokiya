@@ -3399,6 +3399,23 @@ body.has-management-open {
 
 /* 生きている連携の一覧。どれを解除していいか分かるように、
    登録日と最後に使われた日を並べる。 */
+.app-account-claude-details {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.app-account-claude-details > summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.app-account-claude-details-note {
+  margin: 6px 0 0;
+  line-height: 1.7;
+}
+
 .app-account-claude-list {
   display: grid;
   gap: 8px;

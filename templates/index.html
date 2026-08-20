@@ -1444,7 +1444,7 @@
           <p>「メモを消して」と頼んだ場合はゴミ箱に移動するだけで、完全には削除されません。いつでもゴミ箱から元に戻せます。</p>
           <p>この機能は Claude Code（Anthropicの開発者向けツール）を使っている人向けです。使っていなければ設定は不要です。</p>
           <p>「Claude Codeと連携する」を押すと、ターミナルに貼り付けるだけの登録コマンドが出ます。アプリのソースコードを用意する必要はありません。</p>
-          <p>連携は複数の端末で同時に持てます。もう一度コマンドを発行しても、すでに使っている端末の連携は切れません。使わなくなった連携は、下の一覧から1つずつ解除できます。</p>
+          <p>パソコンを買い替えたときや、2台目で使いたいときは、もう一度コマンドを発行してください。今使っている端末はそのまま使えます（発行しても切れません）。</p>
           <p>鍵付きメモは、パスワードなど他人に見られたくない内容を書く場所として使っている場合が多いはずです。オンにすると、その内容もClaude Codeから読めるようになります。心当たりがなければオフのままにしてください。</p>
         </div>
         <p id="claudeConnectStatus" class="app-account-claude-status">確認中…</p>
@@ -1453,7 +1453,11 @@
           <p>登録した鍵がもう使えなくなっています。下の「Claude Codeと連携する」を押して、表示されるコマンドをターミナルで実行し直してください。</p>
           <p>実行したときに <code>already exists</code> と出た場合は、先に古い登録を消してから、もう一度貼り付けてください。</p>
         </div>
-        <ul id="claudeConnectList" class="app-account-claude-list" hidden></ul>
+        <details id="claudeConnectDetails" class="app-account-claude-details" hidden>
+          <summary id="claudeConnectDetailsSummary">連携している端末を見る</summary>
+          <p class="app-account-claude-details-note">この一覧は、複数の端末から連携しているときだけ出ます。使わなくなった端末は、ここから1つずつ切り離せます。</p>
+          <ul id="claudeConnectList" class="app-account-claude-list"></ul>
+        </details>
         <div id="claudeConnectMcpBox" class="app-account-claude-code" hidden>
           <p class="app-account-claude-code-title">登録コマンド</p>
           <p class="app-account-claude-code-label">パソコンのターミナル（Claude Codeのチャット欄ではありません）に貼り付けて、1回だけ実行してください。</p>

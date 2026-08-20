@@ -332,6 +332,8 @@ const els = {
   claudeConnectMcpBtn:     document.getElementById("claudeConnectMcpBtn"),
   claudeConnectRevokeBtn: document.getElementById("claudeConnectRevokeBtn"),
   claudeConnectList: document.getElementById("claudeConnectList"),
+  claudeConnectDetails: document.getElementById("claudeConnectDetails"),
+  claudeConnectDetailsSummary: document.getElementById("claudeConnectDetailsSummary"),
   claudeConnectDisconnectedBox: document.getElementById("claudeConnectDisconnectedBox"),
   claudeConnectRemoveCommand: document.getElementById("claudeConnectRemoveCommand"),
   claudeConnectRemoveCopyBtn: document.getElementById("claudeConnectRemoveCopyBtn"),
@@ -1205,12 +1207,7 @@ function toggleClaudeConnectInfo() {
 
 function applyClaudeConnectState(connected) {
   if (!els.claudeConnectStatus) return;
-  const count = claudeConnections.length;
-  els.claudeConnectStatus.textContent = connected
-    ? count > 1
-      ? `連携済みです（${count}件）。`
-      : "連携済みです。"
-    : "まだ連携していません。";
+  els.claudeConnectStatus.textContent = connected ? "連携済みです。" : "まだ連携していません。";
   if (els.claudeConnectRevokeBtn) els.claudeConnectRevokeBtn.hidden = !connected;
   // 連携していない状態では効果がない設定なので出さない。
   if (els.claudeConnectLockedToggleRow) els.claudeConnectLockedToggleRow.hidden = !connected;
@@ -1234,19 +1231,35 @@ function applyClaudeConnectState(connected) {
 let claudeConnections = [];
 let claudeConnectDisconnected = false;
 
-function formatClaudeConnectionDate(value) {
+function formatClaudeConnectionDate(value, withTime = false) {
   if (!value) return "不明";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "不明";
-  return date.toLocaleString("ja-JP", { dateStyle: "medium", timeStyle: "short" });
+  return date.toLocaleString(
+    "ja-JP",
+    withTime ? { dateStyle: "long", timeStyle: "short" } : { dateStyle: "long" }
+  );
 }
 
+// 一覧は、連携が2つ以上あるときだけ出す。
+// 1つしかない人にとっては「連携が1件あります」は何の情報でもないうえ、
+// トークンという仕組みを知らないと読めない画面になってしまう。
 function renderClaudeConnectionList() {
   const list = els.claudeConnectList;
+  const details = els.claudeConnectDetails;
+  const showList = claudeConnections.length > 1;
+
+  if (details) {
+    details.hidden = !showList;
+    if (!showList) details.open = false;
+  }
+  if (els.claudeConnectDetailsSummary) {
+    els.claudeConnectDetailsSummary.textContent = `連携している端末を見る（${claudeConnections.length}台）`;
+  }
+
   if (list) {
     list.textContent = "";
-    list.hidden = claudeConnections.length === 0;
-    claudeConnections.forEach((connection, index) => {
+    claudeConnections.forEach((connection) => {
       const item = document.createElement("li");
       item.className = "app-account-claude-list-item";
 
@@ -1254,18 +1267,18 @@ function renderClaudeConnectionList() {
       label.className = "app-account-claude-list-label";
       const title = document.createElement("span");
       title.className = "app-account-claude-list-title";
-      title.textContent = `連携${index + 1}`;
+      title.textContent = `${formatClaudeConnectionDate(connection.created_at)}に連携した端末`;
       const detail = document.createElement("span");
       detail.className = "app-account-claude-list-detail";
-      detail.textContent = `登録 ${formatClaudeConnectionDate(connection.created_at)}／最後の利用 ${
-        connection.last_used_at ? formatClaudeConnectionDate(connection.last_used_at) : "まだなし"
-      }`;
+      detail.textContent = connection.last_used_at
+        ? `最後に使ったのは ${formatClaudeConnectionDate(connection.last_used_at, true)}`
+        : "まだ一度も使われていません";
       label.append(title, detail);
 
       const button = document.createElement("button");
       button.type = "button";
       button.className = "app-account-action-btn danger";
-      button.textContent = "この連携を解除";
+      button.textContent = "この端末を切り離す";
       button.addEventListener("click", () => handleClaudeConnectionRevoke(connection.id));
 
       item.append(label, button);
@@ -1281,8 +1294,8 @@ async function handleClaudeConnectionRevoke(connectionId) {
   const user = auth?.currentUser;
   if (!user || !connectionId) return;
   const ok = await showConfirm(
-    "この連携を解除しますか？この鍵を登録した端末からは使えなくなります。ほかの端末の連携はそのまま残ります。",
-    "解除する"
+    "この端末を切り離しますか？その端末のClaude Codeからは使えなくなります。ほかの端末はそのまま使えます。",
+    "切り離す"
   );
   if (!ok) return;
   try {
@@ -1296,7 +1309,7 @@ async function handleClaudeConnectionRevoke(connectionId) {
     claudeConnections = Array.isArray(data.connections) ? data.connections : [];
     claudeConnectDisconnected = false;
     applyClaudeConnectState(claudeConnections.length > 0);
-    showToast("この連携を解除しました。");
+    showToast("この端末を切り離しました。");
   } catch (e) {
     showToast(e.message || "連携の解除に失敗しました。");
   }
