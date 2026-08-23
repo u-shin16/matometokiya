@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -637,6 +638,116 @@ class NotesWriteApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         update.assert_called_once()
 
+    # --- 移動 ---
+
+    def test_move_rejects_missing_token(self):
+        response = self.client.post("/api/v1/notes/note-1/move", json={"parent_id": None})
+        self.assertEqual(response.status_code, 401)
+
+    def test_move_note(self):
+        moved = {"id": "note-1", "title": "見出し", "parent_id": "parent-1"}
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": False}))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "move_note_for_uid", return_value=moved) as move,
+        ):
+            response = self.client.post(
+                "/api/v1/notes/note-1/move",
+                json={"parent_id": "parent-1"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["parent_id"], "parent-1")
+        move.assert_called_once_with(self.UID, "note-1", "parent-1")
+
+    def test_move_to_root_with_null_parent(self):
+        moved = {"id": "note-1", "title": "見出し", "parent_id": None}
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": False}))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "move_note_for_uid", return_value=moved) as move,
+        ):
+            response = self.client.post(
+                "/api/v1/notes/note-1/move",
+                json={"parent_id": None},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.get_json()["parent_id"])
+        move.assert_called_once_with(self.UID, "note-1", None)
+
+    def test_move_rejects_payload_without_parent_id_key(self):
+        """parent_idの省略とnullを区別する。省略を「ルートへ移す」と解釈すると、
+        指定し忘れたメモが黙ってルート直下へ飛ぶ。"""
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "move_note_for_uid") as move,
+        ):
+            response = self.client.post(
+                "/api/v1/notes/note-1/move",
+                json={},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        move.assert_not_called()
+
+    def test_move_returns_404_when_note_not_found(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot(None))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "move_note_for_uid", return_value=None),
+        ):
+            response = self.client.post(
+                "/api/v1/notes/missing/move",
+                json={"parent_id": None},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_move_returns_400_when_move_is_not_allowed(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": False}))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(
+                app_module,
+                "move_note_for_uid",
+                side_effect=app_module.NoteMoveError("自分自身や、その下にあるメモの中へは移せません。"),
+            ),
+        ):
+            response = self.client.post(
+                "/api/v1/notes/note-1/move",
+                json={"parent_id": "child-1"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("移せません", response.get_json()["error"])
+
+    def test_move_rejects_locked_note_when_setting_off(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": True}))
+        with (
+            patch.dict(os.environ, self.env, clear=False),
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "get_claude_include_locked_notes", return_value=False),
+            patch.object(app_module, "move_note_for_uid") as move,
+        ):
+            response = self.client.post(
+                "/api/v1/notes/note-1/move",
+                json={"parent_id": "parent-1"},
+                headers={"Authorization": f"Bearer {self.TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        move.assert_not_called()
+
     # --- 削除 ---
 
     def test_delete_rejects_missing_token(self):
@@ -688,6 +799,182 @@ class NotesWriteApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
         delete.assert_not_called()
+
+
+class MoveNoteLogicTests(unittest.TestCase):
+    """move_note_for_uid の中身を、フェイクのFirestore参照で検証する。
+    ツリーが壊れる移動を止められているかが要点。"""
+
+    UID = "firebase-user-123"
+
+    def setUp(self):
+        self.notes = {
+            "root-a": {"id": "root-a", "parent_id": None, "title": "A", "order": 0},
+            "root-b": {"id": "root-b", "parent_id": None, "title": "B", "order": 1},
+            "child-a": {"id": "child-a", "parent_id": "root-a", "title": "Aの子", "order": 0},
+            "grand-a": {"id": "grand-a", "parent_id": "child-a", "title": "Aの孫", "order": 0},
+        }
+        self.updates: dict[str, dict] = {}
+
+        def fake_note_ref(uid, note_id):
+            data = self.notes.get(note_id)
+
+            def update(values):
+                self.updates[note_id] = values
+                self.notes[note_id].update(values)
+
+            return SimpleNamespace(get=lambda: _FakeNoteSnapshot(data), update=update)
+
+        def fake_subtree(uid, note_id):
+            ids = []
+            stack = [note_id]
+            while stack:
+                current = stack.pop()
+                ids.append(current)
+                stack.extend(
+                    key for key, value in self.notes.items() if value.get("parent_id") == current
+                )
+            return ids
+
+        for name, value in (
+            ("_note_ref", fake_note_ref),
+            ("_collect_note_subtree_ids", fake_subtree),
+            ("_next_order_for_new_note", lambda uid, parent_id: 99),
+        ):
+            patcher = patch.object(app_module, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_moves_note_under_another_parent(self):
+        note = app_module.move_note_for_uid(self.UID, "child-a", "root-b")
+
+        self.assertEqual(note["parent_id"], "root-b")
+        self.assertEqual(self.updates["child-a"]["parent_id"], "root-b")
+        self.assertEqual(self.updates["child-a"]["order"], 99)
+
+    def test_moves_note_to_root(self):
+        note = app_module.move_note_for_uid(self.UID, "child-a", None)
+
+        self.assertIsNone(note["parent_id"])
+        self.assertIsNone(self.updates["child-a"]["parent_id"])
+
+    def test_rejects_moving_into_itself(self):
+        with self.assertRaises(app_module.NoteMoveError):
+            app_module.move_note_for_uid(self.UID, "root-a", "root-a")
+        self.assertEqual(self.updates, {})
+
+    def test_rejects_moving_into_its_own_descendant(self):
+        """孫の下へ親を移すとツリーが輪になり、その一群がどこからも辿れなくなる。"""
+        with self.assertRaises(app_module.NoteMoveError):
+            app_module.move_note_for_uid(self.UID, "root-a", "grand-a")
+        self.assertEqual(self.updates, {})
+
+    def test_rejects_missing_destination(self):
+        with self.assertRaises(app_module.NoteMoveError):
+            app_module.move_note_for_uid(self.UID, "child-a", "missing")
+        self.assertEqual(self.updates, {})
+
+    def test_rejects_deleted_destination(self):
+        self.notes["root-b"]["deleted"] = True
+        with self.assertRaises(app_module.NoteMoveError):
+            app_module.move_note_for_uid(self.UID, "child-a", "root-b")
+        self.assertEqual(self.updates, {})
+
+    def test_returns_none_for_missing_note(self):
+        self.assertIsNone(app_module.move_note_for_uid(self.UID, "missing", None))
+
+    def test_returns_none_for_deleted_note(self):
+        self.notes["child-a"]["deleted"] = True
+        self.assertIsNone(app_module.move_note_for_uid(self.UID, "child-a", "root-b"))
+
+    def test_does_not_write_when_parent_is_unchanged(self):
+        note = app_module.move_note_for_uid(self.UID, "child-a", "root-a")
+
+        self.assertEqual(note["parent_id"], "root-a")
+        self.assertEqual(self.updates, {})
+
+
+class McpMoveNoteToolTests(unittest.TestCase):
+    """MCP経由の move_note。Claude Codeから実際に通る経路なので、
+    ツールの公開範囲と、鍵付き・循環の弾き方をここで押さえる。"""
+
+    UID = "firebase-user-123"
+
+    def test_move_note_is_a_write_tool(self):
+        write_names = {tool["name"] for tool in app_module.mcp_tools_for(True)}
+        read_names = {tool["name"] for tool in app_module.mcp_tools_for(False)}
+
+        self.assertIn("move_note", write_names)
+        self.assertNotIn("move_note", read_names)
+
+    def test_read_only_token_cannot_move(self):
+        with self.assertRaises(app_module.McpToolError):
+            app_module.run_mcp_tool(self.UID, False, "move_note", {"note_id": "note-1"})
+
+    def test_moves_note_under_given_parent(self):
+        moved = {"id": "note-1", "title": "見出し", "parent_id": "parent-1"}
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": False}))
+        with (
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "move_note_for_uid", return_value=moved) as move,
+        ):
+            result = app_module.run_mcp_tool(
+                self.UID, True, "move_note", {"note_id": "note-1", "parent_id": "parent-1"}
+            )
+
+        self.assertEqual(json.loads(result)["parent_id"], "parent-1")
+        move.assert_called_once_with(self.UID, "note-1", "parent-1")
+
+    def test_omitting_parent_id_moves_to_root(self):
+        moved = {"id": "note-1", "title": "見出し", "parent_id": None}
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": False}))
+        with (
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "move_note_for_uid", return_value=moved) as move,
+        ):
+            app_module.run_mcp_tool(self.UID, True, "move_note", {"note_id": "note-1"})
+
+        move.assert_called_once_with(self.UID, "note-1", None)
+
+    def test_cycle_error_is_reported_to_claude(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": False}))
+        with (
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(
+                app_module,
+                "move_note_for_uid",
+                side_effect=app_module.NoteMoveError("自分自身や、その下にあるメモの中へは移せません。"),
+            ),
+        ):
+            with self.assertRaises(app_module.McpToolError) as raised:
+                app_module.run_mcp_tool(
+                    self.UID, True, "move_note", {"note_id": "note-1", "parent_id": "child-1"}
+                )
+
+        self.assertIn("移せません", str(raised.exception))
+
+    def test_locked_note_cannot_be_moved_when_setting_off(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot({"locked": True}))
+        with (
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "get_claude_include_locked_notes", return_value=False),
+            patch.object(app_module, "move_note_for_uid") as move,
+        ):
+            with self.assertRaises(app_module.McpToolError):
+                app_module.run_mcp_tool(
+                    self.UID, True, "move_note", {"note_id": "note-1", "parent_id": "parent-1"}
+                )
+
+        move.assert_not_called()
+
+    def test_missing_note_is_reported_to_claude(self):
+        fake_ref = SimpleNamespace(get=lambda: _FakeNoteSnapshot(None))
+        with (
+            patch.object(app_module, "_note_ref", return_value=fake_ref),
+            patch.object(app_module, "move_note_for_uid", return_value=None),
+        ):
+            with self.assertRaises(app_module.McpToolError):
+                app_module.run_mcp_tool(self.UID, True, "move_note", {"note_id": "missing"})
 
 
 class TodoCompleteApiTests(unittest.TestCase):

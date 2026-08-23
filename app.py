@@ -958,6 +958,48 @@ def _collect_note_subtree_ids(uid: str, note_id: str) -> list[str]:
     return ids
 
 
+class NoteMoveError(Exception):
+    """メモの移動が構造上できないときに投げる（移動先が無い、自分の下へ移そうとした等）。"""
+
+
+def move_note_for_uid(uid: str, note_id: str, new_parent_id: str | None) -> dict | None:
+    """メモを別の親メモの下へ移す。new_parent_idがNoneならルート直下へ移す。
+    子メモは付いたまま一緒に動く（親子関係は親のparent_idだけで表しているため）。
+
+    メモ自体が存在しない・削除済みならNoneを返す（呼び出し元は404扱いにする）。
+    移動先が見つからない場合と、自分自身や自分の子孫の下へ移そうとした場合は
+    NoteMoveErrorを投げる。子孫の下へ移すとツリーが輪になって、そのメモの一群が
+    どこからも辿れなくなるため。"""
+    ref = _note_ref(uid, note_id)
+    doc = ref.get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    if data.get("deleted"):
+        return None
+
+    if new_parent_id:
+        parent_doc = _note_ref(uid, new_parent_id).get()
+        if not parent_doc.exists or (parent_doc.to_dict() or {}).get("deleted"):
+            raise NoteMoveError("指定された移動先のメモが見つかりません。")
+        if new_parent_id in _collect_note_subtree_ids(uid, note_id):
+            raise NoteMoveError("自分自身や、その下にあるメモの中へは移せません。")
+
+    if (data.get("parent_id") or None) == new_parent_id:
+        data["id"] = note_id
+        return data
+
+    updates = {
+        "parent_id": new_parent_id,
+        "order": _next_order_for_new_note(uid, new_parent_id),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    ref.update(updates)
+    data.update(updates)
+    data["id"] = note_id
+    return data
+
+
 def delete_note_for_uid(uid: str, note_id: str) -> bool:
     """指定メモとその子孫メモを、アプリのゴミ箱と同じ形（deleted=Trueを立てるだけで
     Firestoreのドキュメント自体は消さない）で削除する。アプリ画面のゴミ箱から復元
@@ -1608,6 +1650,56 @@ def api_update_note(note_id):
     return response
 
 
+@app.post("/api/v1/notes/<note_id>/move")
+def api_move_note(note_id):
+    """メモを別の親メモの下へ移す（書き込み専用トークン）。子メモも付いたまま動く。
+    リクエストの`parent_id`にnullを入れるとルート直下へ移す。
+    鍵付きメモは、この利用者が「Claude連携」画面のトグルで許可していない限り動かせない。"""
+    uid, auth_error = authenticate_todo_write_api_request()
+    if auth_error is not None:
+        return auth_error
+
+    note_id = (note_id or "").strip()
+    if not note_id or len(note_id) > 200:
+        return jsonify(error="note_idが正しくありません。"), 400, {"Cache-Control": "no-store"}
+
+    payload = request.get_json(silent=True) or {}
+    if "parent_id" not in payload:
+        # 省略とnullを区別する。nullは「ルート直下へ移す」という指示なので、
+        # 省略時に勝手にルートへ移してしまわないよう、キーの有無で判定する。
+        return (
+            jsonify(error="parent_idを指定してください（ルート直下へ移す場合はnull）。"),
+            400,
+            {"Cache-Control": "no-store"},
+        )
+    new_parent_id = payload["parent_id"]
+    new_parent_id = str(new_parent_id).strip() if new_parent_id else None
+    if new_parent_id and len(new_parent_id) > 200:
+        return jsonify(error="parent_idが正しくありません。"), 400, {"Cache-Control": "no-store"}
+
+    try:
+        existing = _note_ref(uid, note_id).get()
+        if existing.exists and (existing.to_dict() or {}).get("locked") and not get_claude_include_locked_notes(uid):
+            return (
+                jsonify(error="鍵付きメモです。「Claude連携」設定で許可してから移動してください。"),
+                403,
+                {"Cache-Control": "no-store"},
+            )
+        note = move_note_for_uid(uid, note_id, new_parent_id)
+    except NoteMoveError as error:
+        return jsonify(error=str(error)), 400, {"Cache-Control": "no-store"}
+    except Exception:
+        app.logger.exception("Notes APIでメモの移動に失敗しました。")
+        return jsonify(error="メモの移動に失敗しました。"), 502, {"Cache-Control": "no-store"}
+
+    if note is None:
+        return jsonify(error="指定されたメモが見つかりません。"), 404, {"Cache-Control": "no-store"}
+
+    response = jsonify(id=note_id, title=note["title"], parent_id=note.get("parent_id"))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.delete("/api/v1/notes/<note_id>")
 def api_delete_note(note_id):
     """指定メモとその子孫メモを削除する（書き込み専用トークン）。アプリのゴミ箱と同じ
@@ -1716,6 +1808,8 @@ MCP_INSTRUCTIONS = """まとめときや（階層メモ帳アプリ）のメモ�
   完全削除の手段は用意していない（利用者がアプリのゴミ箱で行う）。
 - 鍵付きメモは、利用者がアプリの「Claude連携」設定で許可していない限り、本文が空で返り、
   編集・削除もできない。エラーが返ったらそのまま伝え、回避策を探さない。
+- メモの置き場所を変える時は move_note を使う。作り直して元を消す形にしない
+  （IDが変わり、子メモが付いてこない）。自分自身や自分の子孫の下へは移せない。
 - メモのIDは list_notes の結果に含まれる。利用者はIDではなく名前で話すので、
   まず一覧を取得して対象を特定する。
 - 変更はアプリの画面へリアルタイムに反映される。再読み込みを促す必要はない。
@@ -1769,6 +1863,19 @@ _MCP_WRITE_TOOLS = [
                 "title": {"type": "string"},
                 "content": {"type": "string"},
                 "checked": {"type": "boolean", "description": "チェックマークの有無"},
+            },
+            "required": ["note_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "move_note",
+        "description": "メモを別の親メモの下へ移す。子メモも一緒に動く。parent_idを省略するとルート直下へ移す。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "note_id": {"type": "string", "description": "移動するメモのID"},
+                "parent_id": {"type": "string", "description": "移動先の親メモのID（省略時はルート直下）"},
             },
             "required": ["note_id"],
             "additionalProperties": False,
@@ -1916,6 +2023,22 @@ def run_mcp_tool(uid: str, can_write: bool, name: str, arguments: dict):
             raise McpToolError("指定されたメモが見つかりません。")
         return json.dumps(
             {"id": note_id, "title": note["title"], "checked": bool(note.get("checked"))},
+            ensure_ascii=False,
+        )
+
+    if name == "move_note":
+        note_id = _mcp_note_id_arg(arguments)
+        _mcp_require_unlocked_note(uid, note_id, "移動")
+        parent_id = arguments.get("parent_id")
+        parent_id = str(parent_id) if parent_id else None
+        try:
+            note = move_note_for_uid(uid, note_id, parent_id)
+        except NoteMoveError as error:
+            raise McpToolError(str(error)) from error
+        if note is None:
+            raise McpToolError("指定されたメモが見つかりません。")
+        return json.dumps(
+            {"id": note_id, "title": note["title"], "parent_id": note.get("parent_id")},
             ensure_ascii=False,
         )
 

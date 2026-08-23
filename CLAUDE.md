@@ -4,7 +4,7 @@
 
 ## まずMCPで繋がっているか確認する
 
-**利用者がやりたいことは、たいていMCPツールで足ります。**アプリのアカウント画面「Claude連携」から発行したコマンドを1回実行すると、`list_notes`・`create_note`・`update_note`・`delete_note`・`list_todos`・`complete_todo`が使えるようになります（cloneも`.env`も不要）。
+**利用者がやりたいことは、たいていMCPツールで足ります。**アプリのアカウント画面「Claude連携」から発行したコマンドを1回実行すると、`list_notes`・`create_note`・`update_note`・`move_note`・`delete_note`・`list_todos`・`complete_todo`が使えるようになります（cloneも`.env`も不要）。
 
 MCPが使える場合は、以下のスクリプトではなくMCPツールを使ってください。使い方や削除の作法はサーバー側の`instructions`（`app.py`の`MCP_INSTRUCTIONS`）から渡されます。
 
@@ -26,6 +26,7 @@ MCPが使える場合は、以下のスクリプトではなくMCPツールを�
 | 「〇〇というメモを作って」 | `python scripts/create_matome_note.py "<タイトル>" --content "<本文>" [--parent-id <親メモのID>]` |
 | 「メモを直して」「本文を書き足して」 | `python scripts/update_matome_note.py <メモのID> [--title "..."] [--content "..."]` |
 | 「〇〇にチェックつけて／外して」 | `python scripts/update_matome_note.py <メモのID> --check` / `--uncheck` |
+| 「メモを〇〇の下に移して」「場所を変えて」 | MCPの`move_note`を使う（スクリプトは未提供） |
 | **「メモを消して」「〇〇いらない」** | **`python scripts/delete_matome_note.py <メモのID>`（＝ゴミ箱へ移動）** |
 
 メモのIDは`fetch_matome_notes.py`の出力に含まれています。ユーザーはIDではなくメモの名前で言ってくるので、まず一覧を取得して対象を特定してください。
