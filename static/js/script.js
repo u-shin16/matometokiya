@@ -5087,9 +5087,112 @@ function insertFragmentAtMemoSelection(fragment) {
   }
 }
 
-function insertLinkedTextAtMemoSelection(text) {
+// 行頭マーカー（# / ## / ~ / [色] / {色}）を、入力時のショートカットと同じ書式へ解決する。
+// 記法とマーカー後の空白（半角・nbsp）の扱いは tryApplyMemo*Shortcut と揃えてある。
+function resolveMemoLineStartFormat(line) {
+  const heading = /^(#{1,2})[ \u00a0](.+)$/.exec(line);
+  if (heading) {
+    return {
+      className: heading[1].length === 1 ? "memo-text-heading" : "memo-text-subheading",
+      text: heading[2],
+    };
+  }
+
+  const strike = /^~[ \u00a0](.+)$/.exec(line);
+  if (strike) return { className: "memo-text-strike", text: strike[1] };
+
+  const color = /^[\[［]([^\]］]{1,8})[\]］][ \u00a0](.+)$/.exec(line);
+  if (color) {
+    const colorValue = resolveMemoColorShortcutName(color[1]);
+    if (colorValue) return { style: { color: colorValue }, text: color[2] };
+  }
+
+  const highlight = /^[{｛]([^}｝]{1,8})[}｝][ \u00a0](.+)$/.exec(line);
+  if (highlight) {
+    const highlightValue = resolveMemoHighlightShortcutName(highlight[1]);
+    if (highlightValue) return { style: { backgroundColor: highlightValue }, text: highlight[2] };
+  }
+
+  return null;
+}
+
+// 改行として扱うノード。ブラウザはEnterでBRを入れることもDIV/Pを作ることもある。
+const MEMO_LINE_BREAKING_NODE_RE = /^(BR|DIV|P|LI|UL|OL|H[1-6]|BLOCKQUOTE|PRE|SECTION|ARTICLE|TABLE|TR|FIGURE)$/;
+
+function memoNodeBreaksLine(node) {
+  return node.nodeType === Node.ELEMENT_NODE && MEMO_LINE_BREAKING_NODE_RE.test(node.nodeName);
+}
+
+// 書式解除の跡に残るゼロ幅スペースは「文字が無い」とみなす。画像・動画は中身として数える。
+function memoNodeHasVisibleContent(node) {
+  if (node.nodeType === Node.TEXT_NODE) return Boolean(node.nodeValue.replace(/\u200b/g, ""));
+  if (node.nodeType !== Node.ELEMENT_NODE) return false;
+  if (node.nodeName === "IMG" || node.nodeName === "VIDEO") return true;
+  if (node.querySelector?.("img, video")) return true;
+  return Boolean(node.textContent.replace(/\u200b/g, ""));
+}
+
+// 手前のノードを順に見て、行頭かどうかが決まればtrue/falseを返す。決まらなければnull。
+function resolveMemoLineStartFromPreviousNodes(node) {
+  for (let current = node; current; current = current.previousSibling) {
+    if (memoNodeBreaksLine(current)) return true;
+    if (memoNodeHasVisibleContent(current)) return false;
+  }
+  return null;
+}
+
+// 今のキャレットが行頭にあるか。行の途中に貼り付けたときまで1行目を見出しに
+// 変えてしまわないよう、貼り付け前に確認する（入力時と同じ「行頭のみ」の扱い）。
+function memoCaretIsAtLineStart() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return true;
+
+  const range = selection.getRangeAt(0);
+  if (!rangeIsInMemoEditor(range)) return true;
+
+  let node = range.startContainer;
+  if (node.nodeType === Node.TEXT_NODE) {
+    if (node.nodeValue.slice(0, range.startOffset).replace(/\u200b/g, "")) return false;
+  } else {
+    const decided = resolveMemoLineStartFromPreviousNodes(node.childNodes[range.startOffset - 1] ?? null);
+    if (decided !== null) return decided;
+  }
+
+  while (node && node !== els.contentInput) {
+    const decided = resolveMemoLineStartFromPreviousNodes(node.previousSibling);
+    if (decided !== null) return decided;
+    node = node.parentNode;
+    // 親のブロック要素の先頭に居るなら、その手前は改行なので行頭とみなす。
+    if (node && node !== els.contentInput && memoNodeBreaksLine(node)) return true;
+  }
+  return true;
+}
+
+// 貼り付けたテキストを、1行ずつ行頭マーカーの書式に変換しながら差し込む。
+function appendMemoFormattedTextFragment(parent, text, formatFirstLine) {
+  const lines = String(text ?? "").split(/\r\n?|\n/);
+  lines.forEach((line, index) => {
+    if (index > 0) parent.appendChild(document.createElement("br"));
+
+    const format = (index === 0 && !formatFirstLine) ? null : resolveMemoLineStartFormat(line);
+    if (!format) {
+      appendLinkedTextFragment(parent, line);
+      return;
+    }
+
+    const span = document.createElement("span");
+    if (format.className) span.className = format.className;
+    if (format.style) Object.assign(span.style, format.style);
+    appendLinkedTextFragment(span, format.text);
+    parent.appendChild(span);
+  });
+}
+
+function insertPastedTextAtMemoSelection(text) {
+  redirectMediaCaretTyping();
+
   const fragment = document.createDocumentFragment();
-  appendLinkedTextFragment(fragment, text);
+  appendMemoFormattedTextFragment(fragment, text, memoCaretIsAtLineStart());
   insertFragmentAtMemoSelection(fragment);
   repairMediaCaretAfterEdit();
   updateEmptyState();
@@ -15127,7 +15230,7 @@ els.contentInput.addEventListener("paste", e => {
   const text = e.clipboardData.getData("text/plain");
   if (text) {
     e.preventDefault();
-    insertLinkedTextAtMemoSelection(text);
+    insertPastedTextAtMemoSelection(text);
   }
 });
 
