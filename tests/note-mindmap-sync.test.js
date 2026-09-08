@@ -140,4 +140,40 @@ const embedded = buildSyncedMindMap({
 assert.equal(embedded.map.title, "マップ名は維持");
 assert.equal(embedded.map.nodes.find(node => node.id === "sub-node").parent_id, "outer");
 
+// 親がいるメモをマップと同期しても、そのメモがルートへ飛び出さないこと。
+// （同期元メモの parent_id を null に固定していたため、自分が親になってしまっていた）
+const childNotes = [
+  { id: "parent-note", parent_id: null, title: "親メモ", content: "", order: 1000 },
+  {
+    id: "child-note",
+    parent_id: "parent-note",
+    title: "子メモ",
+    content: "",
+    order: 2000,
+    linked_mindmap_id: "map-child",
+    linked_mindmap_node_id: "cnode-root",
+  },
+];
+const childMap = {
+  id: "map-child",
+  title: "子メモ",
+  source_note_id: "child-note",
+  source_node_id: "cnode-root",
+  nodes: [
+    { id: "cnode-root", parent_id: null, title: "子メモ", source_note_id: "child-note" },
+    { id: "cnode-a", parent_id: "cnode-root", title: "追加ノード", memo: "" },
+  ],
+};
+const childPlan = planSyncedNotes({
+  notes: childNotes,
+  map: childMap,
+  createId: ids("cnote"),
+  toPlainText: plain,
+  now: "2026-09-08T00:00:00",
+});
+const syncedRoot = childPlan.desiredNotes.find(note => note.id === "child-note");
+assert.equal(syncedRoot.parent_id, "parent-note");
+assert.equal(syncedRoot.order, 2000);
+assert.equal(childPlan.desiredNotes.find(note => note.parent_id === "child-note").title, "追加ノード");
+
 console.log("note-mindmap-sync tests: OK");

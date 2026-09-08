@@ -205,7 +205,14 @@
     }
 
     const forcedRootId = map.source_note_id || sourceNode.source_note_id || createId();
-    const desiredRoot = buildNote(sourceNode, null, 1000, null, forcedRootId);
+    // 同期元のメモに親がいる場合は、その親と並び順をそのまま保つ。
+    // ここで親を null に固定していたため、親の下にあるメモをマップと同期すると
+    // そのメモがルートへ飛び出して、自分が親になってしまっていた。
+    // 同期元のメモがまだ無い（マップだけがある）場合はこれまで通りルートに作る。
+    const existingRoot = notes.find(note => note.id === forcedRootId) || null;
+    const rootParentId = existingRoot ? (existingRoot.parent_id ?? null) : null;
+    const rootOrder = existingRoot ? (existingRoot.order ?? 1000) : 1000;
+    const desiredRoot = buildNote(sourceNode, rootParentId, rootOrder, null, forcedRootId);
     const deleteIds = notes
       .filter(note => note.linked_mindmap_id === map.id && !usedNoteIds.has(note.id))
       .map(note => note.id);
