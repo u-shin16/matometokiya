@@ -2423,6 +2423,7 @@ function applyNotesSnapshot(snap) {
     selectFirstAvailableNote();
     if (previousSelectedId !== state.selectedId) setLargeEditorOpen(false);
   }
+  refreshOpenSyncedMindMap();
 
   renderTree();
   if (preserveEditor && previousSelectedId === state.selectedId && getSelectedNote()) {
@@ -2436,6 +2437,27 @@ function applyNotesSnapshot(snap) {
   renderEditor();
   restoreMemoEditorCaret(editorCaret);
   updateUndoButton();
+}
+
+// メモが外から変わったとき（Claude連携でメモを足した・直した場合など）、
+// 開いたままのマインドマップが古い形のまま残っていた。マップをメモから
+// 作り直すのは syncLinkedMindMapById だが、これはアプリ内の操作からしか
+// 呼ばれておらず、メモの受信（applyNotesSnapshot）には繋がっていなかった。
+// マップを開いている間は、メモを受け取るたびに作り直して描き直す。
+function refreshOpenSyncedMindMap() {
+  if (els.mindMapOverlay?.hidden) return;
+  const map = state.mindMap;
+  if (!map?.id || !map.sync_enabled || !map.source_note_id) return;
+  // ノードを編集中・ドラッグ中に作り直すと操作が飛ぶので、そのときは触らない
+  if (isMindMapRemoteRenderBlocked()) return;
+
+  syncLinkedMindMapById(map.id)
+    .then(updated => {
+      if (!updated) return;
+      if (els.mindMapOverlay?.hidden || isMindMapRemoteRenderBlocked()) return;
+      renderMindMap();
+    })
+    .catch(() => {});
 }
 
 function isMindMapRemoteRenderBlocked() {
@@ -11568,6 +11590,11 @@ async function openMindMapPanel() {
     els.appShell.hidden = true;
     els.mindMapOverlay.hidden = false;
     await loadMindMap();
+    // 閉じている間にメモが外から変わっている場合があるので、
+    // 開いた時点でメモから作り直してから描く。
+    if (state.mindMap?.sync_enabled && state.mindMap.source_note_id) {
+      await syncLinkedMindMapById(state.mindMap.id);
+    }
     renderMindMap();
     setCollabPresence("mindmap", { immediate: true });
     requestAnimationFrame(() => {
