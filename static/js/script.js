@@ -537,7 +537,7 @@ function waitForPrintImages(win, timeoutMs = 7000) {
   ]);
 }
 
-function printHtmlInPage(html, { toastMessage } = {}) {
+function printHtmlInPage(html, { toastMessage, filenameTitle } = {}) {
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
   iframe.style.position = "fixed";
@@ -550,11 +550,17 @@ function printHtmlInPage(html, { toastMessage } = {}) {
   iframe.style.pointerEvents = "none";
   document.body.appendChild(iframe);
 
+  // Chromeは印刷（PDFに保存）ダイアログのファイル名候補に、印刷を実行した
+  // iframeではなく親ページ（このページ）のdocument.titleを使う。そのため
+  // 何もしないと常にページ名（まとめときや）がファイル名になってしまうので、
+  // 印刷中だけメモ名に差し替え、終了後に元へ戻す。
+  const previousTitle = document.title;
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
     iframe.remove();
+    if (filenameTitle) document.title = previousTitle;
   };
 
   const win = iframe.contentWindow;
@@ -564,6 +570,7 @@ function printHtmlInPage(html, { toastMessage } = {}) {
 
   const doPrint = () => {
     waitForPrintImages(win).then(() => {
+      if (filenameTitle) document.title = filenameTitle;
       win.focus();
       win.print();
       if (toastMessage) showToast(toastMessage);
@@ -742,7 +749,10 @@ function downloadNotesAsPdf() {
     ${body}
   </body></html>`;
 
-  printHtmlInPage(html, { toastMessage: "印刷ダイアログで「PDFに保存」を選択してください。" });
+  printHtmlInPage(html, {
+    toastMessage: "印刷ダイアログで「PDFに保存」を選択してください。",
+    filenameTitle: safeFilename(pageTitle),
+  });
 }
 
 function buildNotesExportLabel(note) {
@@ -1011,7 +1021,10 @@ function downloadMindMapAsPdf() {
     </style>
   </head><body>${svg}</body></html>`;
 
-  printHtmlInPage(html, { toastMessage: "印刷ダイアログで「PDFに保存」を選択してください。" });
+  printHtmlInPage(html, {
+    toastMessage: "印刷ダイアログで「PDFに保存」を選択してください。",
+    filenameTitle: safeFilename(pageTitle),
+  });
 }
 
 // ── /ダウンロードユーティリティ ────────────────────────────
@@ -8178,11 +8191,18 @@ function renderEditor() {
   els.titleInput.title = titleEditable
     ? ""
     : readOnly ? "ホストが閲覧専用に設定しています" : "共同作業中、親メモの名前を変更できるのはホストだけです";
-  els.titleInput.value = note.title;
+  if (els.titleInput.value !== note.title) els.titleInput.value = note.title;
   markEditorNote(note.id);
 
-  els.contentInput.innerHTML = noteContentHtmlWithMedia(note);
-  ensureMediaTextLines();
+  // 自分の保存がFirestoreから返ってきただけ（内容が変わっていない）場合まで
+  // innerHTMLを丸ごと作り直すと、キャレット/選択範囲が毎回リセットされ、
+  // それを検知したcenterCaretInEditorがメモの末尾へ勝手にスクロールしてしまう。
+  // 実際に表示内容が変わる時だけDOMを更新する。
+  const nextContentHtml = noteContentHtmlWithMedia(note);
+  if (els.contentInput.innerHTML !== nextContentHtml) {
+    els.contentInput.innerHTML = nextContentHtml;
+    ensureMediaTextLines();
+  }
   els.breadcrumb.textContent = getParentChain(note).join(" / ");
   const src = note.source_file ? ` / 読み込み元: ${note.source_file}` : "";
   const syncDisplayMapId = getNoteSyncDisplayMapId(note);
