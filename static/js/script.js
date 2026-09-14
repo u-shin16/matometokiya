@@ -2424,6 +2424,7 @@ function restoreMemoEditorCaret(caret) {
 function applyNotesSnapshot(snap) {
   const collab = isCollabActive();
   const previousSelectedId = state.selectedId;
+  const previousSelectedNote = getSelectedNote();
   const editorCaret = captureMemoEditorCaret(previousSelectedId);
   const preserveEditor = Boolean(
     previousSelectedId &&
@@ -2447,6 +2448,26 @@ function applyNotesSnapshot(snap) {
     updateUndoButton();
     return;
   }
+
+  // 他のメモの変更やプレゼンス更新など、開いているメモ自体には関係ない
+  // Firestoreの通知でも受信のたびにここへ来る。選択中のメモのデータが
+  // 何も変わっていない時までeditorを作り直すと、キャレットとスクロール位置が
+  // 毎回失われ、それを検知したcenterCaretInEditorがメモの先頭・末尾へ
+  // 勝手にスクロールしてしまう（矢印キーで移動中に画面が飛んで見える不具合）。
+  // DOM化された後のinnerHTMLは元のHTML文字列と一致しない（ブラウザが属性の
+  // 引用符などを正規化するため）ので、比較は元データ（note本体）で行う。
+  const currentSelectedNote = getSelectedNote();
+  const editorUnaffected = Boolean(
+    previousSelectedId === state.selectedId &&
+    previousSelectedNote &&
+    currentSelectedNote &&
+    JSON.stringify(previousSelectedNote) === JSON.stringify(currentSelectedNote)
+  );
+  if (editorUnaffected) {
+    updateUndoButton();
+    return;
+  }
+
   renderEditor();
   restoreMemoEditorCaret(editorCaret);
   updateUndoButton();
@@ -8191,18 +8212,11 @@ function renderEditor() {
   els.titleInput.title = titleEditable
     ? ""
     : readOnly ? "ホストが閲覧専用に設定しています" : "共同作業中、親メモの名前を変更できるのはホストだけです";
-  if (els.titleInput.value !== note.title) els.titleInput.value = note.title;
+  els.titleInput.value = note.title;
   markEditorNote(note.id);
 
-  // 自分の保存がFirestoreから返ってきただけ（内容が変わっていない）場合まで
-  // innerHTMLを丸ごと作り直すと、キャレット/選択範囲が毎回リセットされ、
-  // それを検知したcenterCaretInEditorがメモの末尾へ勝手にスクロールしてしまう。
-  // 実際に表示内容が変わる時だけDOMを更新する。
-  const nextContentHtml = noteContentHtmlWithMedia(note);
-  if (els.contentInput.innerHTML !== nextContentHtml) {
-    els.contentInput.innerHTML = nextContentHtml;
-    ensureMediaTextLines();
-  }
+  els.contentInput.innerHTML = noteContentHtmlWithMedia(note);
+  ensureMediaTextLines();
   els.breadcrumb.textContent = getParentChain(note).join(" / ");
   const src = note.source_file ? ` / 読み込み元: ${note.source_file}` : "";
   const syncDisplayMapId = getNoteSyncDisplayMapId(note);
