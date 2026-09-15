@@ -2452,10 +2452,9 @@ function applyNotesSnapshot(snap) {
   // 他のメモの変更やプレゼンス更新など、開いているメモ自体には関係ない
   // Firestoreの通知でも受信のたびにここへ来る。選択中のメモのデータが
   // 何も変わっていない時までeditorを作り直すと、キャレットとスクロール位置が
-  // 毎回失われ、それを検知したcenterCaretInEditorがメモの先頭・末尾へ
-  // 勝手にスクロールしてしまう（矢印キーで移動中に画面が飛んで見える不具合）。
-  // DOM化された後のinnerHTMLは元のHTML文字列と一致しない（ブラウザが属性の
-  // 引用符などを正規化するため）ので、比較は元データ（note本体）で行う。
+  // 毎回失われてしまう。DOM化された後のinnerHTMLは元のHTML文字列と一致しない
+  // （ブラウザが属性の引用符などを正規化するため）ので、比較は元データ
+  // （note本体）で行う。
   const currentSelectedNote = getSelectedNote();
   const editorUnaffected = Boolean(
     previousSelectedId === state.selectedId &&
@@ -15003,7 +15002,6 @@ els.contentInput.addEventListener("focus", () => {
   els.contentInput.classList.add("is-focused");
   updateMemoFormatUiFromSelection();
   setCollabPresence("content", { immediate: true });
-  updateContentEditorCenterPadding();
 });
 els.contentInput.addEventListener("click", () => {
   els.contentInput.classList.add("is-focused");
@@ -15016,71 +15014,6 @@ els.contentInput.addEventListener("blur", () => {
   setCollabPresence("viewing");
 });
 
-// キャレットが動くたびに、エディタ内で常に縦方向の中央に来るよう滑らかに
-// 自動スクロールする。selectionchange はタイピング・矢印キー・クリックなど
-// キャレットが動くあらゆる場合に発火するので、これ1箇所で網羅できる。
-let _centerCaretScheduled = false;
-function scheduleCenterCaretInEditor() {
-  if (_centerCaretScheduled) return;
-  _centerCaretScheduled = true;
-  requestAnimationFrame(() => {
-    _centerCaretScheduled = false;
-    centerCaretInEditor();
-  });
-}
-
-function scrollRectToCenter(rect) {
-  if (!rect || (!rect.width && !rect.height && !rect.top && !rect.left)) return;
-  const containerRect = els.contentInput.getBoundingClientRect();
-  const delta = (rect.top + rect.height / 2) - (containerRect.top + containerRect.height / 2);
-  if (Math.abs(delta) < 4) return;
-  const maxScrollTop = els.contentInput.scrollHeight - els.contentInput.clientHeight;
-  const nextScrollTop = Math.max(0, Math.min(maxScrollTop, els.contentInput.scrollTop + delta));
-  els.contentInput.scrollTo({ top: nextScrollTop, behavior: "smooth" });
-}
-
-function centerCaretInEditor() {
-  if (!els.contentInput.classList.contains("is-focused")) return;
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return;
-  const range = selection.getRangeAt(0);
-  if (range.startContainer !== els.contentInput && !els.contentInput.contains(range.startContainer)) return;
-
-  // 画像の左右のキャレットを切り替えただけでメモがガクッと動いて見えないよう、
-  // 画像のキャレット（左右どちらでも）にいる間は常に「左のキャレット」の
-  // 位置を基準にセンタリングする。
-  let rect;
-  const activeAnchor = els.contentInput.querySelector(".media-caret-anchor.is-active-media-caret");
-  if (activeAnchor) {
-    const next = getMediaBoundarySibling(activeAnchor, "nextSibling");
-    const prev = getMediaBoundarySibling(activeAnchor, "previousSibling");
-    const figure = isInlineMediaFigure(next) ? next : (isInlineMediaFigure(prev) ? prev : null);
-    if (figure) {
-      const beforeAnchor = getMediaBoundarySibling(figure, "previousSibling");
-      rect = (isMediaCaretAnchor(beforeAnchor) ? beforeAnchor : figure).getBoundingClientRect();
-    }
-  }
-  if (!rect) rect = range.getClientRects()[0] || range.getBoundingClientRect();
-  // 作ったばかりの空行（<br>だけの中身）では、collapsed Rangeの矩形が
-  // (0,0,0,0) になることがあるため、その時は行要素自体の矩形で代用する。
-  if ((!rect || (!rect.width && !rect.height && !rect.top && !rect.left))) {
-    const container = range.startContainer;
-    const lineEl = container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement;
-    if (lineEl && lineEl !== els.contentInput) rect = lineEl.getBoundingClientRect();
-  }
-  scrollRectToCenter(rect);
-}
-
-document.addEventListener("selectionchange", scheduleCenterCaretInEditor);
-
-// 一番下の行にキャレットがある時も中央まで持ってこられるよう、下側に
-// エディタの半分の高さ分の余白を確保しておく（タイプライター的スクロール）。
-function updateContentEditorCenterPadding() {
-  const half = Math.round(els.contentInput.clientHeight / 2);
-  els.contentInput.style.paddingBottom = `${Math.max(24, half)}px`;
-}
-window.addEventListener("resize", updateContentEditorCenterPadding);
-updateContentEditorCenterPadding();
 els.contentInput.addEventListener("compositionstart", () => { _isComposing = true; redirectMediaCaretTyping(); });
 els.contentInput.addEventListener("compositionend",   () => { _isComposing = false; repairMediaCaretAfterEdit(); pruneEmptyMemoHeadingSpanAtCaret(); splitMemoHeadingSpanAtLineBreak(); stripNativeStickyFormatting(); tryApplyMemoHeadingShortcut(); tryApplyMemoStrikeShortcut(); tryApplyMemoColorShortcut(); tryApplyMemoHighlightShortcut(); tryApplyMemoClearFormatShortcut(); scheduleSave(); });
 els.contentInput.addEventListener("keydown", rememberMediaCaretRepair);
