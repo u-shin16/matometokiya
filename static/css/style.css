@@ -76,22 +76,16 @@ button {
   gap: 8px;
 }
 
-/* ボタンの文字は2行に折り返さない。幅が足りなくなったら、右側のボタンを
-   アイコンだけにする（名前はマウスを乗せると出る）。全部の文字が1行で
-   入るのは約1220px幅から。861px以下はスマホ用の並び（下の860pxの指定）に任せる。 */
+/* ボタンの文字は2行に折り返さない。全部の文字がふつうの大きさで1行に入るのは約1220px幅から。
+   それより狭いときは、アイコンだけにはせず（⚙とⓘの区別がつかなくなるため）、
+   幅に合わせて文字とすき間を小さくして1行に収める。861px以下はスマホ用の並び（下の860pxの指定）に任せる。 */
 .note-head .btn-label {
   white-space: nowrap;
 }
 
 @media (max-width: 1240px) and (min-width: 861px) {
-  .note-head-actions .mindmap-tool-btn .btn-label {
-    display: none;
-  }
-}
-
-@media (max-width: 960px) and (min-width: 861px) {
   .note-head {
-    gap: 8px;
+    gap: 6px;
     padding-right: 12px;
     padding-left: 12px;
   }
@@ -101,8 +95,15 @@ button {
     gap: 4px;
   }
 
-  .note-head .mindmap-tool-btn {
-    padding: 10px 8px;
+  .note-head .mindmap-tool-btn,
+  .note-head .mindmap-switch-btn {
+    gap: 4px;
+    padding: 8px clamp(5px, 0.7vw, 10px);
+    font-size: clamp(11px, 1.3vw, 16px);
+  }
+
+  .note-head .btn-icon {
+    font-size: clamp(12px, 1.3vw, 16px);
   }
 }
 
