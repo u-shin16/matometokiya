@@ -76,6 +76,36 @@ button {
   gap: 8px;
 }
 
+/* ボタンの文字は2行に折り返さない。幅が足りなくなったら、右側のボタンを
+   アイコンだけにする（名前はマウスを乗せると出る）。全部の文字が1行で
+   入るのは約1220px幅から。861px以下はスマホ用の並び（下の860pxの指定）に任せる。 */
+.note-head .btn-label {
+  white-space: nowrap;
+}
+
+@media (max-width: 1240px) and (min-width: 861px) {
+  .note-head-actions .mindmap-tool-btn .btn-label {
+    display: none;
+  }
+}
+
+@media (max-width: 960px) and (min-width: 861px) {
+  .note-head {
+    gap: 8px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .note-nav-btns,
+  .note-head-actions {
+    gap: 4px;
+  }
+
+  .note-head .mindmap-tool-btn {
+    padding: 10px 8px;
+  }
+}
+
 #noteListBtn[aria-expanded="true"],
 #noteListBtn[aria-expanded="true"]:hover {
   background: var(--primary-soft);
