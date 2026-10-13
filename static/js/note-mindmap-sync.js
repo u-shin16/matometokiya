@@ -28,6 +28,15 @@
     return ids;
   }
 
+  // 画面側は「2026-10-13T15:00:00」（端末の時刻・時差なし）、MCP側は
+  // 「2026-10-13T06:00:00.123+00:00」（UTC）と、updated_at の書き方が2通りある。
+  // 文字のまま比べると順番が狂うので、時刻（ミリ秒）に直してから比べる。
+  function toTime(value) {
+    if (!value) return null;
+    const time = Date.parse(String(value));
+    return Number.isFinite(time) ? time : null;
+  }
+
   function findSourceNode(map) {
     const nodes = Array.isArray(map?.nodes) ? map.nodes : [];
     return nodes.find(node => node.id === map?.source_node_id)
@@ -114,6 +123,7 @@
         source_note_title: String(rootNote.title || "無題").slice(0, 120),
         source_node_id: builtRoot.id,
         sync_enabled: true,
+        notes_synced_at: now,
         nodes,
         extra_links: (map.extra_links || []).filter(link => (
           validNodeIds.has(link.from_id) && validNodeIds.has(link.to_id)
@@ -148,6 +158,20 @@
     const desiredNotes = [];
     const writes = [];
     const nodeNoteIds = new Map();
+    const protectedNodes = new Map();
+
+    // このマップが最後にメモの中身を受け取った時刻。これより後に書き換えられたメモは、
+    // マップが知らない変更（別の端末・MCPでの編集）なので、マップの内容で上書きも削除もしない。
+    // 2026-09-08、古いマップを持った端末が同期をかけて、MCPで足したメモが消え、
+    // 書き直したメモが古い文面に戻った。
+    // notes_synced_at が無い古いマップは、上書きの判定だけ updated_at で代用し、削除はしない。
+    const notesSyncedAt = toTime(map.notes_synced_at);
+    const overwriteKnownAt = notesSyncedAt ?? toTime(map.updated_at);
+    function changedAfterMap(note, knownAt) {
+      if (!note || knownAt === null) return false;
+      const time = toTime(note.updated_at);
+      return time !== null && time > knownAt;
+    }
 
     function buildNote(node, parentNoteId, order, fallbackNote = null, forcedId = null) {
       const candidates = [
@@ -161,9 +185,11 @@
       if (usedNoteIds.has(id)) throw new Error("メモとノードの対応関係が重複しています。");
       usedNoteIds.add(id);
 
+      const keepNote = changedAfterMap(existing, overwriteKnownAt);
+      if (keepNote) protectedNodes.set(node.id, existing);
       const memo = String(node.memo || "");
       const existingContent = existing?.content ?? "";
-      const content = existing && toPlainText(existingContent) === memo ? existingContent : memo;
+      const content = keepNote || (existing && toPlainText(existingContent) === memo) ? existingContent : memo;
       const base = existing || {
         id,
         created_at: now,
@@ -177,10 +203,10 @@
       const desired = {
         ...base,
         id,
-        parent_id: parentNoteId,
-        title: String(node.title || "新しいメモ").slice(0, 120),
+        parent_id: keepNote ? (existing.parent_id ?? null) : parentNoteId,
+        title: keepNote ? existing.title : String(node.title || "新しいメモ").slice(0, 120),
         content,
-        order,
+        order: keepNote ? (existing.order ?? order) : order,
         linked_mindmap_id: map.id,
         linked_mindmap_node_id: node.id,
       };
@@ -213,13 +239,36 @@
     const rootParentId = existingRoot ? (existingRoot.parent_id ?? null) : null;
     const rootOrder = existingRoot ? (existingRoot.order ?? 1000) : 1000;
     const desiredRoot = buildNote(sourceNode, rootParentId, rootOrder, null, forcedRootId);
-    const deleteIds = notes
-      .filter(note => note.linked_mindmap_id === map.id && !usedNoteIds.has(note.id))
+    // マップから消えたノードのメモ。マップが知っている版のままのものだけを消す（ゴミ箱へ）。
+    const deleteIds = notesSyncedAt === null ? [] : notes
+      .filter(note => (
+        note.linked_mindmap_id === map.id
+        && !usedNoteIds.has(note.id)
+        && !changedAfterMap(note, notesSyncedAt)
+      ))
       .map(note => note.id);
-    const mappedNodes = nodes.map(node => ({
-      ...node,
-      source_note_id: nodeNoteIds.get(node.id) || node.source_note_id || null,
-    }));
+    // 消す予定のメモの下に、残るメモ（マップを通さずに足されたメモなど）がいれば、親も残す。
+    // 親だけゴミ箱へ入ると、残った子が行き場をなくして見えなくなるため。
+    const deleting = new Set(deleteIds);
+    let keptParent = true;
+    while (keptParent) {
+      keptParent = false;
+      for (const note of notes) {
+        if (deleting.has(note.parent_id) && !deleting.has(note.id) && !usedNoteIds.has(note.id)) {
+          deleting.delete(note.parent_id);
+          keptParent = true;
+        }
+      }
+    }
+    const safeDeleteIds = deleteIds.filter(id => deleting.has(id));
+    const mappedNodes = nodes.map(node => {
+      const kept = protectedNodes.get(node.id);
+      return {
+        ...node,
+        ...(kept ? { title: String(kept.title || "トピック").slice(0, 80), memo: toPlainText(kept.content) } : {}),
+        source_note_id: nodeNoteIds.get(node.id) || node.source_note_id || null,
+      };
+    });
     const syncsMapTitle = sourceNode.parent_id === null;
 
     return {
@@ -230,11 +279,12 @@
         source_note_title: String(desiredRoot.title || "無題").slice(0, 120),
         source_node_id: sourceNode.id,
         sync_enabled: true,
+        notes_synced_at: now,
         nodes: mappedNodes,
       },
       desiredNotes,
       writes,
-      deleteIds,
+      deleteIds: safeDeleteIds,
     };
   }
 

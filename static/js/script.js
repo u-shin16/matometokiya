@@ -4093,8 +4093,18 @@ async function commitNoteSyncOperations(writes, deleteIds = []) {
   for (let index = 0; index < operations.length; index += CHUNK) {
     const batch = db.batch();
     operations.slice(index, index + CHUNK).forEach(operation => {
-      if (operation.type === "delete") batch.delete(ref.doc(operation.id));
-      else batch.set(ref.doc(operation.note.id), operation.note);
+      // マップから消えたメモも完全には消さず、ゴミ箱へ入れる（間違って消えても復元できるように）。
+      // マップとのつながりは外す。外さないと、ゴミ箱から戻したときに次の同期でまた消える。
+      if (operation.type === "delete") {
+        batch.update(ref.doc(operation.id), {
+          deleted: true,
+          deleted_at: nowIso(),
+          linked_mindmap_id: null,
+          linked_mindmap_node_id: null,
+        });
+      } else {
+        batch.set(ref.doc(operation.note.id), operation.note);
+      }
     });
     await batch.commit();
   }
@@ -4163,7 +4173,11 @@ async function syncLinkedMindMapForNote(note, additionalMapIds = []) {
 
 async function syncLinkedNotesFromMindMap(map = state.mindMap) {
   if (!map?.sync_enabled || !map.source_note_id || !state.data) return map?.source_note_id || null;
-  const beforeNodeLinks = JSON.stringify((map.nodes || []).map(node => [node.id, node.source_note_id || null]));
+  // ノードとメモのつながりに加え、守ったメモの題名・本文をマップへ戻した分も比べる
+  const nodeSummary = nodes => JSON.stringify((nodes || []).map(node => [
+    node.id, node.source_note_id || null, node.title, node.memo || "",
+  ]));
+  const beforeNodes = nodeSummary(map.nodes);
   const plan = NoteMindMapSync.planSyncedNotes({
     notes: getNotes(),
     map,
@@ -4185,15 +4199,17 @@ async function syncLinkedNotesFromMindMap(map = state.mindMap) {
     else state.data.notes.push(note);
   });
 
-  const afterNodeLinks = JSON.stringify((plan.map.nodes || []).map(node => [node.id, node.source_note_id || null]));
-  if (beforeNodeLinks !== afterNodeLinks || map.source_node_id !== plan.map.source_node_id) {
+  if (beforeNodes !== nodeSummary(plan.map.nodes) || map.source_node_id !== plan.map.source_node_id) {
     await mindMapsCollection().doc(map.id).set({
       source_note_id: plan.map.source_note_id,
       source_note_title: plan.map.source_note_title,
       source_node_id: plan.map.source_node_id,
       sync_enabled: true,
+      notes_synced_at: plan.map.notes_synced_at,
       nodes: plan.map.nodes,
     }, { merge: true });
+  } else {
+    await mindMapsCollection().doc(map.id).set({ notes_synced_at: plan.map.notes_synced_at }, { merge: true });
   }
   if (state.mindMap?.id === map.id && !isMindMapInlineNodeEditing()) {
     state.mindMap = normalizeMindMap(plan.map, map.id);
@@ -9603,6 +9619,7 @@ function normalizeMindMap(raw, id) {
     sync_enabled: raw?.sync_enabled === undefined
       ? Boolean(raw?.source_note_id)
       : Boolean(raw.sync_enabled && raw?.source_note_id),
+    notes_synced_at: raw?.notes_synced_at ? String(raw.notes_synced_at) : null,
     nodes: cleaned,
     extra_links: Array.isArray(raw?.extra_links)
       ? raw.extra_links
@@ -9898,6 +9915,7 @@ function serializeMindMap() {
     source_note_title: map.source_note_title || "",
     source_node_id: map.source_node_id || null,
     sync_enabled: Boolean(map.sync_enabled && map.source_note_id),
+    notes_synced_at: map.notes_synced_at || null,
     nodes: getMindMapNodes().map(node => ({
       id: node.id,
       parent_id: node.parent_id ?? null,

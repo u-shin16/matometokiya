@@ -76,6 +76,7 @@ const currentNotes = [
 const mapWithNewChild = {
   id: "map-1",
   title: "更新したルート",
+  notes_synced_at: "2026-06-21T00:00:00",
   source_note_id: "note-root",
   source_node_id: "node-root",
   nodes: [
@@ -175,5 +176,73 @@ const syncedRoot = childPlan.desiredNotes.find(note => note.id === "child-note")
 assert.equal(syncedRoot.parent_id, "parent-note");
 assert.equal(syncedRoot.order, 2000);
 assert.equal(childPlan.desiredNotes.find(note => note.parent_id === "child-note").title, "追加ノード");
+
+// メモからマップを作ったときは、メモを受け取った時刻を残すこと。
+assert.equal(built.map.notes_synced_at, "2026-06-22T00:00:00");
+
+// ---- 古いマップで同期しても、マップが知らないメモの変更を消さない（2026-09-08の事故） ----
+// マップがメモを最後に受け取ったのは 10/12 15:00（端末の時刻）。
+// そのあと MCP（UTC表記）で「本文」を書き直し、「考え」を足した。古いマップの端末が同期をかける。
+const staleMap = {
+  id: "map-s",
+  title: "原稿",
+  source_note_id: "s-root",
+  source_node_id: "sn-root",
+  notes_synced_at: "2026-10-12T15:00:00",
+  nodes: [
+    { id: "sn-root", parent_id: null, title: "原稿", memo: "", source_note_id: "s-root" },
+    { id: "sn-body", parent_id: "sn-root", title: "古い題", memo: "古い本文", source_note_id: "s-body" },
+    { id: "sn-new", parent_id: "sn-root", title: "マップで足した", memo: "" },
+  ],
+};
+const staleNotes = [
+  { id: "s-root", parent_id: null, title: "原稿", content: "", order: 1000,
+    updated_at: "2026-10-12T14:00:00", linked_mindmap_id: "map-s", linked_mindmap_node_id: "sn-root" },
+  { id: "s-body", parent_id: "s-root", title: "新しい題", content: "MCPで書き直した本文", order: 1000,
+    updated_at: "2026-10-13T15:00:00+00:00", linked_mindmap_id: "map-s", linked_mindmap_node_id: "sn-body" },
+  { id: "s-idea", parent_id: "s-root", title: "④自分の考え", content: "消えてはいけない", order: 3000,
+    updated_at: "2026-10-13T16:00:00+00:00", linked_mindmap_id: "map-s", linked_mindmap_node_id: "sn-gone" },
+  { id: "s-old", parent_id: "s-root", title: "マップで消したメモ", content: "", order: 4000,
+    updated_at: "2026-10-12T10:00:00", linked_mindmap_id: "map-s", linked_mindmap_node_id: "sn-removed" },
+];
+const stalePlan = planSyncedNotes({
+  notes: staleNotes, map: staleMap, createId: ids("snote"), toPlainText: plain, now: "2026-10-14T09:00:00",
+});
+const keptBody = stalePlan.desiredNotes.find(note => note.id === "s-body");
+assert.equal(keptBody.title, "新しい題", "あとから書き直した題名を古いマップで上書きしない");
+assert.equal(keptBody.content, "MCPで書き直した本文", "あとから書き直した本文を古いマップで上書きしない");
+assert.equal(stalePlan.writes.some(note => note.id === "s-body"), false);
+assert.equal(stalePlan.map.nodes.find(node => node.id === "sn-body").title, "新しい題", "マップ側をメモに合わせる");
+assert.equal(stalePlan.map.nodes.find(node => node.id === "sn-body").memo, "MCPで書き直した本文");
+assert.deepEqual(stalePlan.deleteIds, ["s-old"], "マップが知っている古いメモだけを消し、あとから足したメモは消さない");
+assert.equal(stalePlan.desiredNotes.find(note => note.parent_id === "s-root" && note.title === "マップで足した").title, "マップで足した");
+assert.equal(stalePlan.map.notes_synced_at, "2026-10-14T09:00:00");
+
+// マップの時刻より前のメモは、これまで通りマップの内容で書き換える。
+const freshPlan = planSyncedNotes({
+  notes: staleNotes.map(note => note.id === "s-body" ? { ...note, updated_at: "2026-10-12T09:00:00" } : note),
+  map: staleMap, createId: ids("fnote"), toPlainText: plain, now: "2026-10-14T09:00:00",
+});
+assert.equal(freshPlan.desiredNotes.find(note => note.id === "s-body").title, "古い題");
+assert.equal(freshPlan.desiredNotes.find(note => note.id === "s-body").content, "古い本文");
+
+// notes_synced_at を持たない（この修正より前に保存された）マップでは、何も消さない。
+const legacyPlan = planSyncedNotes({
+  notes: staleNotes, map: { ...staleMap, notes_synced_at: undefined, updated_at: "2026-10-12T15:00:00" },
+  createId: ids("lnote"), toPlainText: plain, now: "2026-10-14T09:00:00",
+});
+assert.deepEqual(legacyPlan.deleteIds, []);
+assert.equal(legacyPlan.desiredNotes.find(note => note.id === "s-body").content, "MCPで書き直した本文");
+
+// 消す予定のメモの下に、マップを通さずに足されたメモがあれば、親も消さない。
+const orphanPlan = planSyncedNotes({
+  notes: [
+    ...staleNotes,
+    { id: "s-child", parent_id: "s-old", title: "MCPで足した子", content: "", order: 1000,
+      updated_at: "2026-10-12T11:00:00" },
+  ],
+  map: staleMap, createId: ids("onote"), toPlainText: plain, now: "2026-10-14T09:00:00",
+});
+assert.deepEqual(orphanPlan.deleteIds, []);
 
 console.log("note-mindmap-sync tests: OK");
