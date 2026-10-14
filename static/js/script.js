@@ -689,8 +689,6 @@ function downloadNotesAsPdf() {
     const depth = numPath.length - 1;
     const indent = depth * 28;
     const numLabel = numPath.join("-");
-    const check = note.checked ? " <span style='color:#16a34a'>✓</span>" : "";
-    const pin = note.pinned ? " <span style='color:#dc2626'>📌</span>" : "";
     const title = escapeHtml(note.title || "無題");
     const content = getPrintableContent(note);
     const fontSize = Math.max(13, 20 - depth * 2);
@@ -698,7 +696,7 @@ function downloadNotesAsPdf() {
     let html = `<div style="margin-left:${indent}px;margin-bottom:16px">
       <div style="font-size:${fontSize}px;font-weight:${depth === 0 ? "bold" : "600"};color:#1f2937;display:flex;align-items:baseline;gap:8px">
         <span style="font-size:${Math.max(11, fontSize - 2)}px;color:${numColor};font-weight:bold;white-space:nowrap;min-width:2em">${numLabel}</span>
-        <span>${title}${check}${pin}</span>
+        <span>${title}</span>
       </div>
       ${content ? `<div style="font-size:13px;color:#4b5563;margin-top:6px;margin-left:${Math.max(11, fontSize - 2) * 1.2 + 8}px;line-height:1.7">${content}</div>` : ""}
     </div>`;
@@ -755,12 +753,10 @@ function downloadNotesAsPdf() {
   });
 }
 
+// ダウンロードしたファイルには、ピン留め・チェックの印を入れない（題名だけにする）。
+// 印はアプリの中での目印で、ファイルにして人に渡したり読んだりするときは邪魔になるため。
 function buildNotesExportLabel(note) {
-  const marks = [];
-  if (note.pinned) marks.push("📌");
-  if (note.checked) marks.push("✅");
-  const title = note.title || "無題";
-  return marks.length ? `${title} ${marks.join(" ")}` : title;
+  return note.title || "無題";
 }
 
 // メモ階層 → Markdown文字列
