@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import urllib.error
 import urllib.request
@@ -833,6 +834,7 @@ def build_all_notes_payload(
                 (len(path), path, order, document_id),
                 {
                     "id": document_id,
+                    "parent_id": data.get("parent_id"),
                     "title": title or "無題",
                     "content": content,
                     "path": path,
@@ -1798,7 +1800,7 @@ MCP_INSTRUCTIONS = """まとめときや（階層メモ帳アプリ）のメモ�
   1. メモを読んで、あなたのことを知る（list_notes）
   2. 今日やることを確認する（list_todos）
   3. 新しいメモを作る（create_note）
-  4. メモを検索・要約する（list_notes して探す）
+  4. メモを検索・要約する（list_notes の query で探す）
   5. いらないメモを片付ける（delete_note＝ゴミ箱へ移動）
 
 守ること:
@@ -1811,7 +1813,10 @@ MCP_INSTRUCTIONS = """まとめときや（階層メモ帳アプリ）のメモ�
 - メモの置き場所を変える時は move_note を使う。作り直して元を消す形にしない
   （IDが変わり、子メモが付いてこない）。自分自身や自分の子孫の下へは移せない。
 - メモのIDは list_notes の結果に含まれる。利用者はIDではなく名前で話すので、
-  まず一覧を取得して対象を特定する。
+  まず list_notes で対象を特定する。名前が分かっているときは query で絞り、
+  全体を見渡すだけなら titles_only を使う（全メモの本文は大きくなりやすい）。
+- 本文に貼られた画像は「data:（画像は省略）」として返る。画像のあるメモの本文は
+  MCPからは書き換えられない（題名とチェックは変えられる）。
 - 変更はアプリの画面へリアルタイムに反映される。再読み込みを促す必要はない。
 """
 
@@ -1824,8 +1829,22 @@ _JSONRPC_INVALID_PARAMS = -32602
 _MCP_READ_TOOLS = [
     {
         "name": "list_notes",
-        "description": "まとめときやの全メモを階層つきで取得する。鍵付きメモの本文は、利用者がアプリの「Claude連携」設定で許可している場合だけ含まれる。",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "description": (
+            "まとめときやのメモを階層つきで取得する。何も指定しなければ全メモ。"
+            "メモを探すときは query や titles_only で絞ると軽い。"
+            "本文に貼られた画像は「data:（画像は省略）」に置き換えて返す。"
+            "鍵付きメモの本文は、利用者がアプリの「Claude連携」設定で許可している場合だけ含まれる。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "題名・本文・置き場所にこの言葉を含むメモだけ（大文字小文字は区別しない）"},
+                "note_id": {"type": "string", "description": "このメモと、その下にある子孫メモだけ"},
+                "titles_only": {"type": "boolean", "description": "trueなら本文を外し、題名・置き場所・IDだけ返す"},
+                "limit": {"type": "integer", "description": "返す件数の上限"},
+            },
+            "additionalProperties": False,
+        },
     },
     {
         "name": "list_todos",
@@ -1984,6 +2003,59 @@ def _mcp_note_id_arg(arguments: dict) -> str:
     return note_id
 
 
+# メモに貼った画像は、本文の中に data:...;base64,... の文字として入っている。
+# 2026-10-18の時点で、本文の約98%（約490万文字）がこれで、MCPで全メモを返すと
+# Claudeが読めない大きさになっていた。MCPでは短い印に置き換えて返す。
+_INLINE_IMAGE_RE = re.compile(r"data:[a-zA-Z]+/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+")
+_INLINE_IMAGE_MARK = "data:（画像は省略）"
+
+
+def _strip_inline_images(content: str) -> str:
+    return _INLINE_IMAGE_RE.sub(_INLINE_IMAGE_MARK, content or "")
+
+
+def _count_inline_images(content: str) -> int:
+    return len(_INLINE_IMAGE_RE.findall(content or ""))
+
+
+def filter_notes_for_mcp(notes: list[dict], arguments: dict) -> list[dict]:
+    """list_notes の絞り込み。何も指定しなければ全メモ（画像は省略）を返す。
+    query：題名・本文・置き場所に含む言葉 ／ note_id：そのメモと子孫だけ ／
+    titles_only：本文を外す ／ limit：件数の上限"""
+    query = str(arguments.get("query") or "").strip().lower()
+    root_id = str(arguments.get("note_id") or "").strip()
+    titles_only = bool(arguments.get("titles_only"))
+    limit = arguments.get("limit")
+
+    picked = notes
+    if root_id:
+        keep = {root_id}
+        changed = True
+        while changed:
+            changed = False
+            for note in notes:
+                if note.get("parent_id") in keep and note["id"] not in keep:
+                    keep.add(note["id"])
+                    changed = True
+        picked = [note for note in picked if note["id"] in keep]
+    if query:
+        def plain(note):
+            text = re.sub(r"<[^>]+>", " ", _strip_inline_images(note.get("content") or ""))
+            return " ".join([note.get("title") or "", text, " / ".join(note.get("path") or [])]).lower()
+        picked = [note for note in picked if query in plain(note)]
+    out = []
+    for note in picked:
+        item = dict(note)
+        if titles_only:
+            item.pop("content", None)
+        else:
+            item["content"] = _strip_inline_images(item.get("content") or "")
+        out.append(item)
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        out = out[:limit]
+    return out
+
+
 def run_mcp_tool(uid: str, can_write: bool, name: str, arguments: dict):
     """ツール1個を実行して、Claudeへ返す文字列を組み立てる。
     中身はRESTのAPIと同じ関数を呼ぶだけで、鍵付きメモの扱いなどの安全策も同じ。"""
@@ -1992,7 +2064,7 @@ def run_mcp_tool(uid: str, can_write: bool, name: str, arguments: dict):
 
     if name == "list_notes":
         include_locked = get_claude_include_locked_notes(uid)
-        notes = fetch_all_notes_for_uid(uid, include_locked)
+        notes = filter_notes_for_mcp(fetch_all_notes_for_uid(uid, include_locked), arguments or {})
         return json.dumps({"count": len(notes), "notes": notes}, ensure_ascii=False)
 
     if name == "list_todos":
@@ -2015,6 +2087,18 @@ def run_mcp_tool(uid: str, can_write: bool, name: str, arguments: dict):
         if "title" not in arguments and "content" not in arguments and "checked" not in arguments:
             raise McpToolError("title、content、checkedのいずれかを指定してください。")
         _mcp_require_unlocked_note(uid, note_id, "編集")
+        if "content" in arguments:
+            # list_notes では画像を省いて返すので、それを読んで書き戻すと画像が消える。
+            # 画像が減る書き換えは断る（題名とチェックはそのまま変えられる）。
+            existing = _note_ref(uid, note_id).get()
+            before = _count_inline_images((existing.to_dict() or {}).get("content") if existing.exists else "")
+            after_text = str(arguments["content"])
+            if before and (_count_inline_images(after_text) < before or _INLINE_IMAGE_MARK in after_text):
+                raise McpToolError(
+                    "このメモには画像が貼ってあります。本文を書き換えると画像が消えるため、"
+                    "MCPからは本文を変更できません（題名とチェックは変更できます）。"
+                    "本文はアプリの画面で直してください。"
+                )
         title = str(arguments["title"]) if "title" in arguments else None
         content = str(arguments["content"]) if "content" in arguments else None
         checked = bool(arguments["checked"]) if "checked" in arguments else None

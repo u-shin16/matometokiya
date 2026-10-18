@@ -6,7 +6,7 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import app as app_module
 
@@ -1637,6 +1637,88 @@ class ClaudeConnectMcpCommandTests(unittest.TestCase):
         self.assertIn("--transport http", command)
         self.assertIn(f"{app_module.SITE_URL}/mcp", command)
         self.assertIn('--header "Authorization: Bearer secret-token"', command)
+
+
+
+class McpNoteFilterTests(unittest.TestCase):
+    """list_notes の絞り込みと、画像の省略（2026-10-18）。全メモの本文が約500万文字あり、
+    そのほとんどが本文に貼られた画像（base64）だったため。"""
+
+    IMG = "data:image/png;base64," + "A" * 400
+
+    def _notes(self):
+        return [
+            {"id": "r", "parent_id": None, "title": "同期テスト", "content": "<div>本文</div>", "path": []},
+            {"id": "a", "parent_id": "r", "title": "子A", "content": f'<img src="{self.IMG}">メモ', "path": ["同期テスト"]},
+            {"id": "b", "parent_id": "a", "title": "孫B", "content": "麻雀の話", "path": ["同期テスト", "子A"]},
+            {"id": "x", "parent_id": None, "title": "別のメモ", "content": "関係ない", "path": []},
+        ]
+
+    def test_no_arguments_returns_all_with_images_stripped(self):
+        out = app_module.filter_notes_for_mcp(self._notes(), {})
+        self.assertEqual([n["id"] for n in out], ["r", "a", "b", "x"])
+        self.assertNotIn("base64", out[1]["content"])
+        self.assertIn(app_module._INLINE_IMAGE_MARK, out[1]["content"])
+
+    def test_query_matches_title_content_and_path(self):
+        self.assertEqual([n["id"] for n in app_module.filter_notes_for_mcp(self._notes(), {"query": "麻雀"})], ["b"])
+        self.assertEqual([n["id"] for n in app_module.filter_notes_for_mcp(self._notes(), {"query": "子a"})], ["a", "b"])
+
+    def test_query_does_not_match_inside_image_data(self):
+        self.assertEqual(app_module.filter_notes_for_mcp(self._notes(), {"query": "AAAA"}), [])
+
+    def test_note_id_returns_subtree(self):
+        out = app_module.filter_notes_for_mcp(self._notes(), {"note_id": "r"})
+        self.assertEqual([n["id"] for n in out], ["r", "a", "b"])
+
+    def test_titles_only_and_limit(self):
+        out = app_module.filter_notes_for_mcp(self._notes(), {"titles_only": True, "limit": 2})
+        self.assertEqual(len(out), 2)
+        self.assertNotIn("content", out[0])
+        self.assertEqual(out[0]["title"], "同期テスト")
+
+    def test_original_notes_are_not_changed(self):
+        notes = self._notes()
+        app_module.filter_notes_for_mcp(notes, {"titles_only": True})
+        self.assertIn("content", notes[0])
+        self.assertIn("base64", notes[1]["content"])
+
+
+class McpUpdateNoteImageGuardTests(unittest.TestCase):
+    """画像の貼ってあるメモの本文を、画像が減る形で書き換えさせない。"""
+
+    IMG = "data:image/png;base64," + "B" * 200
+
+    def _run(self, existing_content, new_content):
+        snap = _FakeSnapshot({"content": existing_content, "title": "t"})
+        ref = MagicMock()
+        ref.get.return_value = snap
+        with patch.object(app_module, "_note_ref", return_value=ref), \
+             patch.object(app_module, "_mcp_require_unlocked_note", return_value=None), \
+             patch.object(app_module, "update_note_for_uid", return_value={"title": "t", "checked": False}) as upd:
+            try:
+                app_module.run_mcp_tool("uid", True, "update_note", {"note_id": "n1", "content": new_content})
+                return upd.called, None
+            except app_module.McpToolError as e:
+                return upd.called, str(e)
+
+    def test_rejects_content_that_drops_images(self):
+        called, err = self._run(f'<img src="{self.IMG}">本文', "本文だけ")
+        self.assertFalse(called)
+        self.assertIn("画像", err)
+
+    def test_rejects_content_with_the_omitted_mark(self):
+        called, err = self._run(f'<img src="{self.IMG}">本文', f'<img src="{app_module._INLINE_IMAGE_MARK}">本文を直した')
+        self.assertFalse(called)
+
+    def test_allows_notes_without_images(self):
+        called, err = self._run("ふつうの本文", "書き換えた本文")
+        self.assertTrue(called)
+        self.assertIsNone(err)
+
+    def test_allows_keeping_the_same_images(self):
+        called, err = self._run(f'<img src="{self.IMG}">本文', f'<img src="{self.IMG}">本文を直した')
+        self.assertTrue(called)
 
 
 if __name__ == "__main__":
