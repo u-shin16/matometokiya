@@ -1677,6 +1677,15 @@ class McpNoteFilterTests(unittest.TestCase):
         self.assertNotIn("content", out[0])
         self.assertEqual(out[0]["title"], "同期テスト")
 
+    def test_limit_given_as_string(self):
+        self.assertEqual(len(app_module.filter_notes_for_mcp(self._notes(), {"limit": "2"})), 2)
+
+    def test_limit_through_mcp_call(self):
+        with patch.object(app_module, "get_claude_include_locked_notes", return_value=False), \
+             patch.object(app_module, "fetch_all_notes_for_uid", return_value=self._notes()):
+            text = app_module.run_mcp_tool("uid", False, "list_notes", {"limit": 1, "titles_only": True})
+        self.assertEqual(json.loads(text)["count"], 1)
+
     def test_original_notes_are_not_changed(self):
         notes = self._notes()
         app_module.filter_notes_for_mcp(notes, {"titles_only": True})

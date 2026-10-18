@@ -2051,6 +2051,9 @@ def filter_notes_for_mcp(notes: list[dict], arguments: dict) -> list[dict]:
         else:
             item["content"] = _strip_inline_images(item.get("content") or "")
         out.append(item)
+    # 数字が文字列で届くこともある（"5"）ので、どちらも受ける
+    if isinstance(limit, str) and limit.strip().isdigit():
+        limit = int(limit.strip())
     if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
         out = out[:limit]
     return out
