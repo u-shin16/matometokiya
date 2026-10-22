@@ -13587,6 +13587,71 @@ function replaceImageEditCanvas(canvas, inkCanvas = null, rect = null, inkStroke
   updateCropConfirmState();
 }
 
+// 確定後も線を直せるように、線の前の画像と線1本ずつをfigureのdata属性へ残す。
+// editSigは確定した画像のハッシュで、画像が別の編集に差し替わっていたら復元しない。
+const IMAGE_EDIT_LAYERS_MAX_CHARS = 700 * 1024;
+
+function hashImageEditSource(src) {
+  let hash = 5381;
+  for (let i = 0; i < src.length; i += 1) hash = ((hash * 33) ^ src.charCodeAt(i)) >>> 0;
+  return `${src.length}:${hash.toString(36)}`;
+}
+
+function getImageEditStrokeBounds(canvas) {
+  const { width, height } = canvas;
+  const data = canvas.getContext("2d").getImageData(0, 0, width, height).data;
+  let minX = width, minY = height, maxX = -1, maxY = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (data[(y * width + x) * 4 + 3] === 0) continue;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (maxX < 0) return null;
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+async function buildImageEditLayersJson() {
+  if (!_crop.inkStrokes.length || !_crop.editCanvas) return "";
+  const base = _crop.editCanvas;
+  const baseBlob = await canvasToBlob(base, "image/jpeg", 0.9);
+  const strokes = [];
+  for (const stroke of _crop.inkStrokes) {
+    const bounds = getImageEditStrokeBounds(stroke.canvas);
+    if (!bounds) continue;
+    const part = document.createElement("canvas");
+    part.width = bounds.w;
+    part.height = bounds.h;
+    part.getContext("2d").drawImage(stroke.canvas, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
+    strokes.push({ x: bounds.x, y: bounds.y, src: await blobToDataUrl(await canvasToBlob(part, "image/png")) });
+  }
+  if (!strokes.length) return "";
+  const json = JSON.stringify({ v: 1, w: base.width, h: base.height, base: await blobToDataUrl(baseBlob), strokes });
+  return json.length <= IMAGE_EDIT_LAYERS_MAX_CHARS ? json : "";
+}
+
+async function restoreImageEditLayers(figure, currentSrc) {
+  const raw = figure?.dataset?.editLayers;
+  if (!raw || figure.dataset.editSig !== hashImageEditSource(currentSrc)) return null;
+  const layers = JSON.parse(raw);
+  if (layers?.v !== 1 || !Array.isArray(layers.strokes)) return null;
+  const baseCanvas = canvasFromImageSource(await loadImageForEditorSource(layers.base));
+  if (baseCanvas.width !== layers.w || baseCanvas.height !== layers.h) return null;
+  const strokes = [];
+  const ink = createBlankImageEditInkCanvas(layers.w, layers.h);
+  for (const part of layers.strokes) {
+    const img = await loadImageForEditorSource(part.src);
+    const canvas = createBlankImageEditInkCanvas(layers.w, layers.h);
+    canvas.getContext("2d").drawImage(img, part.x, part.y);
+    ink.getContext("2d").drawImage(canvas, 0, 0);
+    strokes.push({ canvas });
+  }
+  return { baseCanvas, ink, strokes };
+}
+
 function openImageEditor(figure, initialMode = "pen") {
   const imgEl = figure.querySelector("img.inline-media");
   if (!imgEl) return;
@@ -13616,11 +13681,14 @@ function openImageEditor(figure, initialMode = "pen") {
   //    fetch が 304 を返すとボディが空になり blob が空 → canvas が黒くなる。
   //    Blob → ObjectURL → Image.onload 経路は CORS タント・デコード未完了も回避できる。
   loadImageForEditorSource(mediaSrcForStorage(imgEl))
-    .then(img => {
+    .then(async img => {
+      if (sessionId !== _crop.sessionId || els.cropOverlay.hidden) return;
+      const restored = await restoreImageEditLayers(figure, mediaSrcForStorage(imgEl)).catch(() => null);
       if (sessionId !== _crop.sessionId || els.cropOverlay.hidden) return;
       _crop.canvasImg = img;
       _crop.ready = true;
-      replaceImageEditCanvas(canvasFromImageSource(img));
+      if (restored) replaceImageEditCanvas(restored.baseCanvas, restored.ink, null, restored.strokes);
+      else replaceImageEditCanvas(canvasFromImageSource(img));
       updateCropConfirmState();
       drawCropCanvas();
     })
@@ -14020,7 +14088,15 @@ async function confirmCrop() {
     const outputCanvas = composeImageEditCanvas();
     const blob = await canvasToBlob(outputCanvas, "image/png");
     const editedUrl = await blobToDataUrl(blob);
+    const layersJson = await buildImageEditLayersJson().catch(() => "");
 
+    if (layersJson) {
+      figure.dataset.editLayers = layersJson;
+      figure.dataset.editSig = hashImageEditSource(editedUrl);
+    } else {
+      delete figure.dataset.editLayers;
+      delete figure.dataset.editSig;
+    }
     imgEl.addEventListener("load", () => scheduleMediaCaretSync(), { once: true });
     imgEl.src = editedUrl;
     imgEl.alt = _crop.mode === "crop" ? "cropped.png" : "edited.png";
