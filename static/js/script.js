@@ -5518,20 +5518,37 @@ function updateEmptyState() {
   scheduleMemoCharCount();
 }
 
-// メモ本文の文字数。改行は数えず、「空白あり」は半角・全角スペースやタブも1文字、
-// 「空白なし」は空白をすべて除いた数。書式解除の跡のゼロ幅スペースは数えない。
-function countMemoChars(root) {
+// メモ本文の文字数。「改行あり」は改行も1文字、「改行なし」は改行を除いた数。
+// 空白（半角・全角スペース、タブ）はどちらも1文字として数える。
+// 書式解除の跡のゼロ幅スペースと、画像・動画は数えない。
+function memoPlainTextForCount(root) {
   let text = "";
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (node.parentElement?.closest?.(".inline-media-figure")) continue;
-    text += node.nodeValue;
-  }
-  text = text.replace(/[\u200b\r\n]/g, "");
+  const walk = parent => {
+    for (const node of parent.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        text += node.nodeValue.replace(/[\u200b\r\n]/g, "");
+        continue;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (node.classList?.contains("inline-media-figure")) continue;
+      if (node.nodeName === "BR") { text += "\n"; continue; }
+      const isBlock = memoNodeBreaksLine(node);
+      // ブロック（Enterで作られるDIVなど）は新しい行として始める。
+      if (isBlock && text && !text.endsWith("\n")) text += "\n";
+      walk(node);
+    }
+  };
+  walk(root);
+  // 末尾の改行は入力欄が自動で置く空行なので数えない。
+  return text.replace(/\n+$/, "");
+}
+
+function countMemoChars(root) {
+  const text = memoPlainTextForCount(root);
   const chars = str => Array.from(str).length;
   return {
-    withSpaces: chars(text),
-    withoutSpaces: chars(text.replace(/\s/g, "")),
+    withBreaks: chars(text),
+    withoutBreaks: chars(text.replace(/\n/g, "")),
   };
 }
 
@@ -5544,9 +5561,9 @@ function updateMemoCharCount() {
     els.memoCharCount.textContent = "";
     return;
   }
-  const { withSpaces, withoutSpaces } = countMemoChars(els.contentInput);
+  const { withBreaks, withoutBreaks } = countMemoChars(els.contentInput);
   const fmt = n => n.toLocaleString("ja-JP");
-  els.memoCharCount.textContent = `空白あり ${fmt(withSpaces)}字／空白なし ${fmt(withoutSpaces)}字`;
+  els.memoCharCount.textContent = `改行あり ${fmt(withBreaks)}字／改行なし ${fmt(withoutBreaks)}字`;
   els.memoCharCount.hidden = false;
 }
 
