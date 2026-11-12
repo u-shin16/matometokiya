@@ -176,6 +176,7 @@ const els = {
   breadcrumb:       document.getElementById("breadcrumb"),
   selectedInfo:     document.getElementById("selectedInfo"),
   saveStatus:       document.getElementById("saveStatus"),
+  memoCharCount:    document.getElementById("memoCharCount"),
   searchInput:      document.getElementById("searchInput"),
   newRootBtn:       document.getElementById("newRootBtn"),
   mindMapBtn:       document.getElementById("mindMapBtn"),
@@ -5514,6 +5515,50 @@ function updateEmptyState() {
                 !els.contentInput.querySelector("img, video");
   els.contentInput.classList.toggle("is-empty", empty);
   els.contentInput.classList.toggle("is-focused", document.activeElement === els.contentInput);
+  scheduleMemoCharCount();
+}
+
+// メモ本文の文字数。改行は数えず、「空白あり」は半角・全角スペースやタブも1文字、
+// 「空白なし」は空白をすべて除いた数。書式解除の跡のゼロ幅スペースは数えない。
+function countMemoChars(root) {
+  let text = "";
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.parentElement?.closest?.(".inline-media-figure")) continue;
+    text += node.nodeValue;
+  }
+  text = text.replace(/[\u200b\r\n]/g, "");
+  const chars = str => Array.from(str).length;
+  return {
+    withSpaces: chars(text),
+    withoutSpaces: chars(text.replace(/\s/g, "")),
+  };
+}
+
+let _memoCharCountFrame = 0;
+function updateMemoCharCount() {
+  if (!els.memoCharCount) return;
+  _memoCharCountFrame = 0;
+  if (!getSelectedNote()) {
+    els.memoCharCount.hidden = true;
+    els.memoCharCount.textContent = "";
+    return;
+  }
+  const { withSpaces, withoutSpaces } = countMemoChars(els.contentInput);
+  const fmt = n => n.toLocaleString("ja-JP");
+  els.memoCharCount.textContent = `空白あり ${fmt(withSpaces)}字／空白なし ${fmt(withoutSpaces)}字`;
+  els.memoCharCount.hidden = false;
+}
+
+function scheduleMemoCharCount() {
+  if (_memoCharCountFrame) return;
+  _memoCharCountFrame = requestAnimationFrame(updateMemoCharCount);
+}
+
+// 入力・メモ切り替え・共同編集の反映など、本文がどこから変わっても数え直す。
+if (els.memoCharCount && typeof MutationObserver === "function") {
+  new MutationObserver(scheduleMemoCharCount)
+    .observe(els.contentInput, { childList: true, subtree: true, characterData: true });
 }
 
 function setMemoFormatEnabled(enabled) {

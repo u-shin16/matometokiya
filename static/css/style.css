@@ -1510,6 +1510,12 @@ body.has-large-editor-open .note-head {
   font-size: 13px;
 }
 
+.memo-char-count {
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .toast {
   position: fixed;
   right: 22px;
