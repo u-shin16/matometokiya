@@ -151,5 +151,88 @@ class AssistantEndpointTests(unittest.TestCase):
         self.assertEqual(res.status_code, 400)
 
 
+class UnneededNotesTests(unittest.TestCase):
+    NOW = app_module.datetime(2026, 11, 13, tzinfo=app_module.timezone.utc)
+
+    def analyze(self, notes):
+        result = app_module.analyze_unneeded_notes(notes, now=self.NOW)
+        return {c["id"]: c["reason"] for c in result["candidates"]}
+
+    def test_rules(self):
+        notes = {
+            "empty": {"title": "無題", "content": "<div><br></div>\u200b", "updated_at": "2026-11-12T00:00:00+00:00"},
+            "img": {"title": "写真", "content": '<img src="data:image/png;base64,AAAA">', "updated_at": "2026-11-12T00:00:00+00:00"},
+            "a": {"title": "買い物", "content": "牛乳", "created_at": "2026-01-01", "updated_at": "2026-11-01T00:00:00+00:00"},
+            "a2": {"title": "買い物", "content": "<p>牛乳</p>", "created_at": "2026-02-01", "updated_at": "2026-11-01T00:00:00+00:00"},
+            "done": {"title": "提出", "content": "済", "checked": True, "checked_at": "2026-09-01T00:00:00+00:00", "updated_at": "2026-09-01T00:00:00+00:00"},
+            "done_recent": {"title": "提出2", "content": "済", "checked": True, "checked_at": "2026-11-10T00:00:00+00:00"},
+            "old": {"title": "昔の", "content": "メモ", "updated_at": "2025-01-01T00:00:00+00:00"},
+            "fresh": {"title": "今の", "content": "メモ", "updated_at": "2026-11-12T00:00:00+00:00"},
+        }
+        found = self.analyze(notes)
+        self.assertEqual(found, {"empty": "empty", "a2": "duplicate", "done": "done", "old": "stale"})
+
+    def test_protected_notes_are_skipped(self):
+        old = "2024-01-01T00:00:00+00:00"
+        notes = {
+            "locked": {"title": "鍵", "content": "", "locked": True, "updated_at": old},
+            "pinned": {"title": "ピン", "content": "", "pinned": True, "updated_at": old},
+            "synced": {"title": "同期", "content": "", "linked_mindmap_id": "m", "updated_at": old},
+            "parent": {"title": "親", "content": "", "updated_at": old},
+            "child": {"title": "子", "content": "x", "parent_id": "parent", "updated_at": "2026-11-12T00:00:00+00:00"},
+        }
+        self.assertEqual(self.analyze(notes), {})
+
+
+class MindMapAssistantTests(unittest.TestCase):
+    CONTEXT = app_module._mindmap_context({
+        "current": {"id": "m1", "title": "map", "selected_node_id": "a", "nodes": [
+            {"id": "r", "parent_id": None, "title": "中心"},
+            {"id": "a", "parent_id": "r", "title": "A", "memo": "x" * 1000},
+        ]},
+        "maps": [{"id": "m1", "title": "map"}, {"id": "m2", "title": "旅行"}],
+    })
+
+    def run_tool(self, name, args, context=None):
+        actions = []
+        app_module.run_mindmap_assistant_tool(context or self.CONTEXT, name, args, actions)
+        return actions
+
+    def test_memo_is_clipped(self):
+        self.assertEqual(len(self.CONTEXT["current"]["nodes"][1]["memo"]), app_module._MINDMAP_ASSISTANT_MAX_MEMO)
+
+    def test_add_nodes(self):
+        actions = self.run_tool("add_nodes", {"parent_node_id": "a", "nodes": [{"title": "B", "children": ["C"]}, "D"]})
+        self.assertEqual(actions[0]["nodes"], [{"title": "B", "children": ["C"]}, {"title": "D", "children": []}])
+
+    def test_unknown_node_and_map(self):
+        with self.assertRaises(app_module.McpToolError):
+            self.run_tool("rename_node", {"node_id": "zzz", "title": "x"})
+        with self.assertRaises(app_module.McpToolError):
+            self.run_tool("open_map", {"map_id": "zzz"})
+
+    def test_root_cannot_be_deleted(self):
+        with self.assertRaises(app_module.McpToolError):
+            self.run_tool("delete_node", {"node_id": "r"})
+
+    def test_read_only_blocks_changes_but_allows_select(self):
+        ctx = app_module._mindmap_context({"current": {"id": "m", "read_only": True, "nodes": [{"id": "r"}]}, "maps": []})
+        self.assertEqual(self.run_tool("select_node", {"node_id": "r"}, ctx)[0]["type"], "select_node")
+        with self.assertRaises(app_module.McpToolError):
+            self.run_tool("add_nodes", {"parent_node_id": "r", "nodes": [{"title": "x"}]}, ctx)
+
+    def test_memo_append_flag(self):
+        actions = self.run_tool("set_node_memo", {"node_id": "a", "memo": "追記", "append": True})
+        self.assertTrue(actions[0]["append"])
+
+
+class DeleteLimitTests(unittest.TestCase):
+    def test_at_most_five_deletes_per_request(self):
+        with patch.object(app_module, "_note_ref", side_effect=lambda uid, note_id: _Ref(note_id)):
+            actions = [{"type": "delete_note"}] * app_module._ASSISTANT_MAX_DELETES
+            with self.assertRaises(app_module.McpToolError):
+                app_module.run_assistant_tool("u", "delete_note", {"note_id": "n1"}, actions)
+
+
 if __name__ == "__main__":
     unittest.main()

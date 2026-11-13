@@ -292,13 +292,18 @@
             <div id="aiAssistantLog" class="ai-assistant-log" aria-live="polite">
               <p class="ai-assistant-hint">メモの操作を言葉で頼めます。<br>例：「このメモを要約して」「買い物リストを開いて」「就活の下に逆質問というメモを作って」「今日のTodoを教えて」</p>
             </div>
+            <div class="ai-assistant-quick" aria-label="よく使う頼みごと">
+              <button type="button" class="ai-assistant-chip" data-ai-prompt="いらないメモを探して">いらないメモを探す</button>
+              <button type="button" class="ai-assistant-chip" data-ai-prompt="このメモを要約して">このメモを要約</button>
+              <button type="button" class="ai-assistant-chip" data-ai-prompt="今日のTodoを教えて">今日のTodo</button>
+            </div>
             <form id="aiAssistantForm" class="ai-assistant-form">
               <textarea id="aiAssistantInput" rows="2" maxlength="2000" placeholder="頼みたいことを入力（Enterで送信）" aria-label="AIに頼むこと"></textarea>
               <button id="aiAssistantSend" class="icon-btn ai-assistant-send" type="submit">
                 <span class="btn-label">送信</span>
               </button>
             </form>
-            <p id="aiAssistantNote" class="ai-assistant-note">メモの内容はGoogle Gemini APIに送られます。1日50回まで。</p>
+            <p id="aiAssistantNote" class="ai-assistant-note">内容はGoogle Gemini APIに送られます。マインドマップ画面と合わせて1日50回まで。</p>
           </section>
           <div id="noteAiGenerateSection" class="mindmap-ai-body" role="tabpanel" aria-labelledby="aiGenerateTab" hidden>
             <label class="mindmap-field">
@@ -1003,13 +1008,32 @@
         </div>
       </div>
 
-      <div id="mindMapAiPanel" class="mindmap-ai-panel" role="dialog" aria-label="AIマインドマップ生成" hidden>
+      <div id="mindMapAiPanel" class="mindmap-ai-panel" role="dialog" aria-label="AI" hidden>
         <div class="mindmap-ai-dialog">
           <div class="mindmap-node-settings-head">
-            <p class="mindmap-node-settings-title">AIマップ</p>
+            <div class="ai-mode-tabs" role="tablist" aria-label="AIの使い方">
+              <button id="mindMapAssistantTab" class="ai-mode-tab" type="button" role="tab" aria-selected="true" aria-controls="mindMapAssistantSection">AIに頼む</button>
+              <button id="mindMapGenerateTab" class="ai-mode-tab" type="button" role="tab" aria-selected="false" aria-controls="mindMapAiGenerateSection">マップ生成</button>
+            </div>
             <button id="mindMapAiClose" class="mindmap-node-settings-close" type="button" title="閉じる" aria-label="閉じる">×</button>
           </div>
-          <div class="mindmap-ai-body">
+          <section id="mindMapAssistantSection" class="ai-assistant" role="tabpanel" aria-labelledby="mindMapAssistantTab">
+            <div id="mindMapAssistantLog" class="ai-assistant-log" aria-live="polite">
+              <p class="ai-assistant-hint">マップの操作を言葉で頼めます。<br>例：「このマップを要約して」「このノードを広げてアイデアを3つ出して」「食べ物の下にかき氷を足して」「旅行計画のマップを開いて」</p>
+            </div>
+            <div class="ai-assistant-quick" aria-label="よく使う頼みごと">
+              <button type="button" class="ai-assistant-chip" data-ai-prompt="このマップを要約して">このマップを要約</button>
+              <button type="button" class="ai-assistant-chip" data-ai-prompt="選んでいるノードを広げて、アイデアを3つ足して">選んだノードを広げる</button>
+            </div>
+            <form id="mindMapAssistantForm" class="ai-assistant-form">
+              <textarea id="mindMapAssistantInput" rows="2" maxlength="2000" placeholder="頼みたいことを入力（Enterで送信）" aria-label="AIに頼むこと"></textarea>
+              <button id="mindMapAssistantSend" class="icon-btn ai-assistant-send" type="submit">
+                <span class="btn-label">送信</span>
+              </button>
+            </form>
+            <p id="mindMapAssistantNote" class="ai-assistant-note">内容はGoogle Gemini APIに送られます。メモ画面と合わせて1日50回まで。</p>
+          </section>
+          <div id="mindMapAiGenerateSection" class="mindmap-ai-body" role="tabpanel" aria-labelledby="mindMapGenerateTab" hidden>
             <label class="mindmap-field">
               <span>タイトル（任意）</span>
               <input id="mindMapAiMapName" type="text" maxlength="80" placeholder="未入力なら自動生成">

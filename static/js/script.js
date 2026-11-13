@@ -221,6 +221,15 @@ const els = {
   mindMapAiBtn:          document.getElementById("mindMapAiBtn"),
   mindMapAiPanel:        document.getElementById("mindMapAiPanel"),
   mindMapAiClose:        document.getElementById("mindMapAiClose"),
+  mindMapAssistantTab:   document.getElementById("mindMapAssistantTab"),
+  mindMapGenerateTab:    document.getElementById("mindMapGenerateTab"),
+  mindMapAssistantSection: document.getElementById("mindMapAssistantSection"),
+  mindMapAiGenerateSection: document.getElementById("mindMapAiGenerateSection"),
+  mindMapAssistantLog:   document.getElementById("mindMapAssistantLog"),
+  mindMapAssistantForm:  document.getElementById("mindMapAssistantForm"),
+  mindMapAssistantInput: document.getElementById("mindMapAssistantInput"),
+  mindMapAssistantSend:  document.getElementById("mindMapAssistantSend"),
+  mindMapAssistantNote:  document.getElementById("mindMapAssistantNote"),
   mindMapAiMapName:      document.getElementById("mindMapAiMapName"),
   mindMapAiPrompt:       document.getElementById("mindMapAiPrompt"),
   mindMapAiFile:         document.getElementById("mindMapAiFile"),
@@ -8527,120 +8536,150 @@ function setAiPanelMode(mode) {
   els.aiAssistantTab?.setAttribute("aria-selected", String(isAssistant));
   els.aiGenerateTab?.setAttribute("aria-selected", String(!isAssistant));
   if (isAssistant) {
-    els.aiAssistantInput?.focus();
-    scrollAiAssistantLogToEnd();
+    noteAiAssistant.focus();
   } else {
     els.noteAiTitle?.focus();
   }
 }
 
 // ── AIに頼む ──────────────────────────────────────────────────────────────
-// 会話でメモを開く・要約する・作る・直す・移す・Todoを完了する。
-// 判断と書き込みはサーバー（/api/v1/assistant）、開く・削除の確認は画面側で行う。
+// 会話で操作を頼む部品。メモ画面とマインドマップ画面で同じものを使う。
+// 判断はサーバー（/api/v1/assistant）、画面の操作は各画面のapplyActionsで行う。
 const AI_ASSISTANT_HISTORY_LIMIT = 12;
-state.aiAssistantHistory = [];
-state.aiAssistantBusy = false;
+const AI_ASSISTANT_NOTE_PREFIX = "内容はGoogle Gemini APIに送られます。";
 
-function scrollAiAssistantLogToEnd() {
-  const log = els.aiAssistantLog;
-  if (log) log.scrollTop = log.scrollHeight;
-}
+function createAiAssistant({ mode, root, log, form, input, send, note, buildContext, applyActions, precheck }) {
+  const history = [];
+  let busy = false;
 
-function appendAiAssistantMessage(role, text, extraClass = "") {
-  const log = els.aiAssistantLog;
-  if (!log) return null;
-  log.querySelector(".ai-assistant-hint")?.remove();
-  const bubble = document.createElement("p");
-  bubble.className = `ai-assistant-msg ${role === "user" ? "is-user" : "is-ai"} ${extraClass}`.trim();
-  bubble.textContent = text;
-  log.appendChild(bubble);
-  scrollAiAssistantLogToEnd();
-  return bubble;
-}
+  const scrollToEnd = () => { if (log) log.scrollTop = log.scrollHeight; };
 
-function rememberAiAssistantTurn(role, text) {
-  state.aiAssistantHistory.push({ role, text });
-  if (state.aiAssistantHistory.length > AI_ASSISTANT_HISTORY_LIMIT) {
-    state.aiAssistantHistory.splice(0, state.aiAssistantHistory.length - AI_ASSISTANT_HISTORY_LIMIT);
-  }
-}
+  const append = (role, text, extraClass = "") => {
+    if (!log) return null;
+    log.querySelector(".ai-assistant-hint")?.remove();
+    const bubble = document.createElement("p");
+    bubble.className = `ai-assistant-msg ${role === "user" ? "is-user" : "is-ai"} ${extraClass}`.trim();
+    bubble.textContent = text;
+    log.appendChild(bubble);
+    scrollToEnd();
+    return bubble;
+  };
 
-async function applyAiAssistantActions(actions) {
-  if (!Array.isArray(actions) || actions.length === 0) return;
-  // サーバー側で書き換えたメモを画面へ取り込む（開いているメモの選択は残る）。
-  if (actions.some(action => action.type === "reload")) {
-    await loadNotes();
-  }
-  for (const action of actions) {
-    if (action.type === "open_note") {
-      if (!getNotes().some(note => note.id === action.note_id)) await loadNotes();
-      if (!getNotes().some(note => note.id === action.note_id)) continue;
-      closeNoteAiPanel();
-      selectNote(action.note_id);
-    } else if (action.type === "delete_note") {
-      if (!getNotes().some(note => note.id === action.note_id)) continue;
-      closeNoteAiPanel();
-      selectNote(action.note_id);
-      // いつもの削除ボタンと同じ流れ（確認画面・同期先の確認・戻す）で消す。
-      if (getSelectedNote()?.id === action.note_id) await deleteSelectedNote();
+  const remember = (role, text) => {
+    history.push({ role, text });
+    if (history.length > AI_ASSISTANT_HISTORY_LIMIT) history.splice(0, history.length - AI_ASSISTANT_HISTORY_LIMIT);
+  };
+
+  async function submit() {
+    const message = input?.value.trim();
+    if (!message || busy) return;
+    const user = auth?.currentUser;
+    if (!user) {
+      append("ai", "ログインすると使えます。", "is-error");
+      return;
+    }
+    const blocked = precheck?.();
+    if (blocked) {
+      append("ai", blocked, "is-error");
+      return;
+    }
+
+    busy = true;
+    if (send) send.disabled = true;
+    input.value = "";
+    append("user", message);
+    const pending = append("ai", "考え中…", "is-pending");
+    try {
+      const context = await buildContext();
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/v1/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ mode, message, history, ...context }),
+      });
+      let data = {};
+      try { data = await res.json(); } catch (_) { /* 本文が空・JSONでない */ }
+      if (!res.ok) throw new Error(data.error || "AIの応答に失敗しました。時間をおいて試してください。");
+      pending?.remove();
+      const reply = String(data.reply || "");
+      append("ai", reply);
+      remember("user", message);
+      remember("assistant", reply);
+      if (note && Number.isFinite(data.remaining)) {
+        note.textContent = `${AI_ASSISTANT_NOTE_PREFIX}今日はあと${data.remaining}回使えます。`;
+      }
+      await applyActions(Array.isArray(data.actions) ? data.actions : []);
+    } catch (err) {
+      pending?.remove();
+      append("ai", String(err.message || err), "is-error");
+      if (input && !input.value) input.value = message;
+    } finally {
+      busy = false;
+      if (send) send.disabled = false;
     }
   }
+
+  form?.addEventListener("submit", e => {
+    e.preventDefault();
+    void submit();
+  });
+  // よく使う頼みごとのボタン：押すとその文を送る。
+  root?.querySelectorAll("[data-ai-prompt]").forEach(button => {
+    button.addEventListener("click", () => {
+      if (busy || !input) return;
+      input.value = button.dataset.aiPrompt || "";
+      void submit();
+    });
+  });
+  input?.addEventListener("keydown", e => {
+    // 日本語の変換確定のEnterでは送らない。Shift+Enterは改行。
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    void submit();
+  });
+
+  return {
+    focus() { input?.focus(); scrollToEnd(); },
+  };
 }
 
-async function sendAiAssistantMessage() {
-  const input = els.aiAssistantInput;
-  const message = input?.value.trim();
-  if (!message || state.aiAssistantBusy) return;
-  const user = auth?.currentUser;
-  if (!user) {
-    appendAiAssistantMessage("ai", "ログインすると使えます。", "is-error");
-    return;
-  }
-  if (isCollabActive()) {
-    appendAiAssistantMessage("ai", "共同編集中はAIに頼む機能を使えません。共同編集を終えてからお試しください。", "is-error");
-    return;
-  }
-
-  state.aiAssistantBusy = true;
-  if (els.aiAssistantSend) els.aiAssistantSend.disabled = true;
-  input.value = "";
-  appendAiAssistantMessage("user", message);
-  const pending = appendAiAssistantMessage("ai", "考え中…", "is-pending");
-  try {
+// メモ画面：開く・要約・作成・編集・移動・Todo完了。書き込みはサーバー側で行う。
+const noteAiAssistant = createAiAssistant({
+  mode: "notes",
+  root: els.aiAssistantSection,
+  log: els.aiAssistantLog,
+  form: els.aiAssistantForm,
+  input: els.aiAssistantInput,
+  send: els.aiAssistantSend,
+  note: els.aiAssistantNote,
+  precheck: () => (isCollabActive()
+    ? "共同編集中はメモ画面の「AIに頼む」を使えません。共同編集を終えてからお試しください。"
+    : null),
+  async buildContext() {
     // 書きかけの本文をAIが読めるよう、先に保存しておく。
     await saveCurrentEditorNow();
     const current = getSelectedNote();
-    const idToken = await user.getIdToken();
-    const res = await fetch("/api/v1/assistant", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-      body: JSON.stringify({
-        message,
-        history: state.aiAssistantHistory,
-        current_note: current ? { id: current.id, title: current.title || "無題" } : null,
-      }),
-    });
-    let data = {};
-    try { data = await res.json(); } catch (_) { /* 本文が空・JSONでない */ }
-    if (!res.ok) throw new Error(data.error || "AIの応答に失敗しました。時間をおいて試してください。");
-    pending?.remove();
-    const reply = String(data.reply || "");
-    appendAiAssistantMessage("ai", reply);
-    rememberAiAssistantTurn("user", message);
-    rememberAiAssistantTurn("assistant", reply);
-    if (els.aiAssistantNote && Number.isFinite(data.remaining)) {
-      els.aiAssistantNote.textContent = `メモの内容はGoogle Gemini APIに送られます。今日はあと${data.remaining}回使えます。`;
+    return { current_note: current ? { id: current.id, title: current.title || "無題" } : null };
+  },
+  async applyActions(actions) {
+    // サーバー側で書き換えたメモを画面へ取り込む（開いているメモの選択は残る）。
+    if (actions.some(action => action.type === "reload")) await loadNotes();
+    for (const action of actions) {
+      if (action.type === "open_note") {
+        if (!getNotes().some(note => note.id === action.note_id)) await loadNotes();
+        if (!getNotes().some(note => note.id === action.note_id)) continue;
+        closeNoteAiPanel();
+        selectNote(action.note_id);
+      } else if (action.type === "delete_note") {
+        if (!getNotes().some(note => note.id === action.note_id)) continue;
+        closeNoteAiPanel();
+        selectNote(action.note_id);
+        // いつもの削除ボタンと同じ流れ（確認画面・同期先の確認・戻す）で消す。
+        if (getSelectedNote()?.id === action.note_id) await deleteSelectedNote();
+      }
     }
-    await applyAiAssistantActions(data.actions);
-  } catch (err) {
-    pending?.remove();
-    appendAiAssistantMessage("ai", String(err.message || err), "is-error");
-    if (input && !input.value) input.value = message;
-  } finally {
-    state.aiAssistantBusy = false;
-    if (els.aiAssistantSend) els.aiAssistantSend.disabled = false;
-  }
-}
+  },
+});
 
 function closeNoteAiPanel() {
   if (els.noteAiPanel) els.noteAiPanel.hidden = true;
@@ -9364,9 +9403,127 @@ function openMindMapAiPanel() {
   if (els.mindMapAiGenerateBtn) els.mindMapAiGenerateBtn.disabled = false;
   if (els.mindMapAiPanel) {
     els.mindMapAiPanel.hidden = false;
-    els.mindMapAiPrompt?.focus();
+    setMindMapAiPanelMode(state.mindMapAiPanelMode || "assistant");
   }
 }
+
+function setMindMapAiPanelMode(mode) {
+  state.mindMapAiPanelMode = mode === "generate" ? "generate" : "assistant";
+  const isAssistant = state.mindMapAiPanelMode === "assistant";
+  if (els.mindMapAssistantSection) els.mindMapAssistantSection.hidden = !isAssistant;
+  if (els.mindMapAiGenerateSection) els.mindMapAiGenerateSection.hidden = isAssistant;
+  els.mindMapAssistantTab?.setAttribute("aria-selected", String(isAssistant));
+  els.mindMapGenerateTab?.setAttribute("aria-selected", String(!isAssistant));
+  if (isAssistant) mindMapAiAssistant.focus();
+  else els.mindMapAiPrompt?.focus();
+}
+
+// 選んだノードが画面の真ん中に来るように動かす（折りたたまれた祖先は開く）。
+function revealMindMapNode(nodeId) {
+  let parentId = getMindMapNode(nodeId)?.parent_id ?? null;
+  while (parentId) {
+    const parent = getMindMapNode(parentId);
+    if (!parent) break;
+    parent.collapsed = false;
+    parentId = parent.parent_id ?? null;
+  }
+  state.mindMapSelectedId = nodeId;
+  renderMindMap();
+  const pos = getMindMapNodePosition(getMindMapNode(nodeId), calculateMindMapLayout());
+  const rect = els.mindMapCanvas.getBoundingClientRect();
+  if (!pos || !rect.width || !rect.height) return;
+  state.mindMapPanX = rect.width / 2 - pos.x * state.mindMapZoom;
+  state.mindMapPanY = rect.height / 2 - pos.y * state.mindMapZoom;
+  applyMindMapTransform();
+}
+
+// マインドマップ画面：要約・ノードの追加／題名／メモ／削除・別マップを開く。
+// 配置・同期・「戻す」を画面側が持っているので、書き換えはすべてここで行う。
+const mindMapAiAssistant = createAiAssistant({
+  mode: "mindmap",
+  root: els.mindMapAssistantSection,
+  log: els.mindMapAssistantLog,
+  form: els.mindMapAssistantForm,
+  input: els.mindMapAssistantInput,
+  send: els.mindMapAssistantSend,
+  note: els.mindMapAssistantNote,
+  async buildContext() {
+    const map = state.mindMap;
+    return {
+      mindmap: {
+        current: map ? {
+          id: map.id,
+          title: map.title,
+          selected_node_id: state.mindMapSelectedId,
+          read_only: isMindMapPresentationMode(),
+          nodes: getMindMapNodes().map(node => ({
+            id: node.id,
+            parent_id: node.parent_id ?? null,
+            title: node.title,
+            memo: String(node.memo || "").slice(0, 400),
+          })),
+        } : null,
+        maps: (state.mindMapList || []).map(entry => ({ id: entry.id, title: entry.title })),
+      },
+    };
+  },
+  async applyActions(actions) {
+    let changed = false;
+    let focusId = null;
+    const beginChange = () => {
+      if (!changed) pushMindMapUndoSnapshot();
+      changed = true;
+    };
+    for (const action of actions) {
+      if (action.type === "open_map") {
+        closeMindMapAiPanel();
+        await switchMindMap(action.map_id);
+        continue;
+      }
+      if (!state.mindMap) continue;
+      if (action.type === "delete_node") {
+        if (!getMindMapNode(action.node_id)) continue;
+        closeMindMapAiPanel();
+        revealMindMapNode(action.node_id);
+        // いつもの削除と同じ確認画面を出す。
+        await deleteSelectedMindMapNode();
+        continue;
+      }
+      if (isMindMapPresentationMode()) continue;
+      const node = getMindMapNode(action.node_id || action.parent_node_id);
+      if (!node) continue;
+      if (action.type === "select_node") {
+        focusId = node.id;
+      } else if (action.type === "add_nodes") {
+        beginChange();
+        node.collapsed = false;
+        for (const item of action.nodes || []) {
+          const child = insertMindMapChildNode(node.id, item.title);
+          (item.children || []).forEach(title => insertMindMapChildNode(child.id, title));
+        }
+        focusId = node.id;
+      } else if (action.type === "rename_node") {
+        beginChange();
+        node.title = String(action.title || "トピック").slice(0, 80);
+        mirrorSourceNodeTitleToMindMap(node);
+        focusId = node.id;
+      } else if (action.type === "set_node_memo") {
+        beginChange();
+        const before = String(node.memo || "");
+        const text = String(action.memo || "");
+        node.memo = action.append && before ? `${before}\n${text}` : text;
+        focusId = node.id;
+      }
+    }
+    if (changed) scheduleMindMapSave();
+    if (focusId) {
+      closeMindMapAiPanel();
+      revealMindMapNode(focusId);
+    } else if (changed) {
+      renderMindMap();
+    }
+  },
+});
 
 function closeMindMapAiPanel() {
   if (els.mindMapAiPanel) els.mindMapAiPanel.hidden = true;
@@ -9676,6 +9833,8 @@ els.templatesList.addEventListener("click", e => {
 });
 
 els.mindMapAiBtn?.addEventListener("click", openMindMapAiPanel);
+els.mindMapAssistantTab?.addEventListener("click", () => setMindMapAiPanelMode("assistant"));
+els.mindMapGenerateTab?.addEventListener("click", () => setMindMapAiPanelMode("generate"));
 els.mindMapAiClose?.addEventListener("click", closeMindMapAiPanel);
 els.mindMapAiPanel?.addEventListener("click", e => {
   if (e.target === els.mindMapAiPanel) closeMindMapAiPanel();
@@ -10994,9 +11153,19 @@ function createNewRootNode(clientX, clientY) {
 
 function addMindMapNode(parentId) {
   if (isMindMapPresentationMode()) return;
-  const parent = getMindMapNode(parentId);
-  if (!parent) return;
+  if (!getMindMapNode(parentId)) return;
   pushMindMapUndoSnapshot();
+  const node = insertMindMapChildNode(parentId, "新しいトピック");
+  state.mindMapSelectedId = node.id;
+  renderMindMap();
+  scheduleMindMapSave();
+  requestAnimationFrame(() => startMindMapNodeEdit(node.id));
+}
+
+// 親ノードの下に子ノードを1つ置いて返す（重ならない位置を探す）。
+// 描画・保存・「戻す」の記録は呼び出し側で行う。
+function insertMindMapChildNode(parentId, title) {
+  const parent = getMindMapNode(parentId);
   const layout = calculateMindMapLayout();
   const parentPos = layout.get(parent.id) ?? {
     x: Number.isFinite(parent.x) ? parent.x : MINDMAP_CENTER_X,
@@ -11008,7 +11177,7 @@ function addMindMapNode(parentId) {
   const node = {
     id: makeId(),
     parent_id: parent.id,
-    title: "新しいトピック",
+    title: String(title || "トピック").slice(0, 80),
     order: nextMindMapOrder(parent.id),
     x: parentPos.x + MINDMAP_X_GAP,
     y: parentPos.y,
@@ -11026,10 +11195,7 @@ function addMindMapNode(parentId) {
   node.x = safePos.x;
   node.y = safePos.y;
   state.mindMap.nodes.push(node);
-  state.mindMapSelectedId = node.id;
-  renderMindMap();
-  scheduleMindMapSave();
-  requestAnimationFrame(() => startMindMapNodeEdit(node.id));
+  return node;
 }
 
 
@@ -15439,16 +15605,7 @@ els.undoBtn.addEventListener("click", undoLastChange);
 els.noteAiBtn?.addEventListener("click", openNoteAiPanel);
 els.aiAssistantTab?.addEventListener("click", () => setAiPanelMode("assistant"));
 els.aiGenerateTab?.addEventListener("click", () => setAiPanelMode("generate"));
-els.aiAssistantForm?.addEventListener("submit", e => {
-  e.preventDefault();
-  void sendAiAssistantMessage();
-});
-els.aiAssistantInput?.addEventListener("keydown", e => {
-  // 日本語の変換確定のEnterでは送らない。Shift+Enterは改行。
-  if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
-  e.preventDefault();
-  void sendAiAssistantMessage();
-});
+
 els.noteAiClose?.addEventListener("click", closeNoteAiPanel);
 els.noteAiPanel?.addEventListener("click", e => {
   if (e.target === els.noteAiPanel) closeNoteAiPanel();

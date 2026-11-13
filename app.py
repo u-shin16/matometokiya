@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html as html_lib
 import hmac
 import json
 import os
@@ -2411,12 +2412,22 @@ def api_claude_connect_revoke():
 _ASSISTANT_DAILY_LIMIT = int(os.getenv("ASSISTANT_DAILY_LIMIT", "50"))
 # メモ生成より「名前からメモを探して道具を順に呼ぶ」力が要るので、別のモデルを使えるようにしておく。
 _ASSISTANT_GEMINI_MODEL = os.getenv("ASSISTANT_GEMINI_MODEL", "gemini-3.5-flash-lite")
-_ASSISTANT_MAX_STEPS = 6
+_ASSISTANT_MAX_STEPS = 8
+_ASSISTANT_MAX_DELETES = 5
 _ASSISTANT_MAX_HISTORY = 12
 _ASSISTANT_MAX_MESSAGE_CHARS = 2000
 _JST = timezone(timedelta(hours=9))
 
 _ASSISTANT_SERVER_TOOL_NAMES = ["list_notes", "list_todos", "create_note", "update_note", "move_note", "complete_todo"]
+_ASSISTANT_FIND_UNNEEDED_TOOL = {
+    "name": "find_unneeded_notes",
+    "description": (
+        "消してもよさそうなメモ（本文が空・同じ内容の重複・チェック済みで放置・長く更新なし）を理由つきで探す。"
+        "「いらないメモを探して」「整理したい」「片付けたい」と言われたときに使う。何も消さない。"
+    ),
+    "inputSchema": {"type": "object", "properties": {}},
+}
+
 _ASSISTANT_CLIENT_TOOLS = [
     {
         "name": "open_note",
@@ -2452,6 +2463,10 @@ _ASSISTANT_INSTRUCTIONS = """あなたは階層メモ帳アプリ「まとめと
 - 「開いて」「見せて」は open_note を使う。要約や質問への答えは返事の文章で返し、頼まれない限りメモを書き換えない。
 - 本文を書き換えるときは、元の本文を読んでから、残すべき内容を消さないように書く。画像のあるメモの本文は変更できない。
 - 消すときは delete_note を使う（画面で利用者が確認してからゴミ箱へ移る）。完全削除はできない。
+- 「いらないメモを探して」などと言われたら find_unneeded_notes を使い、候補を理由ごとにまとめて「題名（置き場所）：理由」の形で挙げる。
+  多いときは理由ごとに件数と主なものだけ挙げる。候補は自動では消さず、どれを消すか利用者に聞く。
+  利用者が消すものを指定したら、そのメモごとに delete_note を呼ぶ（1件ずつ画面で確認が出る）。
+  「全部消して」と言われても一度に5件までにして、残りは次に回す。
 - 鍵付きメモ（locked）の本文は読めず、変更もできない。そう伝えて回避策を探さない。
 - 返事は短く、何をしたかが分かるように書く。メモのIDは返事に書かない。Markdownの記号（#や**）は使わない。
 - メモ帳の操作と関係のない頼み（雑談・一般的な質問）にも短く答えてよいが、メモを勝手に作らない。"""
@@ -2463,7 +2478,7 @@ class AssistantLimitError(Exception):
 
 def _assistant_function_declarations():
     tools = [tool for tool in _MCP_READ_TOOLS + _MCP_WRITE_TOOLS if tool["name"] in _ASSISTANT_SERVER_TOOL_NAMES]
-    tools += _ASSISTANT_CLIENT_TOOLS
+    tools += [_ASSISTANT_FIND_UNNEEDED_TOOL] + _ASSISTANT_CLIENT_TOOLS
     return [
         genai_types.FunctionDeclaration(
             name=tool["name"],
@@ -2495,6 +2510,104 @@ def consume_assistant_quota(uid: str) -> int:
     return bump(db.transaction())
 
 
+# ── いらないメモの調査 ──
+# 消してよさそうなメモを理由つきで挙げるだけ。消すかどうかは利用者が決める。
+# 鍵付き・ピン留め・マインドマップと同期中・子メモを持つメモは候補にしない
+# （子メモがあると、消したときに子まで一緒にゴミ箱へ入るため）。
+_UNNEEDED_STALE_DAYS = 180
+_UNNEEDED_DONE_DAYS = 30
+_UNNEEDED_MAX_RESULTS = 60
+_UNNEEDED_REASON_ORDER = {"empty": 0, "duplicate": 1, "done": 2, "stale": 3}
+
+
+def _note_plain_text(content: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", str(content or ""))
+    text = html_lib.unescape(text).replace("\u200b", "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _note_has_media(data: dict) -> bool:
+    content = str(data.get("content") or "")
+    return bool(data.get("media")) or "<img" in content or "<video" in content or bool(_INLINE_IMAGE_RE.search(content))
+
+
+def _parse_iso(value) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def analyze_unneeded_notes(notes_by_id: dict[str, dict], now: datetime | None = None) -> dict:
+    """notes_by_id は削除済みを除いた {id: Firestoreのデータ}。候補を理由の強い順に返す。"""
+    now = now or datetime.now(timezone.utc)
+    parents_with_children = {str(d.get("parent_id")) for d in notes_by_id.values() if d.get("parent_id")}
+    candidates = []
+    seen_content: dict[tuple[str, str], str] = {}
+
+    ordered = sorted(notes_by_id.items(), key=lambda item: str(item[1].get("created_at") or ""))
+    for note_id, data in ordered:
+        if data.get("locked") or data.get("pinned") or data.get("linked_mindmap_id") or note_id in parents_with_children:
+            continue
+        title = str(data.get("title") or "").strip() or "無題"
+        text = _note_plain_text(data.get("content"))
+        has_media = _note_has_media(data)
+        updated = _parse_iso(data.get("updated_at")) or _parse_iso(data.get("created_at"))
+        days = (now - updated).days if updated else None
+
+        reason = detail = None
+        if not text and not has_media:
+            reason, detail = "empty", "本文が空"
+        elif text:
+            key = (title, text)
+            if key in seen_content:
+                reason, detail = "duplicate", f"「{notes_by_id[seen_content[key]].get('title') or '無題'}」と題名・本文が同じ"
+            else:
+                seen_content[key] = note_id
+        if reason is None and data.get("checked"):
+            checked_at = _parse_iso(data.get("checked_at")) or updated
+            if checked_at and (now - checked_at).days >= _UNNEEDED_DONE_DAYS:
+                reason, detail = "done", f"チェック済みのまま{(now - checked_at).days}日"
+        if reason is None and days is not None and days >= _UNNEEDED_STALE_DAYS:
+            reason, detail = "stale", f"{days}日更新なし"
+        if reason is None:
+            continue
+        candidates.append({
+            "id": note_id,
+            "title": title,
+            "path": _ancestor_titles(note_id, notes_by_id),
+            "reason": reason,
+            "detail": detail,
+            "preview": text[:80],
+            "updated_at": updated.astimezone(_JST).strftime("%Y-%m-%d") if updated else "",
+        })
+
+    candidates.sort(key=lambda c: (_UNNEEDED_REASON_ORDER[c["reason"]], c["updated_at"]))
+    return {
+        "checked_count": len(notes_by_id),
+        "candidate_count": len(candidates),
+        "candidates": candidates[:_UNNEEDED_MAX_RESULTS],
+        "rules": (
+            f"empty=本文が空 / duplicate=題名と本文が同じメモが他にある / "
+            f"done=チェック済みで{_UNNEEDED_DONE_DAYS}日以上 / stale={_UNNEEDED_STALE_DAYS}日以上更新なし。"
+            "鍵付き・ピン留め・マップと同期中・子メモがあるメモは対象外"
+        ),
+    }
+
+
+def find_unneeded_notes_for_uid(uid: str) -> dict:
+    notes_ref = get_firestore_client().collection("users").document(uid).collection("notes")
+    notes_by_id = {
+        doc.id: data
+        for doc in notes_ref.stream()
+        if not (data := doc.to_dict() or {}).get("deleted")
+    }
+    return analyze_unneeded_notes(notes_by_id)
+
+
 def _assistant_note_is_locked(uid: str, note_id: str) -> bool:
     doc = _note_ref(uid, note_id).get()
     return bool(doc.exists and (doc.to_dict() or {}).get("locked"))
@@ -2510,6 +2623,8 @@ def run_assistant_tool(uid: str, name: str, arguments: dict, actions: list) -> s
             raise McpToolError("指定されたメモが見つかりません。")
         if name == "delete_note" and data.get("locked"):
             raise McpToolError("鍵付きメモはAIからは消せません。")
+        if name == "delete_note" and sum(1 for a in actions if a["type"] == "delete_note") >= _ASSISTANT_MAX_DELETES:
+            raise McpToolError(f"一度に消せるのは{_ASSISTANT_MAX_DELETES}件までです。残りは次の頼みで指定してください。")
         actions.append({"type": name, "note_id": note_id, "title": data.get("title") or "無題"})
         if name == "open_note":
             return json.dumps({"opened": True, "title": data.get("title")}, ensure_ascii=False)
@@ -2517,6 +2632,9 @@ def run_assistant_tool(uid: str, name: str, arguments: dict, actions: list) -> s
             {"status": "画面に削除の確認を出した。利用者が押すまでゴミ箱へは移っていない。"},
             ensure_ascii=False,
         )
+
+    if name == "find_unneeded_notes":
+        return json.dumps(find_unneeded_notes_for_uid(uid), ensure_ascii=False)
 
     if name not in _ASSISTANT_SERVER_TOOL_NAMES:
         raise McpToolError(f"未知のツールです: {name}")
@@ -2550,16 +2668,13 @@ def _assistant_history_contents(history) -> list:
     return contents
 
 
-def run_assistant(uid: str, message: str, history, current_note: dict | None, client=None, model: str | None = None) -> dict:
-    """利用者の頼み1回ぶん。Geminiに道具を呼ばせながら、最大_ASSISTANT_MAX_STEPS往復で返事を作る。"""
-    client = client or create_gemini_client()
-    current = "なし"
-    if current_note and current_note.get("id"):
-        current = f"「{str(current_note.get('title') or '無題')[:120]}」（ID: {str(current_note['id'])[:200]}）"
+def _run_assistant_loop(client, model, system_instruction, declarations, history, message, execute) -> tuple[str, list]:
+    """Geminiに道具を呼ばせながら、最大_ASSISTANT_MAX_STEPS往復で返事を作る。
+    execute(name, arguments, actions) が道具1つを実行し、AIへ返す文字列を返す。"""
     now = datetime.now(_JST).strftime("%Y-%m-%d %H:%M")
     config = genai_types.GenerateContentConfig(
-        system_instruction=f"{_ASSISTANT_INSTRUCTIONS}\n\nいま開いているメモ: {current}\n現在の日時（日本時間）: {now}",
-        tools=[genai_types.Tool(function_declarations=_assistant_function_declarations())],
+        system_instruction=f"{system_instruction}\n現在の日時（日本時間）: {now}",
+        tools=[genai_types.Tool(function_declarations=declarations)],
         automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
         temperature=0.3,
         max_output_tokens=2048,
@@ -2580,7 +2695,7 @@ def run_assistant(uid: str, message: str, history, current_note: dict | None, cl
         for call in calls:
             arguments = dict(call.args or {})
             try:
-                result = {"result": run_assistant_tool(uid, call.name, arguments, actions)}
+                result = {"result": execute(call.name, arguments, actions)}
             except McpToolError as error:
                 result = {"error": str(error)}
             except Exception:
@@ -2590,14 +2705,274 @@ def run_assistant(uid: str, message: str, history, current_note: dict | None, cl
         contents.append(genai_types.Content(role="user", parts=parts))
     else:
         reply = "手順が多すぎて最後までできませんでした。頼みごとを小さく分けてもう一度お願いします。"
+    return reply or "うまく返事を作れませんでした。言い方を変えてもう一度お願いします。", actions
 
-    # 同じ種類の画面操作は最後の1つにまとめる（reloadは1回で足りる）
+
+def run_assistant(uid: str, message: str, history, current_note: dict | None, client=None, model: str | None = None) -> dict:
+    """メモ画面の頼み1回ぶん。"""
+    current = "なし"
+    if current_note and current_note.get("id"):
+        current = f"「{str(current_note.get('title') or '無題')[:120]}」（ID: {str(current_note['id'])[:200]}）"
+    reply, actions = _run_assistant_loop(
+        client or create_gemini_client(),
+        model,
+        f"{_ASSISTANT_INSTRUCTIONS}\n\nいま開いているメモ: {current}",
+        _assistant_function_declarations(),
+        history,
+        message,
+        lambda name, arguments, acts: run_assistant_tool(uid, name, arguments, acts),
+    )
+    # reloadは1回で足りる
     deduped = []
     for action in actions:
         if action["type"] == "reload" and any(a["type"] == "reload" for a in deduped):
             continue
         deduped.append(action)
-    return {"reply": reply or "うまく返事を作れませんでした。言い方を変えてもう一度お願いします。", "actions": deduped}
+    return {"reply": reply, "actions": deduped}
+
+
+# ── マインドマップ画面の「AIに頼む」 ──
+# マインドマップは配置の計算・メモとの同期・「戻す」を画面側で持っているので、
+# サーバーは書き換えず、AIが決めた操作を画面へ返すだけにする。
+# 開いているマップの中身と、マップの一覧は画面から送ってもらう。
+_MINDMAP_ASSISTANT_MAX_NODES = 600
+_MINDMAP_ASSISTANT_MAX_MAPS = 300
+_MINDMAP_ASSISTANT_MAX_MEMO = 400
+
+_MINDMAP_ASSISTANT_TOOLS = [
+    {
+        "name": "open_map",
+        "description": "別のマインドマップを開く。「〇〇のマップを開いて」と言われたときに使う。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"map_id": {"type": "string", "description": "開くマップのID（マップ一覧のid）"}},
+            "required": ["map_id"],
+        },
+    },
+    {
+        "name": "select_node",
+        "description": "開いているマップのノードを選んで表示する。「〇〇はどこ」「〇〇を選んで」と言われたときに使う。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"node_id": {"type": "string"}},
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "add_nodes",
+        "description": (
+            "開いているマップで、parent_node_idのノードの下に子ノードを追加する。"
+            "nodesの各要素は {title, children}。childrenは孫ノードの題名の配列（省略可）。"
+            "「〇〇の下に△△を足して」「〇〇を広げて／アイデアを出して」と言われたときに使う。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "parent_node_id": {"type": "string", "description": "親にするノードのID"},
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "ノードの題名（短く）"},
+                            "children": {"type": "array", "items": {"type": "string"}, "description": "その下に付ける孫ノードの題名"},
+                        },
+                        "required": ["title"],
+                    },
+                },
+            },
+            "required": ["parent_node_id", "nodes"],
+        },
+    },
+    {
+        "name": "rename_node",
+        "description": "ノードの題名を変える。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"node_id": {"type": "string"}, "title": {"type": "string"}},
+            "required": ["node_id", "title"],
+        },
+    },
+    {
+        "name": "set_node_memo",
+        "description": (
+            "ノードに付けるメモ（補足の文章）を変える。「追記」「書き足す」はappend=trueにして足す文だけを渡す"
+            "（元のメモは残る）。append=falseはメモ全体の置き換えで、空文字なら消す。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+                "memo": {"type": "string", "description": "append=trueなら足す文、falseなら新しいメモ全体"},
+                "append": {"type": "boolean", "description": "trueなら元のメモの後ろに足す"},
+            },
+            "required": ["node_id", "memo", "append"],
+        },
+    },
+    {
+        "name": "delete_node",
+        "description": "ノードとその子ノードを消す。画面に確認が出て、利用者が押したときだけ消える。中心テーマは消せない。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"node_id": {"type": "string"}},
+            "required": ["node_id"],
+        },
+    },
+]
+
+_MINDMAP_ASSISTANT_INSTRUCTIONS = """あなたは階層メモ帳アプリ「まとめときや」のマインドマップ画面で動くアシスタントです。
+利用者の頼みを、用意された道具（関数）を使って実行し、日本語で短く返事をします。
+
+守ること:
+- 開いているマップのノード一覧と、マップの一覧を下に載せている。ノードやマップはIDではなく名前で言われるので、一覧からIDを探して道具に渡す。
+- 「このマップ」「今のマップ」は開いているマップ。「このノード」「選んでいるノード」は選択中のノード。
+- 要約・内容の質問には、ノード一覧を読んで返事の文章で答える。頼まれない限りマップを書き換えない。
+- ノードを足すときは、題名を短く（15文字くらいまで）する。既にある題名と同じものは足さない。
+- 同じような名前が複数あって決められないときは、実行せずに候補を挙げてどれか聞き返す。
+- 消すときは delete_node を使う（画面で利用者が確認してから消える）。
+- 返事は短く、何をしたかが分かるように書く。IDは返事に書かない。Markdownの記号（#や**）は使わない。"""
+
+
+def _clip(value, limit: int) -> str:
+    return str(value or "")[:limit]
+
+
+def _mindmap_context(raw) -> dict:
+    """画面から届いたマインドマップ情報を、大きさを絞って整える。"""
+    raw = raw if isinstance(raw, dict) else {}
+    current = raw.get("current") if isinstance(raw.get("current"), dict) else None
+    maps = [
+        {"id": _clip(m.get("id"), 200), "title": _clip(m.get("title"), 80) or "無題"}
+        for m in (raw.get("maps") or [])[:_MINDMAP_ASSISTANT_MAX_MAPS]
+        if isinstance(m, dict) and m.get("id")
+    ]
+    out = {"maps": maps, "current": None}
+    if current and current.get("id"):
+        nodes = [
+            {
+                "id": _clip(n.get("id"), 200),
+                "parent_id": _clip(n.get("parent_id"), 200) or None,
+                "title": _clip(n.get("title"), 80),
+                "memo": _clip(n.get("memo"), _MINDMAP_ASSISTANT_MAX_MEMO),
+            }
+            for n in (current.get("nodes") or [])[:_MINDMAP_ASSISTANT_MAX_NODES]
+            if isinstance(n, dict) and n.get("id")
+        ]
+        out["current"] = {
+            "id": _clip(current.get("id"), 200),
+            "title": _clip(current.get("title"), 80) or "無題",
+            "selected_node_id": _clip(current.get("selected_node_id"), 200) or None,
+            "read_only": bool(current.get("read_only")),
+            "nodes": nodes,
+        }
+    return out
+
+
+def run_mindmap_assistant_tool(context: dict, name: str, arguments: dict, actions: list) -> str:
+    current = context.get("current")
+    node_ids = {n["id"] for n in current["nodes"]} if current else set()
+
+    if name == "open_map":
+        map_id = str(arguments.get("map_id") or "")
+        title = next((m["title"] for m in context["maps"] if m["id"] == map_id), None)
+        if title is None:
+            raise McpToolError("指定されたマップが見つかりません。")
+        actions.append({"type": "open_map", "map_id": map_id, "title": title})
+        return json.dumps({"opened": True, "title": title}, ensure_ascii=False)
+
+    if name not in {tool["name"] for tool in _MINDMAP_ASSISTANT_TOOLS}:
+        raise McpToolError(f"未知のツールです: {name}")
+    if not current:
+        raise McpToolError("マインドマップが開かれていません。")
+    if name != "select_node" and current.get("read_only"):
+        raise McpToolError("このマップは今は編集できません（発表モードか閲覧専用です）。")
+
+    def node_arg(key="node_id"):
+        node_id = str(arguments.get(key) or "")
+        if node_id not in node_ids:
+            raise McpToolError("指定されたノードが見つかりません。")
+        return node_id
+
+    if name == "select_node":
+        actions.append({"type": "select_node", "node_id": node_arg()})
+        return json.dumps({"selected": True})
+
+    if name == "add_nodes":
+        parent_id = node_arg("parent_node_id")
+        items = []
+        for item in (arguments.get("nodes") or [])[:30]:
+            if isinstance(item, str):
+                item = {"title": item}
+            if not isinstance(item, dict):
+                continue
+            title = _clip(item.get("title"), 80).strip()
+            if not title:
+                continue
+            children = [_clip(c, 80).strip() for c in (item.get("children") or [])[:20] if isinstance(c, str) and c.strip()]
+            items.append({"title": title, "children": children})
+        if not items:
+            raise McpToolError("追加するノードの題名を指定してください。")
+        actions.append({"type": "add_nodes", "parent_node_id": parent_id, "nodes": items})
+        return json.dumps({"status": "画面で追加した", "count": len(items)}, ensure_ascii=False)
+
+    if name == "rename_node":
+        node_id = node_arg()
+        title = _clip(arguments.get("title"), 80).strip()
+        if not title:
+            raise McpToolError("新しい題名を指定してください。")
+        actions.append({"type": "rename_node", "node_id": node_id, "title": title})
+        return json.dumps({"status": "画面で変更した"}, ensure_ascii=False)
+
+    if name == "set_node_memo":
+        node_id = node_arg()
+        actions.append({
+            "type": "set_node_memo",
+            "node_id": node_id,
+            "memo": _clip(arguments.get("memo"), 5000),
+            "append": bool(arguments.get("append")),
+        })
+        return json.dumps({"status": "画面で変更した"}, ensure_ascii=False)
+
+    if name == "delete_node":
+        node_id = node_arg()
+        node = next(n for n in current["nodes"] if n["id"] == node_id)
+        roots = [n for n in current["nodes"] if not n["parent_id"]]
+        if not node["parent_id"] and len(roots) <= 1:
+            raise McpToolError("中心テーマは消せません。")
+        actions.append({"type": "delete_node", "node_id": node_id, "title": node["title"]})
+        return json.dumps({"status": "画面に削除の確認を出した。利用者が押すまで消えていない。"}, ensure_ascii=False)
+
+    raise McpToolError(f"未知のツールです: {name}")
+
+
+def run_mindmap_assistant(message: str, history, mindmap, client=None, model: str | None = None) -> dict:
+    """マインドマップ画面の頼み1回ぶん。"""
+    context = _mindmap_context(mindmap)
+    current = context["current"]
+    if current:
+        selected = next((n for n in current["nodes"] if n["id"] == current["selected_node_id"]), None)
+        state_text = (
+            f"開いているマップ: 「{current['title']}」\n"
+            f"選択中のノード: {('「' + selected['title'] + '」（ID: ' + selected['id'] + '）') if selected else 'なし'}\n"
+            f"ノード一覧（JSON）: {json.dumps(current['nodes'], ensure_ascii=False)}"
+        )
+    else:
+        state_text = "開いているマップ: なし"
+    state_text += f"\nマップの一覧（JSON）: {json.dumps(context['maps'], ensure_ascii=False)}"
+    declarations = [
+        genai_types.FunctionDeclaration(name=t["name"], description=t["description"], parameters_json_schema=t["inputSchema"])
+        for t in _MINDMAP_ASSISTANT_TOOLS
+    ]
+    reply, actions = _run_assistant_loop(
+        client or create_gemini_client(),
+        model,
+        f"{_MINDMAP_ASSISTANT_INSTRUCTIONS}\n\n{state_text}",
+        declarations,
+        history,
+        message,
+        lambda name, arguments, acts: run_mindmap_assistant_tool(context, name, arguments, acts),
+    )
+    return {"reply": reply, "actions": actions}
 
 
 @app.post("/api/v1/assistant")
@@ -2623,7 +2998,10 @@ def api_assistant():
         return jsonify(error="処理に失敗しました。時間をおいて試してください。"), 502, {"Cache-Control": "no-store"}
 
     try:
-        result = run_assistant(uid, message, payload.get("history"), current_note)
+        if payload.get("mode") == "mindmap":
+            result = run_mindmap_assistant(message, payload.get("history"), payload.get("mindmap"))
+        else:
+            result = run_assistant(uid, message, payload.get("history"), current_note)
     except Exception:
         app.logger.exception("AIアシスタントの応答に失敗しました。")
         return jsonify(error="AIの応答に失敗しました。時間をおいて試してください。"), 502, {"Cache-Control": "no-store"}

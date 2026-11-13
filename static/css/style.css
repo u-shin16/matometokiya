@@ -4280,6 +4280,29 @@ body.has-mindmap-memo-fullscreen {
   color: var(--muted);
 }
 
+.ai-assistant-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-assistant-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 11px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ai-assistant-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 .ai-assistant-form {
   display: flex;
   align-items: flex-end;
