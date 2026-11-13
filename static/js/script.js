@@ -265,6 +265,15 @@ const els = {
   noteAiBtn:        document.getElementById("noteAiBtn"),
   noteAiPanel:      document.getElementById("noteAiPanel"),
   noteAiClose:      document.getElementById("noteAiClose"),
+  aiAssistantTab:   document.getElementById("aiAssistantTab"),
+  aiGenerateTab:    document.getElementById("aiGenerateTab"),
+  aiAssistantSection: document.getElementById("aiAssistantSection"),
+  noteAiGenerateSection: document.getElementById("noteAiGenerateSection"),
+  aiAssistantLog:   document.getElementById("aiAssistantLog"),
+  aiAssistantForm:  document.getElementById("aiAssistantForm"),
+  aiAssistantInput: document.getElementById("aiAssistantInput"),
+  aiAssistantSend:  document.getElementById("aiAssistantSend"),
+  aiAssistantNote:  document.getElementById("aiAssistantNote"),
   noteAiTitle:      document.getElementById("noteAiTitle"),
   noteAiPrompt:     document.getElementById("noteAiPrompt"),
   noteAiFile:       document.getElementById("noteAiFile"),
@@ -8505,7 +8514,131 @@ function openNoteAiPanel() {
   updateNoteAiDestinationLabel();
   if (els.noteAiPanel) {
     els.noteAiPanel.hidden = false;
+    setAiPanelMode(state.aiPanelMode || "assistant");
+  }
+}
+
+// AIパネルのタブ（「AIに頼む」と「メモ生成」）を切り替える。
+function setAiPanelMode(mode) {
+  state.aiPanelMode = mode === "generate" ? "generate" : "assistant";
+  const isAssistant = state.aiPanelMode === "assistant";
+  if (els.aiAssistantSection) els.aiAssistantSection.hidden = !isAssistant;
+  if (els.noteAiGenerateSection) els.noteAiGenerateSection.hidden = isAssistant;
+  els.aiAssistantTab?.setAttribute("aria-selected", String(isAssistant));
+  els.aiGenerateTab?.setAttribute("aria-selected", String(!isAssistant));
+  if (isAssistant) {
+    els.aiAssistantInput?.focus();
+    scrollAiAssistantLogToEnd();
+  } else {
     els.noteAiTitle?.focus();
+  }
+}
+
+// ── AIに頼む ──────────────────────────────────────────────────────────────
+// 会話でメモを開く・要約する・作る・直す・移す・Todoを完了する。
+// 判断と書き込みはサーバー（/api/v1/assistant）、開く・削除の確認は画面側で行う。
+const AI_ASSISTANT_HISTORY_LIMIT = 12;
+state.aiAssistantHistory = [];
+state.aiAssistantBusy = false;
+
+function scrollAiAssistantLogToEnd() {
+  const log = els.aiAssistantLog;
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
+function appendAiAssistantMessage(role, text, extraClass = "") {
+  const log = els.aiAssistantLog;
+  if (!log) return null;
+  log.querySelector(".ai-assistant-hint")?.remove();
+  const bubble = document.createElement("p");
+  bubble.className = `ai-assistant-msg ${role === "user" ? "is-user" : "is-ai"} ${extraClass}`.trim();
+  bubble.textContent = text;
+  log.appendChild(bubble);
+  scrollAiAssistantLogToEnd();
+  return bubble;
+}
+
+function rememberAiAssistantTurn(role, text) {
+  state.aiAssistantHistory.push({ role, text });
+  if (state.aiAssistantHistory.length > AI_ASSISTANT_HISTORY_LIMIT) {
+    state.aiAssistantHistory.splice(0, state.aiAssistantHistory.length - AI_ASSISTANT_HISTORY_LIMIT);
+  }
+}
+
+async function applyAiAssistantActions(actions) {
+  if (!Array.isArray(actions) || actions.length === 0) return;
+  // サーバー側で書き換えたメモを画面へ取り込む（開いているメモの選択は残る）。
+  if (actions.some(action => action.type === "reload")) {
+    await loadNotes();
+  }
+  for (const action of actions) {
+    if (action.type === "open_note") {
+      if (!getNotes().some(note => note.id === action.note_id)) await loadNotes();
+      if (!getNotes().some(note => note.id === action.note_id)) continue;
+      closeNoteAiPanel();
+      selectNote(action.note_id);
+    } else if (action.type === "delete_note") {
+      if (!getNotes().some(note => note.id === action.note_id)) continue;
+      closeNoteAiPanel();
+      selectNote(action.note_id);
+      // いつもの削除ボタンと同じ流れ（確認画面・同期先の確認・戻す）で消す。
+      if (getSelectedNote()?.id === action.note_id) await deleteSelectedNote();
+    }
+  }
+}
+
+async function sendAiAssistantMessage() {
+  const input = els.aiAssistantInput;
+  const message = input?.value.trim();
+  if (!message || state.aiAssistantBusy) return;
+  const user = auth?.currentUser;
+  if (!user) {
+    appendAiAssistantMessage("ai", "ログインすると使えます。", "is-error");
+    return;
+  }
+  if (isCollabActive()) {
+    appendAiAssistantMessage("ai", "共同編集中はAIに頼む機能を使えません。共同編集を終えてからお試しください。", "is-error");
+    return;
+  }
+
+  state.aiAssistantBusy = true;
+  if (els.aiAssistantSend) els.aiAssistantSend.disabled = true;
+  input.value = "";
+  appendAiAssistantMessage("user", message);
+  const pending = appendAiAssistantMessage("ai", "考え中…", "is-pending");
+  try {
+    // 書きかけの本文をAIが読めるよう、先に保存しておく。
+    await saveCurrentEditorNow();
+    const current = getSelectedNote();
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/v1/assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({
+        message,
+        history: state.aiAssistantHistory,
+        current_note: current ? { id: current.id, title: current.title || "無題" } : null,
+      }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) { /* 本文が空・JSONでない */ }
+    if (!res.ok) throw new Error(data.error || "AIの応答に失敗しました。時間をおいて試してください。");
+    pending?.remove();
+    const reply = String(data.reply || "");
+    appendAiAssistantMessage("ai", reply);
+    rememberAiAssistantTurn("user", message);
+    rememberAiAssistantTurn("assistant", reply);
+    if (els.aiAssistantNote && Number.isFinite(data.remaining)) {
+      els.aiAssistantNote.textContent = `メモの内容はGoogle Gemini APIに送られます。今日はあと${data.remaining}回使えます。`;
+    }
+    await applyAiAssistantActions(data.actions);
+  } catch (err) {
+    pending?.remove();
+    appendAiAssistantMessage("ai", String(err.message || err), "is-error");
+    if (input && !input.value) input.value = message;
+  } finally {
+    state.aiAssistantBusy = false;
+    if (els.aiAssistantSend) els.aiAssistantSend.disabled = false;
   }
 }
 
@@ -15304,6 +15437,18 @@ els.searchInput.addEventListener("input", renderTree);
 els.newRootBtn .addEventListener("click", () => createNote(null));
 els.undoBtn.addEventListener("click", undoLastChange);
 els.noteAiBtn?.addEventListener("click", openNoteAiPanel);
+els.aiAssistantTab?.addEventListener("click", () => setAiPanelMode("assistant"));
+els.aiGenerateTab?.addEventListener("click", () => setAiPanelMode("generate"));
+els.aiAssistantForm?.addEventListener("submit", e => {
+  e.preventDefault();
+  void sendAiAssistantMessage();
+});
+els.aiAssistantInput?.addEventListener("keydown", e => {
+  // 日本語の変換確定のEnterでは送らない。Shift+Enterは改行。
+  if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+  e.preventDefault();
+  void sendAiAssistantMessage();
+});
 els.noteAiClose?.addEventListener("click", closeNoteAiPanel);
 els.noteAiPanel?.addEventListener("click", e => {
   if (e.target === els.noteAiPanel) closeNoteAiPanel();

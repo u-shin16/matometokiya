@@ -2401,6 +2401,238 @@ def api_claude_connect_revoke():
     return response
 
 
+# ── アプリ内のAIアシスタント（「AIに頼む」） ───────────────────────────────
+# MCP経由でClaude Codeから頼んでいたこと（メモを開く・要約する・作る・直す・
+# 移す・Todoを完了する）を、まとめときやの画面だけでできるようにする。
+# 中身はMCPと同じrun_mcp_toolを呼ぶ。違いは次の3つ。
+#   ・鍵付きメモは、Claude連携の設定に関係なく本文を読ませず、変更もさせない
+#   ・「開く」「ゴミ箱へ移す」は画面側で行う（削除はいつもの確認画面を出す）
+#   ・1人あたり1日の回数に上限を付ける（Gemini APIの費用を守るため）
+_ASSISTANT_DAILY_LIMIT = int(os.getenv("ASSISTANT_DAILY_LIMIT", "50"))
+# メモ生成より「名前からメモを探して道具を順に呼ぶ」力が要るので、別のモデルを使えるようにしておく。
+_ASSISTANT_GEMINI_MODEL = os.getenv("ASSISTANT_GEMINI_MODEL", "gemini-3.5-flash-lite")
+_ASSISTANT_MAX_STEPS = 6
+_ASSISTANT_MAX_HISTORY = 12
+_ASSISTANT_MAX_MESSAGE_CHARS = 2000
+_JST = timezone(timedelta(hours=9))
+
+_ASSISTANT_SERVER_TOOL_NAMES = ["list_notes", "list_todos", "create_note", "update_note", "move_note", "complete_todo"]
+_ASSISTANT_CLIENT_TOOLS = [
+    {
+        "name": "open_note",
+        "description": "メモをアプリの画面で開いて表示する。「〇〇を開いて」「〇〇を見せて」と言われたときに使う。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"note_id": {"type": "string", "description": "開くメモのID"}},
+            "required": ["note_id"],
+        },
+    },
+    {
+        "name": "delete_note",
+        "description": (
+            "メモ（と子孫メモ）をゴミ箱へ移す。実行すると画面に確認が出て、利用者が「削除」を押した時だけ移る。"
+            "ゴミ箱からは復元できる。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"note_id": {"type": "string", "description": "ゴミ箱へ移すメモのID"}},
+            "required": ["note_id"],
+        },
+    },
+]
+
+_ASSISTANT_INSTRUCTIONS = """あなたは階層メモ帳アプリ「まとめときや」の中で動くアシスタントです。
+利用者の頼みを、用意された道具（関数）を使って実行し、日本語で短く返事をします。
+
+守ること:
+- 利用者はメモをIDではなく名前で言う。まず list_notes を titles_only=true（必要なら query も）で呼んで対象のIDを特定する。
+- 本文が必要なとき（要約・内容の質問など）は、list_notes に note_id を指定してそのメモだけ読む。全メモの本文をまとめて読まない。
+- 「このメモ」「今開いているメモ」は、下に書いた「いま開いているメモ」のこと。
+- 同じような名前のメモが複数あって決められないときは、実行せずに候補を挙げてどれか聞き返す。
+- 「開いて」「見せて」は open_note を使う。要約や質問への答えは返事の文章で返し、頼まれない限りメモを書き換えない。
+- 本文を書き換えるときは、元の本文を読んでから、残すべき内容を消さないように書く。画像のあるメモの本文は変更できない。
+- 消すときは delete_note を使う（画面で利用者が確認してからゴミ箱へ移る）。完全削除はできない。
+- 鍵付きメモ（locked）の本文は読めず、変更もできない。そう伝えて回避策を探さない。
+- 返事は短く、何をしたかが分かるように書く。メモのIDは返事に書かない。Markdownの記号（#や**）は使わない。
+- メモ帳の操作と関係のない頼み（雑談・一般的な質問）にも短く答えてよいが、メモを勝手に作らない。"""
+
+
+class AssistantLimitError(Exception):
+    pass
+
+
+def _assistant_function_declarations():
+    tools = [tool for tool in _MCP_READ_TOOLS + _MCP_WRITE_TOOLS if tool["name"] in _ASSISTANT_SERVER_TOOL_NAMES]
+    tools += _ASSISTANT_CLIENT_TOOLS
+    return [
+        genai_types.FunctionDeclaration(
+            name=tool["name"],
+            description=tool["description"],
+            parameters_json_schema={k: v for k, v in tool["inputSchema"].items() if k != "additionalProperties"},
+        )
+        for tool in tools
+    ]
+
+
+def consume_assistant_quota(uid: str) -> int:
+    """今日の利用回数を1増やし、残り回数を返す。上限を超えていればAssistantLimitError。"""
+    from google.cloud import firestore as gcf
+
+    db = get_firestore_client()
+    ref = db.collection("users").document(uid)
+    today = datetime.now(_JST).strftime("%Y-%m-%d")
+
+    @gcf.transactional
+    def bump(transaction):
+        snap = ref.get(transaction=transaction)
+        usage = (snap.to_dict() or {}).get("ai_assistant_usage") if snap.exists else None
+        count = usage.get("count", 0) if isinstance(usage, dict) and usage.get("date") == today else 0
+        if count >= _ASSISTANT_DAILY_LIMIT:
+            raise AssistantLimitError()
+        transaction.set(ref, {"ai_assistant_usage": {"date": today, "count": count + 1}}, merge=True)
+        return _ASSISTANT_DAILY_LIMIT - count - 1
+
+    return bump(db.transaction())
+
+
+def _assistant_note_is_locked(uid: str, note_id: str) -> bool:
+    doc = _note_ref(uid, note_id).get()
+    return bool(doc.exists and (doc.to_dict() or {}).get("locked"))
+
+
+def run_assistant_tool(uid: str, name: str, arguments: dict, actions: list) -> str:
+    """AIが呼んだ道具を1つ実行して、AIへ返す文字列を作る。画面で行うものはactionsへ積む。"""
+    if name in ("open_note", "delete_note"):
+        note_id = _mcp_note_id_arg(arguments)
+        doc = _note_ref(uid, note_id).get()
+        data = (doc.to_dict() or {}) if doc.exists else {}
+        if not doc.exists or data.get("deleted"):
+            raise McpToolError("指定されたメモが見つかりません。")
+        if name == "delete_note" and data.get("locked"):
+            raise McpToolError("鍵付きメモはAIからは消せません。")
+        actions.append({"type": name, "note_id": note_id, "title": data.get("title") or "無題"})
+        if name == "open_note":
+            return json.dumps({"opened": True, "title": data.get("title")}, ensure_ascii=False)
+        return json.dumps(
+            {"status": "画面に削除の確認を出した。利用者が押すまでゴミ箱へは移っていない。"},
+            ensure_ascii=False,
+        )
+
+    if name not in _ASSISTANT_SERVER_TOOL_NAMES:
+        raise McpToolError(f"未知のツールです: {name}")
+
+    if name == "list_notes":
+        notes = filter_notes_for_mcp(fetch_all_notes_for_uid(uid, include_locked=False), arguments or {})
+        return json.dumps({"count": len(notes), "notes": notes}, ensure_ascii=False)
+
+    if name in ("update_note", "move_note"):
+        note_id = _mcp_note_id_arg(arguments)
+        if _assistant_note_is_locked(uid, note_id):
+            raise McpToolError("鍵付きメモはAIからは変更できません。")
+
+    result = run_mcp_tool(uid, True, name, arguments or {})
+    if name in ("create_note", "update_note", "move_note", "complete_todo"):
+        actions.append({"type": "reload"})
+    return result
+
+
+def _assistant_history_contents(history) -> list:
+    contents = []
+    if not isinstance(history, list):
+        return contents
+    for item in history[-_ASSISTANT_MAX_HISTORY:]:
+        if not isinstance(item, dict):
+            continue
+        role = "model" if item.get("role") == "assistant" else "user"
+        text = str(item.get("text") or "").strip()[:_ASSISTANT_MAX_MESSAGE_CHARS]
+        if text:
+            contents.append(genai_types.Content(role=role, parts=[genai_types.Part.from_text(text=text)]))
+    return contents
+
+
+def run_assistant(uid: str, message: str, history, current_note: dict | None, client=None, model: str | None = None) -> dict:
+    """利用者の頼み1回ぶん。Geminiに道具を呼ばせながら、最大_ASSISTANT_MAX_STEPS往復で返事を作る。"""
+    client = client or create_gemini_client()
+    current = "なし"
+    if current_note and current_note.get("id"):
+        current = f"「{str(current_note.get('title') or '無題')[:120]}」（ID: {str(current_note['id'])[:200]}）"
+    now = datetime.now(_JST).strftime("%Y-%m-%d %H:%M")
+    config = genai_types.GenerateContentConfig(
+        system_instruction=f"{_ASSISTANT_INSTRUCTIONS}\n\nいま開いているメモ: {current}\n現在の日時（日本時間）: {now}",
+        tools=[genai_types.Tool(function_declarations=_assistant_function_declarations())],
+        automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
+        temperature=0.3,
+        max_output_tokens=2048,
+    )
+    contents = _assistant_history_contents(history)
+    contents.append(genai_types.Content(role="user", parts=[genai_types.Part.from_text(text=message)]))
+
+    actions: list = []
+    reply = ""
+    for _ in range(_ASSISTANT_MAX_STEPS):
+        response = client.models.generate_content(model=model or _ASSISTANT_GEMINI_MODEL, contents=contents, config=config)
+        calls = response.function_calls or []
+        if not calls:
+            reply = (response.text or "").strip()
+            break
+        contents.append(response.candidates[0].content)
+        parts = []
+        for call in calls:
+            arguments = dict(call.args or {})
+            try:
+                result = {"result": run_assistant_tool(uid, call.name, arguments, actions)}
+            except McpToolError as error:
+                result = {"error": str(error)}
+            except Exception:
+                app.logger.exception("AIアシスタントの道具の実行に失敗しました。")
+                result = {"error": "処理に失敗しました。"}
+            parts.append(genai_types.Part.from_function_response(name=call.name, response=result))
+        contents.append(genai_types.Content(role="user", parts=parts))
+    else:
+        reply = "手順が多すぎて最後までできませんでした。頼みごとを小さく分けてもう一度お願いします。"
+
+    # 同じ種類の画面操作は最後の1つにまとめる（reloadは1回で足りる）
+    deduped = []
+    for action in actions:
+        if action["type"] == "reload" and any(a["type"] == "reload" for a in deduped):
+            continue
+        deduped.append(action)
+    return {"reply": reply or "うまく返事を作れませんでした。言い方を変えてもう一度お願いします。", "actions": deduped}
+
+
+@app.post("/api/v1/assistant")
+def api_assistant():
+    uid, auth_error = verify_firebase_id_token()
+    if auth_error is not None:
+        return auth_error
+
+    payload = request.get_json(silent=True) or {}
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        return jsonify(error="頼みたいことを入力してください。"), 400, {"Cache-Control": "no-store"}
+    if len(message) > _ASSISTANT_MAX_MESSAGE_CHARS:
+        return jsonify(error=f"{_ASSISTANT_MAX_MESSAGE_CHARS}文字以内で入力してください。"), 400, {"Cache-Control": "no-store"}
+    current_note = payload.get("current_note") if isinstance(payload.get("current_note"), dict) else None
+
+    try:
+        remaining = consume_assistant_quota(uid)
+    except AssistantLimitError:
+        return jsonify(error=f"今日はAIに頼める回数（{_ASSISTANT_DAILY_LIMIT}回）を使い切りました。明日また使えます。"), 429, {"Cache-Control": "no-store"}
+    except Exception:
+        app.logger.exception("AIアシスタントの回数記録に失敗しました。")
+        return jsonify(error="処理に失敗しました。時間をおいて試してください。"), 502, {"Cache-Control": "no-store"}
+
+    try:
+        result = run_assistant(uid, message, payload.get("history"), current_note)
+    except Exception:
+        app.logger.exception("AIアシスタントの応答に失敗しました。")
+        return jsonify(error="AIの応答に失敗しました。時間をおいて試してください。"), 502, {"Cache-Control": "no-store"}
+
+    response = jsonify(reply=result["reply"], actions=result["actions"], remaining=remaining)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.post("/api/ai-note")
 def api_ai_note():
     try:

@@ -95,9 +95,9 @@
       </div>
       <div class="note-head-spacer"></div>
       <div class="note-head-actions">
-        <button id="noteAiBtn" class="mindmap-tool-btn" type="button" title="AIでメモを生成">
+        <button id="noteAiBtn" class="mindmap-tool-btn" type="button" title="AIに頼む・AIでメモを生成">
           <span class="btn-icon" aria-hidden="true">✨</span>
-          <span class="btn-label">AI生成</span>
+          <span class="btn-label">AI</span>
         </button>
         <button id="noteTodoBtn" class="mindmap-tool-btn" type="button" title="TODOリストを開く" aria-label="TODOリストを開く" aria-haspopup="dialog" aria-expanded="false" aria-controls="noteTodoPanel">
           <span class="btn-icon" aria-hidden="true">📋</span>
@@ -279,13 +279,28 @@
         <input id="titleInput" class="title-input" placeholder="メモを選択するか作成してください">
       </section>
 
-      <div id="noteAiPanel" class="mindmap-ai-panel note-ai-panel" role="dialog" aria-label="AIメモ生成" hidden>
+      <div id="noteAiPanel" class="mindmap-ai-panel note-ai-panel" role="dialog" aria-label="AI" hidden>
         <div class="mindmap-ai-dialog">
           <div class="mindmap-node-settings-head">
-            <p class="mindmap-node-settings-title">AIメモ</p>
+            <div class="ai-mode-tabs" role="tablist" aria-label="AIの使い方">
+              <button id="aiAssistantTab" class="ai-mode-tab" type="button" role="tab" aria-selected="true" aria-controls="aiAssistantSection">AIに頼む</button>
+              <button id="aiGenerateTab" class="ai-mode-tab" type="button" role="tab" aria-selected="false" aria-controls="noteAiGenerateSection">メモ生成</button>
+            </div>
             <button id="noteAiClose" class="mindmap-node-settings-close" type="button" title="閉じる" aria-label="閉じる">×</button>
           </div>
-          <div class="mindmap-ai-body">
+          <section id="aiAssistantSection" class="ai-assistant" role="tabpanel" aria-labelledby="aiAssistantTab">
+            <div id="aiAssistantLog" class="ai-assistant-log" aria-live="polite">
+              <p class="ai-assistant-hint">メモの操作を言葉で頼めます。<br>例：「このメモを要約して」「買い物リストを開いて」「就活の下に逆質問というメモを作って」「今日のTodoを教えて」</p>
+            </div>
+            <form id="aiAssistantForm" class="ai-assistant-form">
+              <textarea id="aiAssistantInput" rows="2" maxlength="2000" placeholder="頼みたいことを入力（Enterで送信）" aria-label="AIに頼むこと"></textarea>
+              <button id="aiAssistantSend" class="icon-btn ai-assistant-send" type="submit">
+                <span class="btn-label">送信</span>
+              </button>
+            </form>
+            <p id="aiAssistantNote" class="ai-assistant-note">メモの内容はGoogle Gemini APIに送られます。1日50回まで。</p>
+          </section>
+          <div id="noteAiGenerateSection" class="mindmap-ai-body" role="tabpanel" aria-labelledby="aiGenerateTab" hidden>
             <label class="mindmap-field">
               <span>タイトル（任意）</span>
               <input id="noteAiTitle" type="text" maxlength="120" placeholder="未入力なら自動生成">
