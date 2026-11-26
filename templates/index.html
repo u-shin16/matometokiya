@@ -294,9 +294,12 @@
           <div id="agentLog" class="agent-log" aria-live="polite"></div>
           <form id="agentForm" class="agent-form">
             <p id="agentError" class="agent-error" role="alert" hidden></p>
-            <textarea id="agentInput" rows="3" maxlength="20000" placeholder="頼みたいことを入力" aria-label="Claudeへの指示"></textarea>
+            <div id="agentFileList" class="agent-files" hidden></div>
+            <textarea id="agentInput" rows="3" maxlength="20000" placeholder="頼みたいことを入力（Enterで送信・Shift+Enterで改行）" aria-label="Claudeへの指示"></textarea>
+            <input id="agentFile" type="file" multiple hidden>
             <div class="agent-form-row">
-              <button id="agentNoteBtn" class="btn ghost btn-sm" type="button">開いているメモを入れる</button>
+              <button id="agentFileBtn" class="btn ghost btn-sm" type="button">📎 添付</button>
+              <button id="agentNoteBtn" class="btn ghost btn-sm" type="button">メモを入れる</button>
               <button id="agentSend" class="btn btn-sm" type="submit">送る</button>
             </div>
           </form>

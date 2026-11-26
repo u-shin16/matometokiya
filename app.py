@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import urllib.error
 import urllib.request
 import zipfile
@@ -2290,6 +2291,49 @@ _AGENT_CHATS_MAX = 30
 _AGENT_RUN_TTL = timedelta(hours=2)
 _AGENT_STALE_AFTER = timedelta(minutes=20)
 _AGENT_NO_STORE = {"Cache-Control": "no-store"}
+_AGENT_FILES_MAX = 3
+_AGENT_FILES_BYTES = 10 * 1024 * 1024
+# 添付は鍵の期限までサーバーに置き、その鍵を持つクラウドのClaudeだけが取り出せる
+_AGENT_FILES_DIR = Path(__file__).resolve().parent / "uploads" / "agent"
+
+
+def _agent_read_uploads() -> list[tuple[str, bytes]]:
+    uploads = [upload for upload in request.files.getlist("files") if upload.filename]
+    if len(uploads) > _AGENT_FILES_MAX:
+        raise ValueError(f"添付は{_AGENT_FILES_MAX}個までです。")
+    files, total = [], 0
+    for upload in uploads:
+        data = upload.read(_AGENT_FILES_BYTES + 1)
+        total += len(data)
+        if total > _AGENT_FILES_BYTES:
+            raise ValueError("添付は合わせて10MBまでです。")
+        # 名前はそのままコマンドの例に載せるので、使える文字を絞る
+        name = upload.filename.replace("\\", "/").rsplit("/", 1)[-1]
+        name = re.sub(r"[^\w.\-]+", "_", name).lstrip(".-")[-80:] or "file"
+        files.append((name, data))
+    return files
+
+
+def _agent_clean_files() -> None:
+    limit = datetime.now(timezone.utc).timestamp() - _AGENT_RUN_TTL.total_seconds()
+    if not _AGENT_FILES_DIR.is_dir():
+        return
+    for folder in _AGENT_FILES_DIR.iterdir():
+        if folder.is_dir() and folder.stat().st_mtime < limit:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+def _agent_save_files(files: list[tuple[str, bytes]]) -> list[dict]:
+    _agent_clean_files()
+    if not files:
+        return []
+    folder = secrets.token_hex(16)
+    (_AGENT_FILES_DIR / folder).mkdir(parents=True)
+    saved = []
+    for index, (name, data) in enumerate(files):
+        (_AGENT_FILES_DIR / folder / f"{index}").write_bytes(data)
+        saved.append({"name": name, "path": f"{folder}/{index}"})
+    return saved
 
 
 def _agent_config(uid: str) -> tuple[str, str] | None:
@@ -2335,7 +2379,8 @@ def _agent_status(chat: dict) -> str:
     return status
 
 
-def _agent_payload(history: list[dict], text: str, report_url: str, run_token: str) -> str:
+def _agent_payload(history: list[dict], text: str, report_url: str, run_token: str,
+                   files: list[dict] | None = None) -> str:
     names = {"user": "持ち主", "result": "あなたの返事", "question": "あなたの質問"}
     lines: list[str] = []
     size = 0
@@ -2349,6 +2394,17 @@ def _agent_payload(history: list[dict], text: str, report_url: str, run_token: s
             break
         lines.append(line)
     past = "\n\n".join(reversed(lines)) or "（なし）"
+    attached = ""
+    if files:
+        files_url = report_url.rsplit("/", 1)[0] + "/files"
+        commands = "\n".join(
+            f'curl -sS --create-dirs -o "/tmp/attach/{index}_{item["name"]}" '
+            f'-H "Authorization: Bearer {run_token}" {files_url}/{index}'
+            for index, item in enumerate(files))
+        attached = f"""
+## 添付ファイル（結果を送る前に取り出して読む。リポジトリには入れない）
+{commands}
+"""
     return f"""## 返事の送り先
 持ち主はまとめときやのチャット画面だけを見ています。この会話画面は見ません。
 次のコマンドで送った内容だけが持ち主に届きます。
@@ -2363,12 +2419,17 @@ report.json はリポジトリの外（/tmp）に作り、 {{"kind": "...", "tex
 - kind="result"：最後に必ず1回。結論を先に。ファイルを変えたときは枝の名前も書く
 textはふつうの日本語にします。鍵やパスワードは書きません。
 
+## 指示の読み取り方
+指示はスマホから打った短い話し言葉です。「ぼくの第1希望は」のように「は」で終わる文は質問です。
+聞き返す前に、これまでの会話とリポジトリの記録（今やること.md、就活、判断記録など）を検索して答えを探します。
+推測で答えた部分はそう書きます。どうしても分からないときと、ファイルを変える内容があいまいなときだけ質問します。
+
 ## これまでの会話（前の作業の続きです。枝の名前があれば、その枝を取り込んでから続ける）
 {past}
 
 ## 今回の指示
 {text}
-"""
+{attached}"""
 
 
 def fire_claude_routine(url: str, token: str, text: str) -> str:
@@ -2437,9 +2498,15 @@ def api_agent_send():
     if error is not None:
         return error
 
-    payload = request.get_json(silent=True) or {}
+    payload = (request.get_json(silent=True) or {}) if request.is_json else request.form
     text = str(payload.get("text") or "").strip()
     chat_id = str(payload.get("chat_id") or "").strip()
+    try:
+        uploads = _agent_read_uploads()
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    if not text and uploads:
+        text = "添付ファイルの内容を確認してください。"
     if not text:
         return jsonify(error="指示を入力してください。"), 400
     if len(text) > _AGENT_TEXT_MAX:
@@ -2447,7 +2514,8 @@ def api_agent_send():
     if chat_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", chat_id):
         return jsonify(error="会話が見つかりません。"), 404
 
-    message = _agent_message("user", text)
+    shown = "\n".join([text] + [f"📎 {name}" for name, _ in uploads])
+    message = _agent_message("user", shown)
     history: list[dict] = []
     if chat_id:
         chat_ref = _agent_chats_ref(uid).document(chat_id)
@@ -2465,9 +2533,10 @@ def api_agent_send():
         chat_ref.set({"title": text.splitlines()[0][:60], "messages": [],
                       "created_at": message["at"], "updated_at": message["at"]})
 
+    files = _agent_save_files(uploads)
     run_token = secrets.token_urlsafe(32)
     _agent_token_ref(run_token).set({
-        "uid": uid, "chat_id": chat_ref.id, "closed": False,
+        "uid": uid, "chat_id": chat_ref.id, "closed": False, "files": files,
         "expires_at": datetime.now(timezone.utc) + _AGENT_RUN_TTL,
     })
     _agent_append(chat_ref, message, status="running", run_started_at=message["at"], session_url="")
@@ -2476,7 +2545,7 @@ def api_agent_send():
         "https://matome.webtool-labs.com/api/v1/agent/report"
     try:
         session_url = fire_claude_routine(
-            config[0], config[1], _agent_payload(history, text, report_url, run_token))
+            config[0], config[1], _agent_payload(history, text, report_url, run_token, files))
     except urllib.error.HTTPError as exc:
         app.logger.error("Claudeの起動に失敗しました。status=%s", exc.code)
         reason = {
@@ -2494,17 +2563,38 @@ def api_agent_send():
     return jsonify(chat_id=chat_ref.id), 200, _AGENT_NO_STORE
 
 
-@app.post("/api/v1/agent/report")
-def api_agent_report():
-    """クラウドのClaudeからの返事。ログインではなく、起動ごとの鍵で受ける。"""
+def _agent_run():
+    """起動ごとの鍵を確かめて、(鍵の置き場所, 中身) を返す。使えなければ None。"""
     run_token = _get_bearer_token()
     if not run_token:
-        return jsonify(error="鍵が必要です。"), 401
+        return None
     token_ref = _agent_token_ref(run_token)
     snapshot = token_ref.get()
     data = (snapshot.to_dict() or {}) if snapshot.exists else {}
     if not data or data.get("closed") or data["expires_at"] < datetime.now(timezone.utc):
+        return None
+    return token_ref, data
+
+
+@app.get("/api/v1/agent/files/<int:index>")
+def api_agent_file(index: int):
+    run = _agent_run()
+    if run is None:
         return jsonify(error="鍵が使えません。"), 401
+    files = run[1].get("files") or []
+    path = _AGENT_FILES_DIR / files[index]["path"] if index < len(files) else None
+    if path is None or not path.is_file():
+        return jsonify(error="ファイルがありません。"), 404
+    return Response(path.read_bytes(), mimetype="application/octet-stream", headers=_AGENT_NO_STORE)
+
+
+@app.post("/api/v1/agent/report")
+def api_agent_report():
+    """クラウドのClaudeからの返事。ログインではなく、起動ごとの鍵で受ける。"""
+    run = _agent_run()
+    if run is None:
+        return jsonify(error="鍵が使えません。"), 401
+    token_ref, data = run
 
     payload = request.get_json(silent=True) or {}
     kind = str(payload.get("kind") or "")

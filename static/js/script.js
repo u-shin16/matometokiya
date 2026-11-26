@@ -8682,16 +8682,16 @@ const noteAiAssistant = createAiAssistant({
 });
 
 // ── Claudeに任せる（持ち主のアカウントだけボタンが出る） ─────────────────────
-const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0 };
+const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [] };
 
 async function agentRequest(path, options = {}) {
   const user = auth?.currentUser;
   if (!user) throw new Error("ログインし直してください。");
   const idToken = await user.getIdToken();
-  const res = await fetch(`/api/v1/agent/${path}`, {
-    ...options,
-    headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-  });
+  const headers = { Authorization: `Bearer ${idToken}` };
+  // 添付があるとき（FormData）は、ブラウザに区切り付きのContent-Typeを付けさせる
+  if (typeof options.body === "string") headers["Content-Type"] = "application/json";
+  const res = await fetch(`/api/v1/agent/${path}`, { ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "通信に失敗しました。");
   return data;
@@ -8714,16 +8714,7 @@ function renderAgentChat(chat) {
   const items = chat.messages.map(m => bubble(m.role, m.text));
   if (!items.length) items.push(bubble("hint", "クラウドのClaude Codeが作業します。返事が出るまで1分ほどかかります。\nGitHubにpush済みの内容が対象で、変更は claude/ の枝に上がります。"));
   if (chat.status === "running") items.push(bubble("wait", "作業中…"));
-  if (chat.status === "stale") items.push(bubble("error", "返事が届いていません。もう一度送るか、下のリンクで確かめてください。"));
-  if (chat.status !== "done" && String(chat.session_url || "").startsWith("https://claude.ai/")) {
-    const link = document.createElement("a");
-    link.href = chat.session_url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.className = "agent-link";
-    link.textContent = "Claudeの画面で見る";
-    items.push(link);
-  }
+  if (chat.status === "stale") items.push(bubble("error", "返事が届いていません。もう一度送ってください。"));
   log.replaceChildren(...items);
   log.scrollTop = log.scrollHeight;
 }
@@ -8763,6 +8754,30 @@ async function refreshAgent() {
   }
 }
 
+function setAgentFiles(files) {
+  agentState.files = files;
+  const list = document.getElementById("agentFileList");
+  list.hidden = !files.length;
+  list.replaceChildren(...files.map((file, index) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "agent-file";
+    chip.textContent = `📎 ${file.name} ×`;
+    chip.setAttribute("aria-label", `${file.name}を外す`);
+    chip.addEventListener("click", () => setAgentFiles(agentState.files.filter((_, i) => i !== index)));
+    return chip;
+  }));
+}
+
+function addAgentFiles(added) {
+  const files = [...agentState.files, ...added];
+  if (files.length > 3 || files.reduce((sum, f) => sum + f.size, 0) > 10 * 1024 * 1024) {
+    showToast("添付は3個まで、合わせて10MBまでです。");
+    return;
+  }
+  setAgentFiles(files);
+}
+
 function openAgentChat(chatId) {
   agentState.chatId = chatId;
   agentState.status = "done";
@@ -8778,6 +8793,7 @@ function resetAgent() {
   clearTimeout(agentState.timer);
   agentState.loading++;
   Object.assign(agentState, { chatId: "", status: "done", shown: "" });
+  setAgentFiles([]);
   document.getElementById("agentBtn").hidden = true;
   document.getElementById("agentPanel").hidden = true;
   document.getElementById("agentInput").value = "";
@@ -8806,7 +8822,17 @@ function initAgent() {
   document.getElementById("agentChats").addEventListener("change", e => openAgentChat(e.target.value));
   document.getElementById("agentNew").addEventListener("click", () => { void openAgentChat(""); input.focus(); });
   input.addEventListener("keydown", e => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.requestSubmit(); }
+    // 日本語の変換を決めるEnterでは送らない
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    form.requestSubmit();
+  });
+  const fileInput = document.getElementById("agentFile");
+  document.getElementById("agentFileBtn").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => { addAgentFiles([...fileInput.files]); fileInput.value = ""; });
+  input.addEventListener("paste", e => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length) { e.preventDefault(); addAgentFiles(files); }
   });
   document.getElementById("agentNoteBtn").addEventListener("click", () => {
     const note = getSelectedNote();
@@ -8819,13 +8845,22 @@ function initAgent() {
     e.preventDefault();
     const text = input.value.trim();
     error.hidden = true;
-    if (!text || sending || agentState.status === "running") return;
+    const files = agentState.files;
+    if ((!text && !files.length) || sending || agentState.status === "running") return;
     // 送るたびに新しい作業が始まるので、二重送信を止める
     sending = true;
     send.disabled = true;
     try {
-      const data = await agentRequest("messages", { method: "POST", body: JSON.stringify({ text, chat_id: agentState.chatId }) });
+      let body = JSON.stringify({ text, chat_id: agentState.chatId });
+      if (files.length) {
+        body = new FormData();
+        body.append("text", text);
+        body.append("chat_id", agentState.chatId);
+        files.forEach(file => body.append("files", file));
+      }
+      const data = await agentRequest("messages", { method: "POST", body });
       input.value = "";
+      setAgentFiles([]);
       send.disabled = false;
       agentState.chatId = data.chat_id;
       await refreshAgent();

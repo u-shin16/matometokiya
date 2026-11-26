@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import itertools
 import re
+import tempfile
 import unittest
+from io import BytesIO
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -57,12 +60,16 @@ class AgentTest(unittest.TestCase):
         self.client = app_module.app.test_client()
         self.chats, self.tokens = _Collection(), {}
         self.fire = MagicMock(return_value="https://claude.ai/code/session_1")
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.files_dir = Path(folder.name)
         for patcher in (
             patch.dict("os.environ", ENV),
             patch.object(app_module, "_agent_chats_ref", return_value=self.chats),
             patch.object(app_module, "_agent_token_ref", lambda t: _Doc(self.tokens, t)),
             patch.object(app_module, "_agent_append", _append),
             patch.object(app_module, "fire_claude_routine", self.fire),
+            patch.object(app_module, "_AGENT_FILES_DIR", self.files_dir),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -135,6 +142,32 @@ class AgentTest(unittest.TestCase):
         chat = self._chat()
         self.assertEqual(chat["status"], "done")
         self.assertEqual(chat["messages"][-1]["role"], "error")
+
+    def _upload(self, files, text=""):
+        return self.client.post("/api/v1/agent/messages", content_type="multipart/form-data",
+                                data={"text": text, "files": [(BytesIO(d), n) for n, d in files]})
+
+    def test_attachment_only_for_run_token(self):
+        self._as("owner")
+        self.assertEqual(self._upload([('../写真 $(x);.png', b"png-data")]).status_code, 200)
+        token = next(iter(self.tokens))
+        sent = self.fire.call_args.args[2]
+        self.assertIn("/api/v1/agent/files/0", sent)
+        self.assertIn("0_写真_x_.png", sent)
+        self.assertNotIn("$(x)", sent.split("## 添付ファイル")[1])
+        url = "/api/v1/agent/files/0"
+        self.assertEqual(self.client.get(url).status_code, 401)
+        res = self.client.get(url, headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(res.data, b"png-data")
+        self.assertEqual(self.client.get("/api/v1/agent/files/1", headers={"Authorization": f"Bearer {token}"}).status_code, 404)
+        self._report(token, "result")
+        self.assertEqual(self.client.get(url, headers={"Authorization": f"Bearer {token}"}).status_code, 401)
+
+    def test_attachment_limits(self):
+        self._as("owner")
+        self.assertEqual(self._upload([(f"{i}.txt", b"a") for i in range(4)]).status_code, 400)
+        self.assertEqual(self._upload([("big.bin", b"a" * (10 * 1024 * 1024 + 1))]).status_code, 400)
+        self.fire.assert_not_called()
 
     def test_empty_and_too_long(self):
         self._as("owner")
