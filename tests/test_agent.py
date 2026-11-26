@@ -180,6 +180,11 @@ class AgentTest(unittest.TestCase):
             self.client.post("/api/v1/agent/messages", json={"text": "a", "repo": "matometokiya"})
             self.assertIn("## 対象リポジトリ\nmatometokiya", self.fire.call_args.args[2])
             self.assertEqual(self._chat()["repo"], "matometokiya")
+            self.chats.store["chat1"]["status"] = "done"
+            mixed = self.client.post("/api/v1/agent/messages",
+                                     json={"text": "b", "chat_id": "chat1", "repo": "RakuYade-management"})
+            self.assertEqual(mixed.status_code, 400)
+            self.assertEqual(self.fire.call_count, 1)
 
     def test_skill(self):
         self._as("owner")

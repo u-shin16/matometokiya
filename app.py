@@ -2588,6 +2588,8 @@ def api_agent_send():
         if _agent_status(chat) == "running":
             return jsonify(error="前の指示の返事を待っています。"), 409
         history = chat.get("messages") or []
+        if chat.get("repo") and chat["repo"] != repo:
+            return jsonify(error="対象を変えるときは、新しい会話にしてください。"), 400
         if len(history) >= _AGENT_MESSAGES_MAX:
             return jsonify(error="この会話は長くなりすぎました。新しい会話にしてください。"), 400
     else:

@@ -8682,7 +8682,7 @@ const noteAiAssistant = createAiAssistant({
 });
 
 // ── Claudeに任せる（持ち主のアカウントだけボタンが出る） ─────────────────────
-const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [], chats: [], tabs: [], drafts: new Map(), repos: [], skills: [], skillIndex: 0 };
+const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [], chats: [], tabs: [], drafts: new Map(), repos: [], repo: "", skills: [], skillIndex: 0 };
 
 async function agentRequest(path, options = {}) {
   const user = auth?.currentUser;
@@ -8898,6 +8898,27 @@ function selectAgentRepo(name) {
   try { saved = localStorage.getItem(agentRepoKey()) || ""; } catch (e) { /* 覚えられないだけ */ }
   const wanted = [name, saved].find(v => agentState.repos.some(r => r.name === v));
   select.value = wanted || agentState.repos[0]?.name || "";
+  agentState.repo = select.value;
+}
+
+// 会話の途中で対象を変えると前のやりとりと混ざるので、新しい会話に移る。書きかけと添付は持っていく
+function changeAgentRepo(name) {
+  const select = document.getElementById("agentRepo");
+  const input = document.getElementById("agentInput");
+  agentState.repoPending = "";
+  try { localStorage.setItem(agentRepoKey(), name); } catch (e) { /* 覚えられないだけ */ }
+  if (!agentState.chatId) { agentState.repo = name; return; }
+  const text = input.value;
+  const files = agentState.files;
+  input.value = "";
+  setAgentFiles([]);
+  select.value = agentState.repo;
+  void openAgentChat("");
+  select.value = agentState.repo = name;
+  if (text) input.value = text;
+  if (files.length) setAgentFiles(files);
+  input.focus();
+  showToast("対象を変えたので、新しい会話を開きました。");
 }
 
 function setAgentRepos(repos) {
@@ -9044,10 +9065,7 @@ function initAgent() {
   panel.addEventListener("pointerdown", e => {
     if (!history.hidden && !history.contains(e.target) && !historyBtn.contains(e.target)) toggleAgentHistory(false);
   });
-  document.getElementById("agentRepo").addEventListener("change", e => {
-    agentState.repoPending = "";
-    try { localStorage.setItem(agentRepoKey(), e.target.value); } catch (err) { /* 覚えられないだけ */ }
-  });
+  document.getElementById("agentRepo").addEventListener("change", e => changeAgentRepo(e.target.value));
   const strip = document.getElementById("agentTabs");
   strip.addEventListener("click", e => {
     const box = e.target.closest(".agent-tab");
