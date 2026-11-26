@@ -99,6 +99,10 @@
           <span class="btn-icon" aria-hidden="true">✨</span>
           <span class="btn-label">AI</span>
         </button>
+        <button id="agentBtn" class="mindmap-tool-btn" type="button" title="Claudeに任せる" aria-label="Claudeに任せる" hidden>
+          <span class="btn-icon" aria-hidden="true">🤖</span>
+          <span class="btn-label">Claude</span>
+        </button>
         <button id="noteTodoBtn" class="mindmap-tool-btn" type="button" title="TODOリストを開く" aria-label="TODOリストを開く" aria-haspopup="dialog" aria-expanded="false" aria-controls="noteTodoPanel">
           <span class="btn-icon" aria-hidden="true">📋</span>
           <span class="btn-label">TODO</span>
@@ -278,6 +282,26 @@
         <p id="breadcrumb" class="breadcrumb">メモを選択するか作成してください</p>
         <input id="titleInput" class="title-input" placeholder="メモを選択するか作成してください">
       </section>
+
+      <div id="agentPanel" class="note-ai-panel" role="dialog" aria-labelledby="agentTitle" hidden>
+        <div class="mindmap-ai-dialog">
+          <div class="mindmap-node-settings-head">
+            <strong id="agentTitle">Claudeに任せる</strong>
+            <button id="agentClose" class="mindmap-node-settings-close" type="button" title="閉じる" aria-label="閉じる">×</button>
+          </div>
+          <form id="agentForm" class="mindmap-ai-body">
+            <label class="mindmap-field">
+              <span>指示</span>
+              <textarea id="agentInput" rows="6" maxlength="20000" placeholder="例：今やること.mdに「名刺を注文する」を追加して"></textarea>
+            </label>
+            <button id="agentNoteBtn" class="btn ghost btn-sm" type="button">開いているメモの本文を入れる</button>
+            <button id="agentSend" class="btn mindmap-ai-generate-btn" type="submit">Claudeに送る</button>
+            <p id="agentError" class="agent-error" role="alert" hidden></p>
+            <p class="ai-assistant-note">クラウドのClaude Codeが作業します。GitHubにpush済みの内容が対象で、結果は claude/ の枝に上がります。</p>
+            <ul id="agentRuns" class="agent-runs" aria-label="これまでの指示"></ul>
+          </form>
+        </div>
+      </div>
 
       <div id="noteAiPanel" class="mindmap-ai-panel note-ai-panel" role="dialog" aria-label="AI" hidden>
         <div class="mindmap-ai-dialog">

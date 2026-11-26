@@ -2275,6 +2275,110 @@ def api_complete_todo(todo_id):
     return response
 
 
+# ── Claudeに任せる（持ち主本人だけ） ────────────────────────────────────────
+# Claude Codeのクラウド実行（routine）をAPIで起動する。URLとトークンは.envに置き、
+# 画面にもログにも出さない。持ち主（CLAUDE_AGENT_OWNER_UID。無ければ管理者のuid）以外には
+# 機能があること自体を見せない。
+_AGENT_URL_PREFIX = "https://api.anthropic.com/v1/claude_code/routines/"
+_AGENT_TEXT_MAX = 20000
+_AGENT_HISTORY_MAX = 20
+
+
+def _agent_config(uid: str) -> tuple[str, str] | None:
+    owner = (os.getenv("CLAUDE_AGENT_OWNER_UID", "").strip()
+             or os.getenv(_TODO_API_UID_ENV, "").strip())
+    url = os.getenv("CLAUDE_ROUTINE_FIRE_URL", "").strip()
+    token = os.getenv("CLAUDE_ROUTINE_FIRE_TOKEN", "").strip()
+    if not owner or uid != owner or not token or not url.startswith(_AGENT_URL_PREFIX):
+        return None
+    return url, token
+
+
+def _agent_runs_ref(uid: str):
+    return get_firestore_client().collection("users").document(uid).collection("agent_runs")
+
+
+def fire_claude_routine(url: str, token: str, text: str) -> str:
+    """routineを1回起動して、会話を開くURLを返す。"""
+    fire_request = urllib.request.Request(
+        url,
+        data=json.dumps({"text": text}).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(fire_request, timeout=20) as response:
+        body = json.load(response)
+    session_id = str(body.get("claude_code_session_id") or "")
+    if session_id.startswith("cse_"):
+        return "https://claude.ai/code/session_" + session_id[len("cse_"):]
+    session_url = str(body.get("claude_code_session_url") or "")
+    if not session_url.startswith("https://claude.ai/"):
+        raise ValueError("unexpected response")
+    return session_url
+
+
+@app.get("/api/v1/agent/runs")
+def api_agent_runs():
+    uid, auth_error = verify_firebase_id_token()
+    if auth_error is not None:
+        return auth_error
+    if _agent_config(uid) is None:
+        return jsonify(enabled=False, runs=[]), 200, {"Cache-Control": "no-store"}
+
+    runs = []
+    try:
+        query = _agent_runs_ref(uid).order_by("created_at", direction="DESCENDING").limit(_AGENT_HISTORY_MAX)
+        for document in query.stream():
+            data = document.to_dict() or {}
+            runs.append({key: str(data.get(key) or "") for key in ("text", "url", "created_at")})
+    except Exception:
+        app.logger.exception("Claudeへの指示の履歴を読めませんでした。")
+    return jsonify(enabled=True, runs=runs), 200, {"Cache-Control": "no-store"}
+
+
+@app.post("/api/v1/agent/runs")
+def api_agent_run():
+    uid, auth_error = verify_firebase_id_token()
+    if auth_error is not None:
+        return auth_error
+    config = _agent_config(uid)
+    if config is None:
+        abort(404)
+
+    payload = request.get_json(silent=True) or {}
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        return jsonify(error="指示を入力してください。"), 400
+    if len(text) > _AGENT_TEXT_MAX:
+        return jsonify(error=f"指示は{_AGENT_TEXT_MAX}文字までです。"), 400
+
+    try:
+        session_url = fire_claude_routine(config[0], config[1], text)
+    except urllib.error.HTTPError as error:
+        app.logger.error("Claudeの起動に失敗しました。status=%s", error.code)
+        message = {
+            401: "Claudeの鍵が合いません。トークンを発行し直してください。",
+            429: "Claudeの利用回数の上限です。時間をおいて試してください。",
+        }.get(error.code, "Claudeを起動できませんでした。")
+        return jsonify(error=message), 502
+    except Exception:
+        # 通信が切れた場合などは、起動できていることもある
+        app.logger.exception("Claudeの起動の結果が分かりませんでした。")
+        return jsonify(error="結果が分かりませんでした。Claudeの画面で確かめてから送り直してください。"), 502
+
+    run = {"text": text[:500], "url": session_url,
+           "created_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        _agent_runs_ref(uid).add(run)
+    except Exception:
+        app.logger.exception("Claudeへの指示の履歴を保存できませんでした。")
+    return jsonify(**run), 200, {"Cache-Control": "no-store"}
+
+
 @app.post("/api/v1/claude-connect/start")
 def api_claude_connect_start():
     """ログイン中のユーザー用に、Claude Code連携のペアリングコードを発行する。"""

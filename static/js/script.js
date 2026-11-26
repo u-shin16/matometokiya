@@ -8681,6 +8681,101 @@ const noteAiAssistant = createAiAssistant({
   },
 });
 
+// ── Claudeに任せる（持ち主のアカウントだけボタンが出る） ─────────────────────
+async function agentRequest(options = {}) {
+  const user = auth?.currentUser;
+  if (!user) throw new Error("ログインし直してください。");
+  const idToken = await user.getIdToken();
+  const res = await fetch("/api/v1/agent/runs", {
+    ...options,
+    headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "通信に失敗しました。");
+  return data;
+}
+
+function renderAgentRuns(runs) {
+  const list = document.getElementById("agentRuns");
+  list.replaceChildren(...runs.map(run => {
+    const item = document.createElement("li");
+    const link = document.createElement("a");
+    link.href = String(run.url).startsWith("https://claude.ai/") ? run.url : "#";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = run.text;
+    const time = document.createElement("small");
+    time.textContent = new Date(run.created_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    item.append(link, time);
+    return item;
+  }));
+}
+
+async function refreshAgent() {
+  const button = document.getElementById("agentBtn");
+  try {
+    const data = await agentRequest();
+    button.hidden = !data.enabled;
+    renderAgentRuns(data.runs || []);
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
+function resetAgent() {
+  document.getElementById("agentBtn").hidden = true;
+  document.getElementById("agentPanel").hidden = true;
+  document.getElementById("agentInput").value = "";
+  renderAgentRuns([]);
+}
+
+function initAgent() {
+  const panel = document.getElementById("agentPanel");
+  const input = document.getElementById("agentInput");
+  const send = document.getElementById("agentSend");
+  const error = document.getElementById("agentError");
+  const close = () => { panel.hidden = true; };
+
+  document.getElementById("agentBtn").addEventListener("click", () => {
+    error.hidden = true;
+    panel.hidden = false;
+    input.focus();
+    void refreshAgent();
+  });
+  document.getElementById("agentClose").addEventListener("click", close);
+  panel.addEventListener("click", e => { if (e.target === panel) close(); });
+  panel.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+  document.getElementById("agentNoteBtn").addEventListener("click", () => {
+    const note = getSelectedNote();
+    if (!note || note.locked) { showToast(note ? "鍵付きのメモは入れられません。" : "メモを開いてください。"); return; }
+    const text = [note.title, contentToPlainText(note.content)].filter(Boolean).join("\n");
+    input.value = [input.value.trim(), text].filter(Boolean).join("\n\n").slice(0, input.maxLength);
+    input.focus();
+  });
+  document.getElementById("agentForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const text = input.value.trim();
+    error.hidden = true;
+    if (!text || send.disabled) return;
+    // 送るたびに新しい作業が始まるので、二重送信を止める
+    send.disabled = true;
+    send.textContent = "送っています…";
+    try {
+      await agentRequest({ method: "POST", body: JSON.stringify({ text }) });
+      input.value = "";
+      showToast("Claudeに送りました。下の一覧から開けます。");
+      await refreshAgent();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      send.disabled = false;
+      send.textContent = "Claudeに送る";
+    }
+  });
+}
+initAgent();
+
 function closeNoteAiPanel() {
   if (els.noteAiPanel) els.noteAiPanel.hidden = true;
   hideDestinationPicker();
@@ -16194,12 +16289,14 @@ if (!auth) {
         return;
       }
 
+      void refreshAgent();
       showApp();
       updateAccountUI(user);
       try {
         await loadSignedInWorkspace(user);
       } catch (e) { showToast(e.message); }
     } else {
+      resetAgent();
       void clearCollabPresence();
       stopWorkspaceSnapshots();
       state.uid = null;
