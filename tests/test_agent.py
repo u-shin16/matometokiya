@@ -169,6 +169,29 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(self._upload([("big.bin", b"a" * (10 * 1024 * 1024 + 1))]).status_code, 400)
         self.fire.assert_not_called()
 
+    def test_repo_selection(self):
+        self._as("owner")
+        with patch.dict("os.environ", {"CLAUDE_AGENT_REPOS": "RakuYade-management,matometokiya"}):
+            names = [r["name"] for r in self.client.get("/api/v1/agent/chats").get_json()["repos"]]
+            self.assertEqual(names, ["RakuYade-management", "matometokiya"])
+            bad = self.client.post("/api/v1/agent/messages", json={"text": "a", "repo": "secret"})
+            self.assertEqual(bad.status_code, 400)
+            self.fire.assert_not_called()
+            self.client.post("/api/v1/agent/messages", json={"text": "a", "repo": "matometokiya"})
+            self.assertIn("## 対象リポジトリ\nmatometokiya", self.fire.call_args.args[2])
+            self.assertEqual(self._chat()["repo"], "matometokiya")
+
+    def test_skill(self):
+        self._as("owner")
+        names = [s["name"] for s in self.client.get("/api/v1/agent/chats").get_json()["skills"]]
+        self.assertIn("todo", names)
+        self.assertNotIn("deploy", names)
+        self._send("/todo 一覧を出して")
+        self.assertIn(".claude/skills/todo/SKILL.md", self.fire.call_args.args[2])
+        self.chats.store["chat1"]["status"] = "done"
+        self._send("/deploy", "chat1")
+        self.assertNotIn("## 使うスキル", self.fire.call_args.args[2])
+
     def test_empty_and_too_long(self):
         self._as("owner")
         for text in ("  ", "a" * 20001):

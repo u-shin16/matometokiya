@@ -8682,7 +8682,7 @@ const noteAiAssistant = createAiAssistant({
 });
 
 // ── Claudeに任せる（持ち主のアカウントだけボタンが出る） ─────────────────────
-const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [], chats: [], tabs: [], drafts: new Map() };
+const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [], chats: [], tabs: [], drafts: new Map(), repos: [], skills: [], skillIndex: 0 };
 
 async function agentRequest(path, options = {}) {
   const user = auth?.currentUser;
@@ -8730,6 +8730,10 @@ async function loadAgentChat() {
     const chat = await agentRequest(`chats/${encodeURIComponent(chatId)}`);
     if (ticket !== agentState.loading) return;
     renderAgentChat(chat);
+    if (agentState.repoPending === chatId) {
+      agentState.repoPending = "";
+      if (chat.repo) selectAgentRepo(chat.repo);
+    }
     again = chat.status === "running";
   } catch (e) {
     console.warn(e);
@@ -8745,6 +8749,8 @@ async function refreshAgent() {
     const data = await agentRequest("chats");
     document.getElementById("agentBtn").hidden = !data.enabled;
     agentState.chats = data.chats;
+    setAgentRepos(data.repos || []);
+    agentState.skills = data.skills || [];
     renderAgentHistory();
     return data.chats;
   } catch (e) {
@@ -8883,6 +8889,58 @@ function closeAgentTab(chatId) {
   void openAgentChat(next ? next.id : "", { keepDraft: false });
 }
 
+// 対象のリポジトリ。会話ごとに前回の指示のものを選び、新しい会話は最後に選んだものにする
+const agentRepoKey = () => `agentRepo:${auth?.currentUser?.uid || ""}`;
+
+function selectAgentRepo(name) {
+  const select = document.getElementById("agentRepo");
+  let saved = "";
+  try { saved = localStorage.getItem(agentRepoKey()) || ""; } catch (e) { /* 覚えられないだけ */ }
+  const wanted = [name, saved].find(v => agentState.repos.some(r => r.name === v));
+  select.value = wanted || agentState.repos[0]?.name || "";
+}
+
+function setAgentRepos(repos) {
+  const select = document.getElementById("agentRepo");
+  const current = select.value;
+  agentState.repos = repos;
+  select.replaceChildren(...repos.map(r => new Option(`📁 ${r.label}`, r.name)));
+  selectAgentRepo(current);
+}
+
+// 入力欄の先頭が「/」のとき、スキルの候補を出す
+function renderAgentSkills(showAll = false) {
+  const box = document.getElementById("agentSkills");
+  const typed = document.getElementById("agentInput").value.match(/^\/([a-z0-9-]*)$/);
+  const found = showAll || typed
+    ? agentState.skills.filter(s => showAll || s.name.includes(typed[1]))
+    : [];
+  box.hidden = !found.length;
+  agentState.skillIndex = Math.max(0, Math.min(agentState.skillIndex, found.length - 1));
+  box.replaceChildren(...found.map((skill, index) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "agent-skill";
+    row.dataset.name = skill.name;
+    if (index === agentState.skillIndex) row.setAttribute("aria-current", "true");
+    const name = document.createElement("span");
+    name.textContent = `/${skill.name}`;
+    const label = document.createElement("small");
+    label.textContent = skill.label;
+    row.append(name, label);
+    return row;
+  }));
+  box.querySelector("[aria-current]")?.scrollIntoView({ block: "nearest" });
+}
+
+function pickAgentSkill(name) {
+  const input = document.getElementById("agentInput");
+  const rest = input.value.replace(/^\/[a-z0-9-]*\s*/, "");
+  input.value = `/${name} ${rest}`;
+  document.getElementById("agentSkills").hidden = true;
+  input.focus();
+}
+
 function setAgentFiles(files) {
   agentState.files = files;
   const list = document.getElementById("agentFileList");
@@ -8911,13 +8969,18 @@ function openAgentChat(chatId, { keepDraft = true } = {}) {
   const input = document.getElementById("agentInput");
   // 書きかけの文と添付は、タブごとに持っておく
   if (keepDraft && agentState.tabs.some(t => t.id === agentState.chatId)) {
-    agentState.drafts.set(agentState.chatId, { text: input.value, files: agentState.files });
+    const repo = document.getElementById("agentRepo").value;
+    agentState.drafts.set(agentState.chatId, { text: input.value, files: agentState.files, repo });
   }
   if (!agentState.tabs.some(t => t.id === chatId)) agentState.tabs.push({ id: chatId, title: "" });
   agentState.chatId = chatId;
   const draft = agentState.drafts.get(chatId);
   input.value = draft?.text || "";
+  document.getElementById("agentSkills").hidden = true;
   setAgentFiles(draft?.files || []);
+  selectAgentRepo(draft?.repo);
+  // 保存してある会話は、開いたときに一度だけ前回の対象に合わせる
+  agentState.repoPending = draft ? "" : chatId;
   agentState.status = "done";
   agentState.shown = "";
   document.getElementById("agentError").hidden = true;
@@ -8932,7 +8995,9 @@ function openAgentChat(chatId, { keepDraft = true } = {}) {
 function resetAgent() {
   clearTimeout(agentState.timer);
   agentState.loading++;
-  Object.assign(agentState, { chatId: "", status: "done", shown: "", chats: [], tabs: [], drafts: new Map() });
+  Object.assign(agentState, { chatId: "", status: "done", shown: "", chats: [], tabs: [], drafts: new Map(), repoPending: "", skills: [] });
+  setAgentRepos([]);
+  document.getElementById("agentSkills").hidden = true;
   toggleAgentHistory(false);
   setAgentFiles([]);
   document.getElementById("agentBtn").hidden = true;
@@ -8979,6 +9044,10 @@ function initAgent() {
   panel.addEventListener("pointerdown", e => {
     if (!history.hidden && !history.contains(e.target) && !historyBtn.contains(e.target)) toggleAgentHistory(false);
   });
+  document.getElementById("agentRepo").addEventListener("change", e => {
+    agentState.repoPending = "";
+    try { localStorage.setItem(agentRepoKey(), e.target.value); } catch (err) { /* 覚えられないだけ */ }
+  });
   const strip = document.getElementById("agentTabs");
   strip.addEventListener("click", e => {
     const box = e.target.closest(".agent-tab");
@@ -9007,7 +9076,35 @@ function initAgent() {
     if (row) void openAgentChat(row.dataset.chatId);
   });
   document.getElementById("agentNew").addEventListener("click", () => { void openAgentChat(""); input.focus(); });
+  const skillBox = document.getElementById("agentSkills");
+  input.addEventListener("input", () => { agentState.skillIndex = 0; renderAgentSkills(); });
+  document.getElementById("agentSkillBtn").addEventListener("click", () => {
+    agentState.skillIndex = 0;
+    if (skillBox.hidden) renderAgentSkills(true);
+    else skillBox.hidden = true;
+    input.focus();
+  });
+  skillBox.addEventListener("click", e => {
+    const row = e.target.closest(".agent-skill");
+    if (row) pickAgentSkill(row.dataset.name);
+  });
   input.addEventListener("keydown", e => {
+    if (!skillBox.hidden && !e.isComposing && e.keyCode !== 229) {
+      const rows = [...skillBox.children];
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const step = e.key === "ArrowDown" ? 1 : -1;
+        agentState.skillIndex = (agentState.skillIndex + step + rows.length) % rows.length;
+        renderAgentSkills(!input.value.startsWith("/"));
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault();
+        pickAgentSkill(rows[agentState.skillIndex].dataset.name);
+        return;
+      }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); skillBox.hidden = true; return; }
+    }
     // 日本語の変換を決めるEnterでは送らない
     if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
@@ -9037,11 +9134,13 @@ function initAgent() {
     sending = true;
     send.disabled = true;
     try {
-      let body = JSON.stringify({ text, chat_id: agentState.chatId });
+      const repo = document.getElementById("agentRepo").value;
+      let body = JSON.stringify({ text, chat_id: agentState.chatId, repo });
       if (files.length) {
         body = new FormData();
         body.append("text", text);
         body.append("chat_id", agentState.chatId);
+        body.append("repo", repo);
         files.forEach(file => body.append("files", file));
       }
       const sentFrom = agentState.chatId;
@@ -9050,7 +9149,8 @@ function initAgent() {
       // 送っている間に別のタブへ移っていたら、そのタブの書きかけには触らない
       const stayed = agentState.chatId === sentFrom;
       agentState.drafts.delete(sentFrom);
-      if (stayed) { input.value = ""; setAgentFiles([]); }
+      agentState.drafts.delete(data.chat_id);
+      if (stayed) { input.value = ""; setAgentFiles([]); skillBox.hidden = true; }
       const tab = agentState.tabs.find(t => t.id === sentFrom);
       if (tab && !sentFrom) Object.assign(tab, { id: data.chat_id, title: text.split("\n")[0].slice(0, 60) });
       if (stayed) agentState.chatId = data.chat_id;

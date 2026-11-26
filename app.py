@@ -2292,6 +2292,54 @@ _AGENT_RUN_TTL = timedelta(hours=2)
 _AGENT_STALE_AFTER = timedelta(minutes=20)
 _AGENT_NO_STORE = {"Cache-Control": "no-store"}
 _AGENT_FILES_MAX = 3
+_AGENT_REPO_LABELS = {
+    "RakuYade-management": "全体管理",
+    "matometokiya": "まとめときや",
+    "mahjongsiyoka": "まーじゃんしよか",
+    "RakuYade-homepage": "ホームページ",
+    "rakugakisuruzo": "らくがきするぞ",
+    "omaebaka": "おまえばか?",
+    "profile-site": "プロフィール",
+    "oekakiyaroka": "おえかきやろか",
+    "youmitonde": "よう見とんで",
+    "henjikitade": "返事きたで",
+    "hayookinnkai": "はよおきんかい",
+}
+
+
+# クラウドで手順を進められるスキル（全体管理の .claude/skills にあるもの）。
+# サーバー接続・本番反映・各種の鍵・このMacが要るスキルは載せない
+_AGENT_SKILLS = {
+    "todo": "今やることの確認・追加・完了",
+    "meeting": "今日の会議記録を作る",
+    "zenn-diary": "成長日記の材料をまとめる",
+    "zenn-article": "Zenn記事を書く",
+    "sidejob": "副業の案件の判定・提案文",
+    "adsense": "AdSense審査の状況と点検",
+    "roadmap-app": "アプリのロードマップ",
+    "roadmap-me": "自分のロードマップ",
+    "roadmap-rakuyade": "RakuYade全体のロードマップ",
+}
+
+
+def _agent_skill_note(text: str) -> str:
+    match = re.match(r"/([a-z0-9-]+)(?=\s|$)", text)
+    if not match or match.group(1) not in _AGENT_SKILLS:
+        return ""
+    return f"""
+## 使うスキル
+RakuYade-management の .claude/skills/{match.group(1)}/SKILL.md を読み、その手順に従います。
+クラウドでできない手順（鍵・MCP・外部の取得が要るもの）は飛ばして、飛ばしたと結果に書きます。
+手順にpushやmainへの反映があっても、claude/ の枝までにします。
+"""
+
+
+def _agent_repos() -> list[dict]:
+    """選べるリポジトリ。routineに入れて、GitHubで許可したものを.envに並べる（先頭が初期値）。"""
+    names = [name.strip() for name in os.getenv("CLAUDE_AGENT_REPOS", "").split(",")]
+    names = [name for name in names if re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", name)]
+    return [{"name": name, "label": _AGENT_REPO_LABELS.get(name, name)}
+            for name in (names or ["RakuYade-management"])]
 _AGENT_FILES_BYTES = 10 * 1024 * 1024
 # 添付は鍵の期限までサーバーに置き、その鍵を持つクラウドのClaudeだけが取り出せる
 _AGENT_FILES_DIR = Path(__file__).resolve().parent / "uploads" / "agent"
@@ -2380,7 +2428,7 @@ def _agent_status(chat: dict) -> str:
 
 
 def _agent_payload(history: list[dict], text: str, report_url: str, run_token: str,
-                   files: list[dict] | None = None) -> str:
+                   files: list[dict] | None = None, repo: str = "") -> str:
     names = {"user": "持ち主", "result": "あなたの返事", "question": "あなたの質問"}
     lines: list[str] = []
     size = 0
@@ -2427,9 +2475,13 @@ textはふつうの日本語にします。鍵やパスワードは書きませ�
 ## これまでの会話（前の作業の続きです。枝の名前があれば、その枝を取り込んでから続ける）
 {past}
 
+## 対象リポジトリ
+{repo or "指定なし"}
+指示はこのリポジトリについてのものです。ファイルを変えるのはこのリポジトリだけにします。
+
 ## 今回の指示
 {text}
-{attached}"""
+{_agent_skill_note(text)}{attached}"""
 
 
 def fire_claude_routine(url: str, token: str, text: str) -> str:
@@ -2472,14 +2524,15 @@ def api_agent_chats():
     if auth_error is not None:
         return auth_error
     if _agent_config(uid) is None:
-        return jsonify(enabled=False, chats=[]), 200, _AGENT_NO_STORE
+        return jsonify(enabled=False, chats=[], repos=[], skills=[]), 200, _AGENT_NO_STORE
     query = _agent_chats_ref(uid).order_by("updated_at", direction="DESCENDING").limit(_AGENT_CHATS_MAX)
     chats = []
     for document in query.stream():
         data = document.to_dict() or {}
         chats.append({"id": document.id, "title": str(data.get("title") or ""),
                       "updated_at": str(data.get("updated_at") or "")})
-    return jsonify(enabled=True, chats=chats), 200, _AGENT_NO_STORE
+    skills = [{"name": name, "label": label} for name, label in _AGENT_SKILLS.items()]
+    return jsonify(enabled=True, chats=chats, repos=_agent_repos(), skills=skills), 200, _AGENT_NO_STORE
 
 
 @app.get("/api/v1/agent/chats/<chat_id>")
@@ -2492,6 +2545,7 @@ def api_agent_chat(chat_id: str):
         return jsonify(error="会話が見つかりません。"), 404, _AGENT_NO_STORE
     chat = snapshot.to_dict() or {}
     return jsonify(id=chat_id, status=_agent_status(chat), messages=chat.get("messages") or [],
+                   repo=str(chat.get("repo") or ""),
                    session_url=str(chat.get("session_url") or "")), 200, _AGENT_NO_STORE
 
 
@@ -2516,6 +2570,10 @@ def api_agent_send():
         return jsonify(error=f"指示は{_AGENT_TEXT_MAX}文字までです。"), 400
     if chat_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", chat_id):
         return jsonify(error="会話が見つかりません。"), 404
+    repos = [item["name"] for item in _agent_repos()]
+    repo = str(payload.get("repo") or "").strip() or repos[0]
+    if repo not in repos:
+        return jsonify(error="そのリポジトリは選べません。"), 400
 
     shown = "\n".join([text] + [f"📎 {name}" for name, _ in uploads])
     message = _agent_message("user", shown)
@@ -2542,13 +2600,13 @@ def api_agent_send():
         "uid": uid, "chat_id": chat_ref.id, "closed": False, "files": files,
         "expires_at": datetime.now(timezone.utc) + _AGENT_RUN_TTL,
     })
-    _agent_append(chat_ref, message, status="running", run_started_at=message["at"], session_url="")
+    _agent_append(chat_ref, message, status="running", run_started_at=message["at"], session_url="", repo=repo)
 
     report_url = os.getenv("CLAUDE_AGENT_REPORT_URL", "").strip() or \
         "https://matome.webtool-labs.com/api/v1/agent/report"
     try:
         session_url = fire_claude_routine(
-            config[0], config[1], _agent_payload(history, text, report_url, run_token, files))
+            config[0], config[1], _agent_payload(history, text, report_url, run_token, files, repo))
     except urllib.error.HTTPError as exc:
         app.logger.error("Claudeの起動に失敗しました。status=%s", exc.code)
         reason = {
