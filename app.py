@@ -2292,22 +2292,6 @@ _AGENT_RUN_TTL = timedelta(hours=2)
 _AGENT_STALE_AFTER = timedelta(minutes=20)
 _AGENT_NO_STORE = {"Cache-Control": "no-store"}
 _AGENT_FILES_MAX = 3
-_AGENT_REPO_LABELS = {
-    "RakuYade-management": "全体管理",
-    "note": "note",
-    "matometokiya": "まとめときや",
-    "mahjongsiyoka": "まーじゃんしよか",
-    "RakuYade-homepage": "ホームページ",
-    "rakugakisuruzo": "らくがきするぞ",
-    "omaebaka": "おまえばか?",
-    "profile-site": "プロフィール",
-    "oekakiyaroka": "おえかきやろか",
-    "youmitonde": "よう見とんで",
-    "henjikitade": "返事きたで",
-    "hayookinnkai": "はよおきんかい",
-}
-
-
 # クラウドで手順を進められるスキル（全体管理の .claude/skills にあるもの）。
 # サーバー接続・本番反映・各種の鍵・このMacが要るスキルは載せない
 _AGENT_SKILLS = {
@@ -2339,8 +2323,7 @@ def _agent_repos() -> list[dict]:
     """選べるリポジトリ。routineに入れて、GitHubで許可したものを.envに並べる（先頭が初期値）。"""
     names = [name.strip() for name in os.getenv("CLAUDE_AGENT_REPOS", "").split(",")]
     names = [name for name in names if re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", name)]
-    return [{"name": name, "label": _AGENT_REPO_LABELS.get(name, name)}
-            for name in (names or ["RakuYade-management"])]
+    return [{"name": name} for name in (names or ["RakuYade-management"])]
 _AGENT_FILES_BYTES = 10 * 1024 * 1024
 # 添付は鍵の期限までサーバーに置き、その鍵を持つクラウドのClaudeだけが取り出せる
 _AGENT_FILES_DIR = Path(__file__).resolve().parent / "uploads" / "agent"

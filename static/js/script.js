@@ -8871,7 +8871,8 @@ function renderAgentTabs() {
     close.className = "agent-tab-close";
     close.setAttribute("aria-label", `${title}のタブを閉じる`);
     close.textContent = "×";
-    box.append(select, close);
+    box.append(select);
+    if (agentState.tabs.length > 1) box.append(close);
     if (tab.id === agentState.chatId) { box.classList.add("active"); activeTab = box; }
     return box;
   }));
@@ -8880,7 +8881,7 @@ function renderAgentTabs() {
 
 function closeAgentTab(chatId) {
   const index = agentState.tabs.findIndex(t => t.id === chatId);
-  if (index < 0) return;
+  if (index < 0 || agentState.tabs.length < 2) return;
   agentState.tabs.splice(index, 1);
   agentState.drafts.delete(chatId);
   if (chatId !== agentState.chatId) { renderAgentTabs(); saveAgentTabs(); return; }
@@ -8899,6 +8900,52 @@ function selectAgentRepo(name) {
   const wanted = [name, saved].find(v => agentState.repos.some(r => r.name === v));
   select.value = wanted || agentState.repos[0]?.name || "";
   agentState.repo = select.value;
+  renderAgentRepoButton();
+}
+
+function renderAgentRepoButton() {
+  const name = document.getElementById("agentRepo").value;
+  document.getElementById("agentRepoName").textContent = name || "リポジトリ";
+  const button = document.getElementById("agentRepoBtn");
+  button.title = name;
+  button.setAttribute("aria-label", `対象のリポジトリ：${name || "未選択"}`);
+}
+
+function renderAgentRepoList() {
+  const word = document.getElementById("agentRepoSearch").value.trim().toLowerCase();
+  const current = document.getElementById("agentRepo").value;
+  const rows = agentState.repos.filter(r => r.name.toLowerCase().includes(word)).map(repo => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "agent-repo-row";
+    row.dataset.name = repo.name;
+    if (repo.name === current) row.setAttribute("aria-current", "true");
+    const name = document.createElement("span");
+    name.textContent = repo.name;
+    const check = document.createElement("small");
+    check.textContent = repo.name === current ? "✓" : "";
+    row.append(name, check);
+    return row;
+  });
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "agent-history-group";
+    empty.textContent = "見つかりません";
+    rows.push(empty);
+  }
+  document.getElementById("agentRepoList").replaceChildren(...rows);
+}
+
+function toggleAgentRepoMenu(open) {
+  document.getElementById("agentRepoMenu").hidden = !open;
+  document.getElementById("agentRepoBtn").setAttribute("aria-expanded", String(open));
+  if (!open) return;
+  document.getElementById("agentSkills").hidden = true;
+  const search = document.getElementById("agentRepoSearch");
+  search.value = "";
+  renderAgentRepoList();
+  document.querySelector('.agent-repo-row[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
+  if (window.matchMedia("(pointer: fine)").matches) search.focus();
 }
 
 // 会話の途中で対象を変えると前のやりとりと混ざるので、新しい会話に移る。書きかけと添付は持っていく
@@ -8907,7 +8954,7 @@ function changeAgentRepo(name) {
   const input = document.getElementById("agentInput");
   agentState.repoPending = "";
   try { localStorage.setItem(agentRepoKey(), name); } catch (e) { /* 覚えられないだけ */ }
-  if (!agentState.chatId) { agentState.repo = name; return; }
+  if (!agentState.chatId) { agentState.repo = name; renderAgentRepoButton(); return; }
   const text = input.value;
   const files = agentState.files;
   input.value = "";
@@ -8915,6 +8962,7 @@ function changeAgentRepo(name) {
   select.value = agentState.repo;
   void openAgentChat("");
   select.value = agentState.repo = name;
+  renderAgentRepoButton();
   if (text) input.value = text;
   if (files.length) setAgentFiles(files);
   input.focus();
@@ -8925,7 +8973,7 @@ function setAgentRepos(repos) {
   const select = document.getElementById("agentRepo");
   const current = select.value;
   agentState.repos = repos;
-  select.replaceChildren(...repos.map(r => new Option(`📁 ${r.label}`, r.name)));
+  select.replaceChildren(...repos.map(r => new Option(r.name, r.name)));
   selectAgentRepo(current);
 }
 
@@ -9006,6 +9054,7 @@ function openAgentChat(chatId, { keepDraft = true } = {}) {
   agentState.shown = "";
   document.getElementById("agentError").hidden = true;
   toggleAgentHistory(false);
+  toggleAgentRepoMenu(false);
   renderAgentHistory();
   saveAgentTabs();
   document.getElementById("agentSend").disabled = false;
@@ -9036,7 +9085,7 @@ function initAgent() {
   const form = document.getElementById("agentForm");
   const history = document.getElementById("agentHistory");
   const historyBtn = document.getElementById("agentHistoryBtn");
-  const close = () => { panel.hidden = true; toggleAgentHistory(false); clearTimeout(agentState.timer); };
+  const close = () => { panel.hidden = true; toggleAgentHistory(false); toggleAgentRepoMenu(false); clearTimeout(agentState.timer); };
   let sending = false;
 
   document.getElementById("agentBtn").addEventListener("click", async () => {
@@ -9052,8 +9101,33 @@ function initAgent() {
   });
   document.getElementById("agentClose").addEventListener("click", close);
   panel.addEventListener("click", e => { if (e.target === panel) close(); });
+  const repoMenu = document.getElementById("agentRepoMenu");
+  const repoBtn = document.getElementById("agentRepoBtn");
+  const pickRepo = name => {
+    const select = document.getElementById("agentRepo");
+    toggleAgentRepoMenu(false);
+    if (select.value === name) return;
+    select.value = name;
+    changeAgentRepo(name);
+    input.focus();
+  };
+  repoBtn.addEventListener("click", () => toggleAgentRepoMenu(repoMenu.hidden));
+  document.getElementById("agentRepoSearch").addEventListener("input", renderAgentRepoList);
+  document.getElementById("agentRepoSearch").addEventListener("keydown", e => {
+    if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    repoMenu.querySelector(".agent-repo-row")?.click();
+  });
+  repoMenu.addEventListener("click", e => {
+    const row = e.target.closest(".agent-repo-row");
+    if (row) pickRepo(row.dataset.name);
+  });
+  panel.addEventListener("pointerdown", e => {
+    if (!repoMenu.hidden && !repoMenu.contains(e.target) && !repoBtn.contains(e.target)) toggleAgentRepoMenu(false);
+  });
   panel.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
+    if (!repoMenu.hidden) { toggleAgentRepoMenu(false); repoBtn.focus(); return; }
     if (history.hidden) close();
     else { toggleAgentHistory(false); historyBtn.focus(); }
   });
@@ -9065,7 +9139,6 @@ function initAgent() {
   panel.addEventListener("pointerdown", e => {
     if (!history.hidden && !history.contains(e.target) && !historyBtn.contains(e.target)) toggleAgentHistory(false);
   });
-  document.getElementById("agentRepo").addEventListener("change", e => changeAgentRepo(e.target.value));
   const strip = document.getElementById("agentTabs");
   strip.addEventListener("click", e => {
     const box = e.target.closest(".agent-tab");

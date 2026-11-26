@@ -304,14 +304,33 @@
             <p id="agentError" class="agent-error" role="alert" hidden></p>
             <div id="agentSkills" class="agent-skills" aria-label="スキル" hidden></div>
             <div id="agentFileList" class="agent-files" hidden></div>
-            <textarea id="agentInput" rows="3" maxlength="20000" placeholder="頼みたいことを入力（Enterで送信・Shift+Enterで改行）" aria-label="Claudeへの指示"></textarea>
-            <input id="agentFile" type="file" multiple hidden>
-            <div class="agent-form-row">
-              <button id="agentFileBtn" class="btn ghost btn-sm" type="button">📎 添付</button>
-              <button id="agentNoteBtn" class="btn ghost btn-sm" type="button">メモを入れる</button>
-              <button id="agentSkillBtn" class="btn ghost btn-sm" type="button" title="スキルを選ぶ" aria-label="スキルを選ぶ">/</button>
-              <select id="agentRepo" class="agent-repo" aria-label="対象のリポジトリ" title="対象のリポジトリ"></select>
-              <button id="agentSend" class="btn btn-sm" type="submit">送る</button>
+            <div class="agent-composer">
+              <div id="agentRepoMenu" class="agent-repo-menu" role="dialog" aria-label="リポジトリを選ぶ" hidden>
+                <input id="agentRepoSearch" type="search" placeholder="リポジトリを検索" aria-label="リポジトリを検索" autocomplete="off">
+                <div id="agentRepoList" class="agent-repo-list"></div>
+              </div>
+              <textarea id="agentInput" rows="2" maxlength="20000" placeholder="頼みたいことを入力" aria-label="Claudeへの指示（Enterで送信・Shift+Enterで改行）"></textarea>
+              <input id="agentFile" type="file" multiple hidden>
+              <select id="agentRepo" hidden></select>
+              <div class="agent-toolbar">
+                <button id="agentFileBtn" class="agent-icon" type="button" title="ファイルを添付" aria-label="ファイルを添付">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6"/></svg>
+                </button>
+                <button id="agentNoteBtn" class="agent-icon" type="button" title="開いているメモを入れる" aria-label="開いているメモを入れる">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6"/></svg>
+                </button>
+                <button id="agentSkillBtn" class="agent-icon" type="button" title="スキルを選ぶ" aria-label="スキルを選ぶ">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5L9 19"/></svg>
+                </button>
+                <button id="agentRepoBtn" class="agent-repo-btn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="agentRepoMenu">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5A1.5 1.5 0 0 1 6.500 3H19v14H6.500A1.5 1.5 0 0 0 5 18.5zM5 18.5A2.500 2.500 0 0 0 7.500 21H19v-4"/></svg>
+                  <span id="agentRepoName"></span>
+                  <svg class="agent-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
+                </button>
+                <button id="agentSend" class="agent-send" type="submit" title="送る（Enter）" aria-label="送る">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+                </button>
+              </div>
             </div>
           </form>
         </div>
