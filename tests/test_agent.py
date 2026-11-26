@@ -67,6 +67,7 @@ class AgentTest(unittest.TestCase):
             patch.dict("os.environ", ENV),
             patch.object(app_module, "_agent_chats_ref", return_value=self.chats),
             patch.object(app_module, "_agent_token_ref", lambda t: _Doc(self.tokens, t)),
+            patch.object(app_module, "_agent_token_ref_by_key", lambda k: _Doc(self.tokens, k)),
             patch.object(app_module, "_agent_append", _append),
             patch.object(app_module, "fire_claude_routine", self.fire),
             patch.object(app_module, "_AGENT_FILES_DIR", self.files_dir),
@@ -201,6 +202,42 @@ class AgentTest(unittest.TestCase):
             self.assertIn("note の .claude/skills/free-ideas/SKILL.md", self.fire.call_args.args[2])
             self.client.post("/api/v1/agent/messages", json={"text": "/zenn-diary", "repo": "note"})
             self.assertNotIn("## 使うスキル", self.fire.call_args.args[2])
+
+    def test_stop(self):
+        self._as("owner")
+        self._upload([("a.txt", b"a")], "長い作業")
+        token = next(iter(self.tokens))
+        self.assertIn('{"stop": true}', self.fire.call_args.args[2])
+        res = self.client.post("/api/v1/agent/chats/chat1/stop")
+        self.assertTrue(res.get_json()["stopped"])
+        chat = self._chat()
+        self.assertEqual((chat["status"], chat["messages"][-1]["role"]), ("done", "stopped"))
+        # 中断した作業の報告は受け付けず、やめるように返す
+        for kind in ("progress", "result"):
+            report = self._report(token, kind)
+            self.assertEqual((report.status_code, report.get_json()["stop"]), (409, True))
+        files = self.client.get("/api/v1/agent/files/0", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(files.status_code, 409)
+        self.assertEqual(len(self._chat()["messages"]), 2)
+        # すぐ次を送れて、中断したことが伝わる。前の鍵は使えないまま
+        self.assertEqual(self._send("やり直し", "chat1").status_code, 200)
+        self.assertIn("[中断]", self.fire.call_args.args[2])
+        new = [t for t in self.tokens if t != token][0]
+        self.assertEqual(self._report(token, "result").status_code, 409)
+        self.assertEqual(self._report(new, "result").status_code, 200)
+
+    def test_stop_after_result_does_nothing(self):
+        self._as("owner")
+        self._send()
+        self._report(next(iter(self.tokens)), "result")
+        res = self.client.post("/api/v1/agent/chats/chat1/stop")
+        self.assertFalse(res.get_json()["stopped"])
+        self.assertEqual(len(self._chat()["messages"]), 2)
+        self.assertEqual(self.client.post("/api/v1/agent/chats/none/stop").status_code, 404)
+
+    def test_stop_only_for_owner(self):
+        self._as("someone")
+        self.assertEqual(self.client.post("/api/v1/agent/chats/chat1/stop").status_code, 404)
 
     def test_empty_and_too_long(self):
         self._as("owner")

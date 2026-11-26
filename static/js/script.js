@@ -8697,10 +8697,20 @@ async function agentRequest(path, options = {}) {
   return data;
 }
 
+// 作業中は、送るボタンの場所に中断ボタンを出す
+function setAgentRunning(running) {
+  const send = document.getElementById("agentSend");
+  send.disabled = running;
+  send.hidden = running;
+  const stop = document.getElementById("agentStop");
+  stop.hidden = !running;
+  stop.disabled = false;
+}
+
 function renderAgentChat(chat) {
   const log = document.getElementById("agentLog");
   agentState.status = chat.status;
-  document.getElementById("agentSend").disabled = chat.status === "running";
+  setAgentRunning(chat.status === "running");
   const key = JSON.stringify([agentState.chatId, chat.status, chat.messages.length]);
   if (key === agentState.shown) return;
   agentState.shown = key;
@@ -9062,7 +9072,7 @@ function openAgentChat(chatId, { keepDraft = true } = {}) {
   toggleAgentRepoMenu(false);
   renderAgentHistory();
   saveAgentTabs();
-  document.getElementById("agentSend").disabled = false;
+  setAgentRunning(false);
   document.getElementById("agentLog").replaceChildren();
   return loadAgentChat();
 }
@@ -9219,6 +9229,22 @@ function initAgent() {
     const text = [note.title, contentToPlainText(note.content)].filter(Boolean).join("\n");
     input.value = [input.value.trim(), text].filter(Boolean).join("\n\n").slice(0, input.maxLength);
     input.focus();
+  });
+  const stop = document.getElementById("agentStop");
+  stop.addEventListener("click", async () => {
+    const chatId = agentState.chatId;
+    if (!chatId) return;
+    error.hidden = true;
+    stop.disabled = true;
+    try {
+      await agentRequest(`chats/${encodeURIComponent(chatId)}/stop`, { method: "POST" });
+      if (agentState.chatId === chatId) await loadAgentChat();
+      input.focus();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+      stop.disabled = false;
+    }
   });
   form.addEventListener("submit", async e => {
     e.preventDefault();

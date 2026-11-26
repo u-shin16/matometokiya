@@ -2280,6 +2280,7 @@ def api_complete_todo(todo_id):
 # まとめときやの中でチャットする。裏ではClaude Codeのクラウド実行（routine）をAPIで起動し、
 # 途中経過と結果は、起動ごとの使い捨ての鍵で /api/v1/agent/report に返してもらう。
 # routineは会話を引き継げないので、続きの指示にはこれまでのやりとりを添える。
+# 起動した作業を外から止めるAPIは無いので、中断は「次の報告への返事で、やめるように伝える」形にする。
 # Claudeを動かす部分は fire_claude_routine だけ（公開するときはここを差し替える）。
 # 画面と会話の記録は利用者ごとに分けてある。今使えるのは持ち主だけ。
 _AGENT_URL_PREFIX = "https://api.anthropic.com/v1/claude_code/routines/"
@@ -2439,6 +2440,10 @@ def _agent_token_ref(run_token: str):
     return get_firestore_client().collection("agent_run_tokens").document(digest)
 
 
+def _agent_token_ref_by_key(run_key: str):
+    return get_firestore_client().collection("agent_run_tokens").document(run_key)
+
+
 def _agent_append(chat_ref, message: dict, **fields) -> None:
     from google.cloud.firestore import ArrayUnion
 
@@ -2464,7 +2469,7 @@ def _agent_status(chat: dict) -> str:
 
 def _agent_payload(history: list[dict], text: str, report_url: str, run_token: str,
                    files: list[dict] | None = None, repo: str = "") -> str:
-    names = {"user": "持ち主", "result": "あなたの返事", "question": "あなたの質問"}
+    names = {"user": "持ち主", "result": "あなたの返事", "question": "あなたの質問", "stopped": "中断"}
     lines: list[str] = []
     size = 0
     for message in reversed(history):
@@ -2501,6 +2506,12 @@ report.json はリポジトリの外（/tmp）に作り、 {{"kind": "...", "tex
 - kind="question"：指示の意味が分からないとき。質問を送って終わる
 - kind="result"：最後に必ず1回。結論を先に。ファイルを変えたときは枝の名前も書く
 textはふつうの日本語にします。鍵やパスワードは書きません。
+
+## 中断
+持ち主はチャット画面から作業を中断できます。送るたびに、返ってきた内容を確かめます。
+{{"stop": true}} が返ったら、直ちに作業をやめて終わります。commitもpushもせず、続けて送りません。
+ファイルを変える前と、commit・pushする直前には、必ずprogressを送って返事を確かめます。
+返事が {{"ok": true}} でないときは、変更を進めません。
 
 ## 指示の読み取り方
 指示はスマホから打った短い話し言葉です。「ぼくの第1希望は」のように「は」で終わる文は質問です。
@@ -2632,11 +2643,13 @@ def api_agent_send():
 
     files = _agent_save_files(uploads)
     run_token = secrets.token_urlsafe(32)
-    _agent_token_ref(run_token).set({
+    token_ref = _agent_token_ref(run_token)
+    token_ref.set({
         "uid": uid, "chat_id": chat_ref.id, "closed": False, "files": files,
         "expires_at": datetime.now(timezone.utc) + _AGENT_RUN_TTL,
     })
-    _agent_append(chat_ref, message, status="running", run_started_at=message["at"], session_url="", repo=repo)
+    _agent_append(chat_ref, message, status="running", run_started_at=message["at"], session_url="",
+                  repo=repo, run_key=token_ref.id)
 
     report_url = os.getenv("CLAUDE_AGENT_REPORT_URL", "").strip() or \
         "https://matome.webtool-labs.com/api/v1/agent/report"
@@ -2660,6 +2673,32 @@ def api_agent_send():
     return jsonify(chat_id=chat_ref.id), 200, _AGENT_NO_STORE
 
 
+@app.post("/api/v1/agent/chats/<chat_id>/stop")
+def api_agent_stop(chat_id: str):
+    """作業中の指示を中断する。以後の報告は受け付けず、次の報告への返事でやめるように伝える。"""
+    uid, _, error = _agent_owner()
+    if error is not None:
+        return error
+    chat_ref = _agent_chats_ref(uid).document(chat_id)
+    snapshot = chat_ref.get()
+    if not snapshot.exists:
+        return jsonify(error="会話が見つかりません。"), 404, _AGENT_NO_STORE
+    chat = snapshot.to_dict() or {}
+    if _agent_status(chat) == "done":
+        return jsonify(ok=True, stopped=False), 200, _AGENT_NO_STORE
+    run_key = str(chat.get("run_key") or "")
+    if run_key:
+        token_ref = _agent_token_ref_by_key(run_key)
+        if token_ref.get().exists:
+            token_ref.update({"cancelled": True})
+    _agent_append(chat_ref, _agent_message("stopped", "中断しました。"), status="done")
+    return jsonify(ok=True, stopped=True), 200, _AGENT_NO_STORE
+
+
+def _agent_stopped_response():
+    return jsonify(stop=True, error="持ち主が中断しました。commitもpushもせず、作業を終えてください。"), 409, _AGENT_NO_STORE
+
+
 def _agent_run():
     """起動ごとの鍵を確かめて、(鍵の置き場所, 中身) を返す。使えなければ None。"""
     run_token = _get_bearer_token()
@@ -2678,6 +2717,8 @@ def api_agent_file(index: int):
     run = _agent_run()
     if run is None:
         return jsonify(error="鍵が使えません。"), 401
+    if run[1].get("cancelled"):
+        return _agent_stopped_response()
     files = run[1].get("files") or []
     path = _AGENT_FILES_DIR / files[index]["path"] if index < len(files) else None
     if path is None or not path.is_file():
@@ -2692,6 +2733,8 @@ def api_agent_report():
     if run is None:
         return jsonify(error="鍵が使えません。"), 401
     token_ref, data = run
+    if data.get("cancelled"):
+        return _agent_stopped_response()
 
     payload = request.get_json(silent=True) or {}
     kind = str(payload.get("kind") or "")
