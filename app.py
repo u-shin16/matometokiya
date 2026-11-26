@@ -2292,34 +2292,72 @@ _AGENT_RUN_TTL = timedelta(hours=2)
 _AGENT_STALE_AFTER = timedelta(minutes=20)
 _AGENT_NO_STORE = {"Cache-Control": "no-store"}
 _AGENT_FILES_MAX = 3
-# リポジトリごとの、クラウドで手順を進められるスキル（各リポジトリの .claude/skills にあるもの）。
-# サーバー接続・本番反映・Gmail・ブラウザ操作・各種の鍵・このMacが要るスキルは載せない
+# リポジトリごとのスキル（各リポジトリの .claude/skills にあるもの）。
+# 2つ目の一覧は、鍵・サーバー・Gmail・ブラウザ・このMacが要り、クラウドでは手順の一部しかできないもの
 _AGENT_SKILLS = {
-    "RakuYade-management": {
+    "RakuYade-management": ({
         "todo": "今やることの確認・追加・完了",
         "meeting": "今日の会議記録を作る",
-        "zenn-diary": "成長日記の材料をまとめる",
         "zenn-article": "Zenn記事を書く",
         "sidejob": "副業の案件の判定・提案文",
         "adsense": "AdSense審査の状況と点検",
         "roadmap-app": "アプリのロードマップ",
         "roadmap-me": "自分のロードマップ",
         "roadmap-rakuyade": "RakuYade全体のロードマップ",
-    },
-    "note": {
+        "slide-style": "スライドを作る",
+    }, {
+        "zenn-diary": "成長日記の材料をまとめる",
+        "day-start": "1日の始め",
+        "day-end": "1日の終わり",
+        "week-start": "週の始め",
+        "week-end": "週の終わり",
+        "month-start": "月の始め",
+        "month-end": "月の終わり",
+        "changelog": "ホームページの更新情報",
+        "push-management": "記録をpushする",
+        "matome-todo": "まとめときやのTodoを片づける",
+        "ga4": "GA4の数値を記録する",
+        "gmail-check": "外部からの返事を確認する",
+        "app-health": "全アプリの死活確認",
+        "deploy": "本番反映",
+        "seo-check": "SEO点検",
+        "seo-ready": "SEOの検査に出せる状態にする",
+        "seo-result": "SEOの結果確認",
+    }),
+    "note": ({
         "free-ideas": "無料記事のタイトル案を10個",
         "paid-ideas": "有料記事のタイトル案を10個",
         "ai-news-ideas": "最新AIニュースから記事案",
-        "free-article": "無料記事を書く（サムネは除く）",
-        "paid-article": "有料記事を書く（サムネは除く）",
+        "free-article": "無料記事を書く",
+        "paid-article": "有料記事を書く",
         "account-strategy": "アカウント分析と今後の戦略",
-    },
+    }, {
+        "thumbnail-generate": "サムネを作る",
+        "thumbnail-organize": "サムネ画像を整理する",
+        "note-draft": "noteに下書き保存する",
+        "tieup-find": "タイアップの営業先を探す",
+        "tieup-5": "営業5社を一気に進める",
+        "tieup-outreach": "営業メールを作る",
+        "tieup-global": "海外への営業",
+        "tieup-inbox": "返信を確認して返す",
+        "tieup-prep": "案件の準備",
+        "tieup-article": "PR記事を書く",
+        "tieup-billing": "お礼・請求・入金確認",
+        "tieup-renewal": "次の1本を提案する",
+        "tieup-status": "案件の状況まとめ",
+    }),
 }
+
+
+def _agent_skills(repo: str) -> list[dict]:
+    full, partial = _AGENT_SKILLS.get(repo, ({}, {}))
+    return ([{"name": name, "label": label} for name, label in full.items()]
+            + [{"name": name, "label": f"（一部だけ）{label}"} for name, label in partial.items()])
 
 
 def _agent_skill_note(text: str, repo: str) -> str:
     match = re.match(r"/([a-z0-9-]+)(?=\s|$)", text)
-    if not match or match.group(1) not in _AGENT_SKILLS.get(repo, {}):
+    if not match or match.group(1) not in [item["name"] for item in _agent_skills(repo)]:
         return ""
     return f"""
 ## 使うスキル
@@ -2335,9 +2373,7 @@ def _agent_repos() -> list[dict]:
     """選べるリポジトリ。routineに入れて、GitHubで許可したものを.envに並べる（先頭が初期値）。"""
     names = [name.strip() for name in os.getenv("CLAUDE_AGENT_REPOS", "").split(",")]
     names = [name for name in names if re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", name)]
-    return [{"name": name,
-             "skills": [{"name": skill, "label": label}
-                        for skill, label in _AGENT_SKILLS.get(name, {}).items()]}
+    return [{"name": name, "skills": _agent_skills(name)}
             for name in (names or ["RakuYade-management"])]
 _AGENT_FILES_BYTES = 10 * 1024 * 1024
 # 添付は鍵の期限までサーバーに置き、その鍵を持つクラウドのClaudeだけが取り出せる
