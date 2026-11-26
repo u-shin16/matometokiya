@@ -284,21 +284,21 @@
       </section>
 
       <div id="agentPanel" class="note-ai-panel" role="dialog" aria-labelledby="agentTitle" hidden>
-        <div class="mindmap-ai-dialog">
+        <div class="mindmap-ai-dialog agent-dialog">
           <div class="mindmap-node-settings-head">
-            <strong id="agentTitle">Claudeに任せる</strong>
+            <strong id="agentTitle">Claude</strong>
+            <select id="agentChats" class="agent-chats" aria-label="会話を選ぶ"></select>
+            <button id="agentNew" class="btn ghost btn-sm" type="button">新しい会話</button>
             <button id="agentClose" class="mindmap-node-settings-close" type="button" title="閉じる" aria-label="閉じる">×</button>
           </div>
-          <form id="agentForm" class="mindmap-ai-body">
-            <label class="mindmap-field">
-              <span>指示</span>
-              <textarea id="agentInput" rows="6" maxlength="20000" placeholder="例：今やること.mdに「名刺を注文する」を追加して"></textarea>
-            </label>
-            <button id="agentNoteBtn" class="btn ghost btn-sm" type="button">開いているメモの本文を入れる</button>
-            <button id="agentSend" class="btn mindmap-ai-generate-btn" type="submit">Claudeに送る</button>
+          <div id="agentLog" class="agent-log" aria-live="polite"></div>
+          <form id="agentForm" class="agent-form">
             <p id="agentError" class="agent-error" role="alert" hidden></p>
-            <p class="ai-assistant-note">クラウドのClaude Codeが作業します。GitHubにpush済みの内容が対象で、結果は claude/ の枝に上がります。</p>
-            <ul id="agentRuns" class="agent-runs" aria-label="これまでの指示"></ul>
+            <textarea id="agentInput" rows="3" maxlength="20000" placeholder="頼みたいことを入力" aria-label="Claudeへの指示"></textarea>
+            <div class="agent-form-row">
+              <button id="agentNoteBtn" class="btn ghost btn-sm" type="button">開いているメモを入れる</button>
+              <button id="agentSend" class="btn btn-sm" type="submit">送る</button>
+            </div>
           </form>
         </div>
       </div>

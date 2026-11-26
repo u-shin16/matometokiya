@@ -8682,11 +8682,13 @@ const noteAiAssistant = createAiAssistant({
 });
 
 // ── Claudeに任せる（持ち主のアカウントだけボタンが出る） ─────────────────────
-async function agentRequest(options = {}) {
+const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0 };
+
+async function agentRequest(path, options = {}) {
   const user = auth?.currentUser;
   if (!user) throw new Error("ログインし直してください。");
   const idToken = await user.getIdToken();
-  const res = await fetch("/api/v1/agent/runs", {
+  const res = await fetch(`/api/v1/agent/${path}`, {
     ...options,
     headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
   });
@@ -8695,38 +8697,92 @@ async function agentRequest(options = {}) {
   return data;
 }
 
-function renderAgentRuns(runs) {
-  const list = document.getElementById("agentRuns");
-  list.replaceChildren(...runs.map(run => {
-    const item = document.createElement("li");
+function renderAgentChat(chat) {
+  const log = document.getElementById("agentLog");
+  agentState.status = chat.status;
+  document.getElementById("agentSend").disabled = chat.status === "running";
+  const key = JSON.stringify([agentState.chatId, chat.status, chat.messages.length]);
+  if (key === agentState.shown) return;
+  agentState.shown = key;
+
+  const bubble = (role, text) => {
+    const el = document.createElement("div");
+    el.className = `agent-msg agent-msg-${role}`;
+    el.textContent = text;
+    return el;
+  };
+  const items = chat.messages.map(m => bubble(m.role, m.text));
+  if (!items.length) items.push(bubble("hint", "クラウドのClaude Codeが作業します。返事が出るまで1分ほどかかります。\nGitHubにpush済みの内容が対象で、変更は claude/ の枝に上がります。"));
+  if (chat.status === "running") items.push(bubble("wait", "作業中…"));
+  if (chat.status === "stale") items.push(bubble("error", "返事が届いていません。もう一度送るか、下のリンクで確かめてください。"));
+  if (chat.status !== "done" && String(chat.session_url || "").startsWith("https://claude.ai/")) {
     const link = document.createElement("a");
-    link.href = String(run.url).startsWith("https://claude.ai/") ? run.url : "#";
+    link.href = chat.session_url;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
-    link.textContent = run.text;
-    const time = document.createElement("small");
-    time.textContent = new Date(run.created_at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-    item.append(link, time);
-    return item;
-  }));
+    link.className = "agent-link";
+    link.textContent = "Claudeの画面で見る";
+    items.push(link);
+  }
+  log.replaceChildren(...items);
+  log.scrollTop = log.scrollHeight;
 }
 
-async function refreshAgent() {
-  const button = document.getElementById("agentBtn");
+// 開いている会話を読み、返事待ちの間は数秒ごとに読み直す
+async function loadAgentChat() {
+  clearTimeout(agentState.timer);
+  const chatId = agentState.chatId;
+  const ticket = ++agentState.loading;
+  if (!chatId) { renderAgentChat({ status: "done", messages: [] }); return; }
+  let again = false;
   try {
-    const data = await agentRequest();
-    button.hidden = !data.enabled;
-    renderAgentRuns(data.runs || []);
+    const chat = await agentRequest(`chats/${encodeURIComponent(chatId)}`);
+    if (ticket !== agentState.loading) return;
+    renderAgentChat(chat);
+    again = chat.status === "running";
   } catch (e) {
     console.warn(e);
+    again = agentState.status === "running";
+  }
+  if (again && ticket === agentState.loading && !document.getElementById("agentPanel").hidden) {
+    agentState.timer = setTimeout(loadAgentChat, 3000);
   }
 }
 
+async function refreshAgent() {
+  try {
+    const data = await agentRequest("chats");
+    document.getElementById("agentBtn").hidden = !data.enabled;
+    const select = document.getElementById("agentChats");
+    select.replaceChildren(new Option("新しい会話", ""), ...data.chats.map(c => new Option(c.title || "（無題）", c.id)));
+    select.value = agentState.chatId;
+    return data.chats;
+  } catch (e) {
+    console.warn(e);
+    return [];
+  }
+}
+
+function openAgentChat(chatId) {
+  agentState.chatId = chatId;
+  agentState.status = "done";
+  agentState.shown = "";
+  document.getElementById("agentError").hidden = true;
+  document.getElementById("agentChats").value = chatId;
+  document.getElementById("agentSend").disabled = false;
+  document.getElementById("agentLog").replaceChildren();
+  return loadAgentChat();
+}
+
 function resetAgent() {
+  clearTimeout(agentState.timer);
+  agentState.loading++;
+  Object.assign(agentState, { chatId: "", status: "done", shown: "" });
   document.getElementById("agentBtn").hidden = true;
   document.getElementById("agentPanel").hidden = true;
   document.getElementById("agentInput").value = "";
-  renderAgentRuns([]);
+  document.getElementById("agentChats").replaceChildren();
+  document.getElementById("agentLog").replaceChildren();
 }
 
 function initAgent() {
@@ -8734,17 +8790,24 @@ function initAgent() {
   const input = document.getElementById("agentInput");
   const send = document.getElementById("agentSend");
   const error = document.getElementById("agentError");
-  const close = () => { panel.hidden = true; };
+  const form = document.getElementById("agentForm");
+  const close = () => { panel.hidden = true; clearTimeout(agentState.timer); };
+  let sending = false;
 
-  document.getElementById("agentBtn").addEventListener("click", () => {
-    error.hidden = true;
+  document.getElementById("agentBtn").addEventListener("click", async () => {
     panel.hidden = false;
     input.focus();
-    void refreshAgent();
+    const chats = await refreshAgent();
+    await openAgentChat(agentState.chatId || chats[0]?.id || "");
   });
   document.getElementById("agentClose").addEventListener("click", close);
   panel.addEventListener("click", e => { if (e.target === panel) close(); });
   panel.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+  document.getElementById("agentChats").addEventListener("change", e => openAgentChat(e.target.value));
+  document.getElementById("agentNew").addEventListener("click", () => { void openAgentChat(""); input.focus(); });
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.requestSubmit(); }
+  });
   document.getElementById("agentNoteBtn").addEventListener("click", () => {
     const note = getSelectedNote();
     if (!note || note.locked) { showToast(note ? "鍵付きのメモは入れられません。" : "メモを開いてください。"); return; }
@@ -8752,25 +8815,27 @@ function initAgent() {
     input.value = [input.value.trim(), text].filter(Boolean).join("\n\n").slice(0, input.maxLength);
     input.focus();
   });
-  document.getElementById("agentForm").addEventListener("submit", async e => {
+  form.addEventListener("submit", async e => {
     e.preventDefault();
     const text = input.value.trim();
     error.hidden = true;
-    if (!text || send.disabled) return;
+    if (!text || sending || agentState.status === "running") return;
     // 送るたびに新しい作業が始まるので、二重送信を止める
+    sending = true;
     send.disabled = true;
-    send.textContent = "送っています…";
     try {
-      await agentRequest({ method: "POST", body: JSON.stringify({ text }) });
+      const data = await agentRequest("messages", { method: "POST", body: JSON.stringify({ text, chat_id: agentState.chatId }) });
       input.value = "";
-      showToast("Claudeに送りました。下の一覧から開けます。");
+      send.disabled = false;
+      agentState.chatId = data.chat_id;
       await refreshAgent();
+      await openAgentChat(data.chat_id);
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
-    } finally {
       send.disabled = false;
-      send.textContent = "Claudeに送る";
+    } finally {
+      sending = false;
     }
   });
 }

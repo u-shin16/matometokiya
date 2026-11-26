@@ -2276,12 +2276,20 @@ def api_complete_todo(todo_id):
 
 
 # ── Claudeに任せる（持ち主本人だけ） ────────────────────────────────────────
-# Claude Codeのクラウド実行（routine）をAPIで起動する。URLとトークンは.envに置き、
-# 画面にもログにも出さない。持ち主（CLAUDE_AGENT_OWNER_UID。無ければ管理者のuid）以外には
-# 機能があること自体を見せない。
+# まとめときやの中でチャットする。裏ではClaude Codeのクラウド実行（routine）をAPIで起動し、
+# 途中経過と結果は、起動ごとの使い捨ての鍵で /api/v1/agent/report に返してもらう。
+# routineは会話を引き継げないので、続きの指示にはこれまでのやりとりを添える。
+# Claudeを動かす部分は fire_claude_routine だけ（公開するときはここを差し替える）。
+# 画面と会話の記録は利用者ごとに分けてある。今使えるのは持ち主だけ。
 _AGENT_URL_PREFIX = "https://api.anthropic.com/v1/claude_code/routines/"
 _AGENT_TEXT_MAX = 20000
-_AGENT_HISTORY_MAX = 20
+_AGENT_REPORT_MAX = 12000
+_AGENT_HISTORY_CHARS = 30000
+_AGENT_MESSAGES_MAX = 200
+_AGENT_CHATS_MAX = 30
+_AGENT_RUN_TTL = timedelta(hours=2)
+_AGENT_STALE_AFTER = timedelta(minutes=20)
+_AGENT_NO_STORE = {"Cache-Control": "no-store"}
 
 
 def _agent_config(uid: str) -> tuple[str, str] | None:
@@ -2294,12 +2302,77 @@ def _agent_config(uid: str) -> tuple[str, str] | None:
     return url, token
 
 
-def _agent_runs_ref(uid: str):
-    return get_firestore_client().collection("users").document(uid).collection("agent_runs")
+def _agent_chats_ref(uid: str):
+    return get_firestore_client().collection("users").document(uid).collection("agent_chats")
+
+
+def _agent_token_ref(run_token: str):
+    # 鍵そのものは保存せず、ハッシュを名前にする
+    digest = hashlib.sha256(run_token.encode("utf-8")).hexdigest()
+    return get_firestore_client().collection("agent_run_tokens").document(digest)
+
+
+def _agent_append(chat_ref, message: dict, **fields) -> None:
+    from google.cloud.firestore import ArrayUnion
+
+    chat_ref.update({"messages": ArrayUnion([message]), "updated_at": message["at"], **fields})
+
+
+def _agent_message(role: str, text: str) -> dict:
+    return {"id": secrets.token_hex(8), "role": role, "text": text,
+            "at": datetime.now(timezone.utc).isoformat()}
+
+
+def _agent_status(chat: dict) -> str:
+    status = str(chat.get("status") or "done")
+    if status == "running":
+        try:
+            started = datetime.fromisoformat(str(chat.get("run_started_at")))
+        except ValueError:
+            return "stale"
+        if datetime.now(timezone.utc) - started > _AGENT_STALE_AFTER:
+            return "stale"
+    return status
+
+
+def _agent_payload(history: list[dict], text: str, report_url: str, run_token: str) -> str:
+    names = {"user": "持ち主", "result": "あなたの返事", "question": "あなたの質問"}
+    lines: list[str] = []
+    size = 0
+    for message in reversed(history):
+        name = names.get(message.get("role"))
+        if name is None:
+            continue
+        line = f"[{name}]\n{message.get('text', '')}"
+        size += len(line)
+        if size > _AGENT_HISTORY_CHARS:
+            break
+        lines.append(line)
+    past = "\n\n".join(reversed(lines)) or "（なし）"
+    return f"""## 返事の送り先
+持ち主はまとめときやのチャット画面だけを見ています。この会話画面は見ません。
+次のコマンドで送った内容だけが持ち主に届きます。
+
+curl -sS -X POST {report_url} \\
+  -H "Authorization: Bearer {run_token}" -H "Content-Type: application/json" \\
+  --data-binary @report.json
+
+report.json はリポジトリの外（/tmp）に作り、 {{"kind": "...", "text": "..."}} の形にします。
+- kind="progress"：作業の区切りごとに1回。今何をしていて、なぜそうするかを1〜2文で。最初の作業の前にも送る
+- kind="question"：指示の意味が分からないとき。質問を送って終わる
+- kind="result"：最後に必ず1回。結論を先に。ファイルを変えたときは枝の名前も書く
+textはふつうの日本語にします。鍵やパスワードは書きません。
+
+## これまでの会話（前の作業の続きです。枝の名前があれば、その枝を取り込んでから続ける）
+{past}
+
+## 今回の指示
+{text}
+"""
 
 
 def fire_claude_routine(url: str, token: str, text: str) -> str:
-    """routineを1回起動して、会話を開くURLを返す。"""
+    """routineを1回起動して、会話を開くURLを返す（届かないときの確認用）。"""
     fire_request = urllib.request.Request(
         url,
         data=json.dumps({"text": text}).encode("utf-8"),
@@ -2321,62 +2394,137 @@ def fire_claude_routine(url: str, token: str, text: str) -> str:
     return session_url
 
 
-@app.get("/api/v1/agent/runs")
-def api_agent_runs():
+def _agent_owner():
+    """(uid, routineの設定, エラー応答) を返す。持ち主以外には機能が無いように見せる。"""
+    uid, auth_error = verify_firebase_id_token()
+    if auth_error is not None:
+        return None, None, auth_error
+    config = _agent_config(uid)
+    if config is None:
+        return uid, None, (jsonify(error="見つかりません。"), 404, _AGENT_NO_STORE)
+    return uid, config, None
+
+
+@app.get("/api/v1/agent/chats")
+def api_agent_chats():
     uid, auth_error = verify_firebase_id_token()
     if auth_error is not None:
         return auth_error
     if _agent_config(uid) is None:
-        return jsonify(enabled=False, runs=[]), 200, {"Cache-Control": "no-store"}
-
-    runs = []
-    try:
-        query = _agent_runs_ref(uid).order_by("created_at", direction="DESCENDING").limit(_AGENT_HISTORY_MAX)
-        for document in query.stream():
-            data = document.to_dict() or {}
-            runs.append({key: str(data.get(key) or "") for key in ("text", "url", "created_at")})
-    except Exception:
-        app.logger.exception("Claudeへの指示の履歴を読めませんでした。")
-    return jsonify(enabled=True, runs=runs), 200, {"Cache-Control": "no-store"}
+        return jsonify(enabled=False, chats=[]), 200, _AGENT_NO_STORE
+    query = _agent_chats_ref(uid).order_by("updated_at", direction="DESCENDING").limit(_AGENT_CHATS_MAX)
+    chats = [{"id": document.id, "title": str((document.to_dict() or {}).get("title") or "")}
+             for document in query.stream()]
+    return jsonify(enabled=True, chats=chats), 200, _AGENT_NO_STORE
 
 
-@app.post("/api/v1/agent/runs")
-def api_agent_run():
-    uid, auth_error = verify_firebase_id_token()
-    if auth_error is not None:
-        return auth_error
-    config = _agent_config(uid)
-    if config is None:
-        abort(404)
+@app.get("/api/v1/agent/chats/<chat_id>")
+def api_agent_chat(chat_id: str):
+    uid, _, error = _agent_owner()
+    if error is not None:
+        return error
+    snapshot = _agent_chats_ref(uid).document(chat_id).get()
+    if not snapshot.exists:
+        return jsonify(error="会話が見つかりません。"), 404, _AGENT_NO_STORE
+    chat = snapshot.to_dict() or {}
+    return jsonify(id=chat_id, status=_agent_status(chat), messages=chat.get("messages") or [],
+                   session_url=str(chat.get("session_url") or "")), 200, _AGENT_NO_STORE
+
+
+@app.post("/api/v1/agent/messages")
+def api_agent_send():
+    uid, config, error = _agent_owner()
+    if error is not None:
+        return error
 
     payload = request.get_json(silent=True) or {}
     text = str(payload.get("text") or "").strip()
+    chat_id = str(payload.get("chat_id") or "").strip()
     if not text:
         return jsonify(error="指示を入力してください。"), 400
     if len(text) > _AGENT_TEXT_MAX:
         return jsonify(error=f"指示は{_AGENT_TEXT_MAX}文字までです。"), 400
+    if chat_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", chat_id):
+        return jsonify(error="会話が見つかりません。"), 404
 
+    message = _agent_message("user", text)
+    history: list[dict] = []
+    if chat_id:
+        chat_ref = _agent_chats_ref(uid).document(chat_id)
+        snapshot = chat_ref.get()
+        if not snapshot.exists:
+            return jsonify(error="会話が見つかりません。"), 404
+        chat = snapshot.to_dict() or {}
+        if _agent_status(chat) == "running":
+            return jsonify(error="前の指示の返事を待っています。"), 409
+        history = chat.get("messages") or []
+        if len(history) >= _AGENT_MESSAGES_MAX:
+            return jsonify(error="この会話は長くなりすぎました。新しい会話にしてください。"), 400
+    else:
+        chat_ref = _agent_chats_ref(uid).document()
+        chat_ref.set({"title": text.splitlines()[0][:60], "messages": [],
+                      "created_at": message["at"], "updated_at": message["at"]})
+
+    run_token = secrets.token_urlsafe(32)
+    _agent_token_ref(run_token).set({
+        "uid": uid, "chat_id": chat_ref.id, "closed": False,
+        "expires_at": datetime.now(timezone.utc) + _AGENT_RUN_TTL,
+    })
+    _agent_append(chat_ref, message, status="running", run_started_at=message["at"], session_url="")
+
+    report_url = os.getenv("CLAUDE_AGENT_REPORT_URL", "").strip() or \
+        "https://matome.webtool-labs.com/api/v1/agent/report"
     try:
-        session_url = fire_claude_routine(config[0], config[1], text)
-    except urllib.error.HTTPError as error:
-        app.logger.error("Claudeの起動に失敗しました。status=%s", error.code)
-        message = {
+        session_url = fire_claude_routine(
+            config[0], config[1], _agent_payload(history, text, report_url, run_token))
+    except urllib.error.HTTPError as exc:
+        app.logger.error("Claudeの起動に失敗しました。status=%s", exc.code)
+        reason = {
             401: "Claudeの鍵が合いません。トークンを発行し直してください。",
             429: "Claudeの利用回数の上限です。時間をおいて試してください。",
-        }.get(error.code, "Claudeを起動できませんでした。")
-        return jsonify(error=message), 502
+        }.get(exc.code, "Claudeを起動できませんでした。")
+        _agent_append(chat_ref, _agent_message("error", reason), status="done")
     except Exception:
-        # 通信が切れた場合などは、起動できていることもある
+        # 通信が切れた場合などは、起動できていることもある。返事が来れば受け取る
         app.logger.exception("Claudeの起動の結果が分かりませんでした。")
-        return jsonify(error="結果が分かりませんでした。Claudeの画面で確かめてから送り直してください。"), 502
+        _agent_append(chat_ref, _agent_message(
+            "error", "起動できたか分かりません。少し待って返事が無ければ送り直してください。"), status="done")
+    else:
+        chat_ref.update({"session_url": session_url})
+    return jsonify(chat_id=chat_ref.id), 200, _AGENT_NO_STORE
 
-    run = {"text": text[:500], "url": session_url,
-           "created_at": datetime.now(timezone.utc).isoformat()}
-    try:
-        _agent_runs_ref(uid).add(run)
-    except Exception:
-        app.logger.exception("Claudeへの指示の履歴を保存できませんでした。")
-    return jsonify(**run), 200, {"Cache-Control": "no-store"}
+
+@app.post("/api/v1/agent/report")
+def api_agent_report():
+    """クラウドのClaudeからの返事。ログインではなく、起動ごとの鍵で受ける。"""
+    run_token = _get_bearer_token()
+    if not run_token:
+        return jsonify(error="鍵が必要です。"), 401
+    token_ref = _agent_token_ref(run_token)
+    snapshot = token_ref.get()
+    data = (snapshot.to_dict() or {}) if snapshot.exists else {}
+    if not data or data.get("closed") or data["expires_at"] < datetime.now(timezone.utc):
+        return jsonify(error="鍵が使えません。"), 401
+
+    payload = request.get_json(silent=True) or {}
+    kind = str(payload.get("kind") or "")
+    text = str(payload.get("text") or "").strip()
+    if kind not in ("progress", "question", "result") or not text:
+        return jsonify(error="kindとtextを確認してください。"), 400
+    chat_ref = _agent_chats_ref(data["uid"]).document(data["chat_id"])
+    chat_snapshot = chat_ref.get()
+    if not chat_snapshot.exists:
+        return jsonify(error="会話が見つかりません。"), 404
+    count = len((chat_snapshot.to_dict() or {}).get("messages") or [])
+    if kind == "progress" and count >= _AGENT_MESSAGES_MAX:
+        return jsonify(error="途中経過が多すぎます。resultを送ってください。"), 429
+    message = _agent_message(kind, text[:_AGENT_REPORT_MAX])
+    if kind == "progress":
+        _agent_append(chat_ref, message)
+    else:
+        _agent_append(chat_ref, message, status="done")
+        token_ref.update({"closed": True})
+    return jsonify(ok=True), 200, _AGENT_NO_STORE
 
 
 @app.post("/api/v1/claude-connect/start")
