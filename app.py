@@ -2294,6 +2294,7 @@ _AGENT_NO_STORE = {"Cache-Control": "no-store"}
 _AGENT_FILES_MAX = 3
 _AGENT_REPO_LABELS = {
     "RakuYade-management": "全体管理",
+    "note": "note",
     "matometokiya": "まとめときや",
     "mahjongsiyoka": "まーじゃんしよか",
     "RakuYade-homepage": "ホームページ",
