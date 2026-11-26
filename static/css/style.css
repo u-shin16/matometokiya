@@ -4236,11 +4236,11 @@ body.has-mindmap-memo-fullscreen {
 .agent-files { display: flex; flex-wrap: wrap; gap: 6px; }
 .agent-files[hidden] { display: none; }
 .agent-file { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: 999px; padding: 5px 10px; background: var(--panel-soft); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
-.agent-form { padding: 12px 24px 20px; display: grid; gap: 8px; }
+.agent-form { padding: 12px 24px 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .agent-composer { position: relative; display: flex; flex-direction: column; border: 1px solid var(--line, #e2e8f0); border-radius: 16px; background: var(--panel); }
 .agent-composer:focus-within { border-color: #2563eb; }
 .agent-composer textarea { width: 100%; box-sizing: border-box; min-height: 56px; max-height: 200px; padding: 12px 14px 4px; border: 0; border-radius: 16px 16px 0 0; outline: none; background: transparent; color: inherit; font: inherit; font-size: 16px; resize: none; field-sizing: content; }
-.agent-toolbar { display: flex; align-items: center; gap: 2px; padding: 6px 8px 8px; }
+.agent-toolbar { min-width: 0; display: flex; align-items: center; gap: 2px; padding: 6px 8px 8px; }
 .agent-repo-btn { min-width: 0; display: flex; align-items: center; gap: 6px; height: 32px; margin-left: 4px; padding: 0 10px; border: 1px solid var(--line, #e2e8f0); border-radius: 999px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
 .agent-repo-btn:hover, .agent-repo-btn[aria-expanded="true"] { background: var(--panel-soft); }
 .agent-repo-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4262,6 +4262,28 @@ body.has-mindmap-memo-fullscreen {
 .agent-tab:only-child .agent-tab-name { padding-right: 12px; }
 #agentSkillBtn[hidden] { display: none; }
 .agent-error { margin: 0; color: #dc2626; font-size: 13px; }
+
+/* スマホは全画面。高さと位置は、キーボードを除いた見えている範囲に合わせる（script.js の fitAgentPanel） */
+@media (max-width: 640px) {
+  #agentPanel { top: var(--agent-top, 0px); bottom: auto; height: var(--agent-height, 100dvh); padding: 0; overflow: hidden; background: var(--panel); }
+  .mindmap-ai-dialog.agent-dialog { width: 100%; height: 100%; max-height: 100%; border-radius: 0; box-shadow: none; }
+  .agent-log { padding: 12px 14px; overscroll-behavior: contain; }
+  .agent-msg { max-width: 94%; font-size: 15px; }
+  .agent-msg-user { max-width: 85%; }
+  .agent-msg-progress, .agent-msg-wait, .agent-msg-hint, .agent-msg-stopped { font-size: 13px; }
+  .agent-form { padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
+  .agent-composer textarea { min-height: 44px; max-height: calc(var(--agent-height, 100dvh) * 0.24); padding-top: 10px; }
+  .agent-dialog .agent-icon, .agent-send { width: 40px; height: 40px; }
+  .agent-repo-btn { height: 36px; }
+  .agent-skills { max-height: calc(var(--agent-height, 100dvh) * 0.35); }
+  .agent-repo-menu { max-width: none; max-height: calc(var(--agent-height, 100dvh) * 0.55); }
+  .agent-history { left: 8px; right: 8px; max-height: calc(var(--agent-height, 100dvh) * 0.7); }
+  .agent-skill, .agent-history-row, .agent-repo-row { padding-block: 12px; font-size: 14px; }
+}
+@media (max-width: 360px) {
+  .agent-dialog .agent-toolbar .agent-icon { width: 34px; }
+  .agent-repo-btn > svg:first-child { display: none; }
+}
 .note-ai-panel[hidden] { display: none; }
 #agentBtn[hidden] { display: none; }
 

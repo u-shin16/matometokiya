@@ -9092,6 +9092,25 @@ function resetAgent() {
   document.getElementById("agentLog").replaceChildren();
 }
 
+const agentTouch = () => window.matchMedia("(pointer: coarse)").matches;
+
+// 指で操作する端末では、開いただけでキーボードが画面を覆わないようにする
+function focusAgentInput() {
+  if (!agentTouch()) document.getElementById("agentInput").focus();
+}
+
+// スマホではキーボードが出ても画面の高さが変わらないので、見えている範囲に合わせる
+function fitAgentPanel() {
+  const view = window.visualViewport;
+  const panel = document.getElementById("agentPanel");
+  if (!view || panel.hidden || view.scale > 1.01) return;
+  const log = document.getElementById("agentLog");
+  const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  panel.style.setProperty("--agent-height", `${view.height}px`);
+  panel.style.setProperty("--agent-top", `${view.offsetTop}px`);
+  if (atEnd) log.scrollTop = log.scrollHeight;
+}
+
 function initAgent() {
   const panel = document.getElementById("agentPanel");
   const input = document.getElementById("agentInput");
@@ -9105,7 +9124,8 @@ function initAgent() {
 
   document.getElementById("agentBtn").addEventListener("click", async () => {
     panel.hidden = false;
-    input.focus();
+    fitAgentPanel();
+    focusAgentInput();
     // 開き直したときは前のタブを戻す。初めてなら、いちばん新しい会話を開く
     const chats = await refreshAgent();
     if (agentState.tabs.length) { await openAgentChat(agentState.chatId); return; }
@@ -9124,7 +9144,7 @@ function initAgent() {
     if (select.value === name) return;
     select.value = name;
     changeAgentRepo(name);
-    input.focus();
+    focusAgentInput();
   };
   repoBtn.addEventListener("click", () => toggleAgentRepoMenu(repoMenu.hidden));
   document.getElementById("agentRepoSearch").addEventListener("input", renderAgentRepoList);
@@ -9181,7 +9201,9 @@ function initAgent() {
     const row = e.target.closest(".agent-history-row");
     if (row) void openAgentChat(row.dataset.chatId);
   });
-  document.getElementById("agentNew").addEventListener("click", () => { void openAgentChat(""); input.focus(); });
+  document.getElementById("agentNew").addEventListener("click", () => { void openAgentChat(""); focusAgentInput(); });
+  window.visualViewport?.addEventListener("resize", fitAgentPanel);
+  window.visualViewport?.addEventListener("scroll", fitAgentPanel);
   const skillBox = document.getElementById("agentSkills");
   input.addEventListener("input", () => { agentState.skillIndex = 0; renderAgentSkills(); });
   document.getElementById("agentSkillBtn").addEventListener("click", () => {
@@ -9239,7 +9261,7 @@ function initAgent() {
     try {
       await agentRequest(`chats/${encodeURIComponent(chatId)}/stop`, { method: "POST" });
       if (agentState.chatId === chatId) await loadAgentChat();
-      input.focus();
+      focusAgentInput();
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
@@ -9273,6 +9295,8 @@ function initAgent() {
       agentState.drafts.delete(sentFrom);
       agentState.drafts.delete(data.chat_id);
       if (stayed) { input.value = ""; setAgentFiles([]); skillBox.hidden = true; }
+      // 送ったあとはキーボードを閉じて、返事が見えるようにする
+      if (agentTouch()) input.blur();
       const tab = agentState.tabs.find(t => t.id === sentFrom);
       if (tab && !sentFrom) Object.assign(tab, { id: data.chat_id, title: text.split("\n")[0].slice(0, 60) });
       if (stayed) agentState.chatId = data.chat_id;
