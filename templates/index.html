@@ -286,10 +286,18 @@
       <div id="agentPanel" class="note-ai-panel" role="dialog" aria-labelledby="agentTitle" hidden>
         <div class="mindmap-ai-dialog agent-dialog">
           <div class="mindmap-node-settings-head">
-            <strong id="agentTitle">Claude</strong>
-            <select id="agentChats" class="agent-chats" aria-label="会話を選ぶ"></select>
-            <button id="agentNew" class="btn ghost btn-sm" type="button">新しい会話</button>
+            <strong id="agentTitle" class="agent-title">新しい会話</strong>
+            <button id="agentHistoryBtn" class="agent-icon" type="button" title="これまでの会話" aria-label="これまでの会話" aria-haspopup="dialog" aria-expanded="false" aria-controls="agentHistory">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.3M3.5 3.8v4.5H8M12 7.5V12l3 2"/></svg>
+            </button>
+            <button id="agentNew" class="agent-icon" type="button" title="新しい会話" aria-label="新しい会話">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
             <button id="agentClose" class="mindmap-node-settings-close" type="button" title="閉じる" aria-label="閉じる">×</button>
+            <div id="agentHistory" class="agent-history" hidden>
+              <input id="agentSearch" type="search" placeholder="会話を検索" aria-label="会話を検索" autocomplete="off">
+              <div id="agentHistoryList" class="agent-history-list"></div>
+            </div>
           </div>
           <div id="agentLog" class="agent-log" aria-live="polite"></div>
           <form id="agentForm" class="agent-form">

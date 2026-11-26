@@ -8682,7 +8682,7 @@ const noteAiAssistant = createAiAssistant({
 });
 
 // ── Claudeに任せる（持ち主のアカウントだけボタンが出る） ─────────────────────
-const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [] };
+const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [], chats: [] };
 
 async function agentRequest(path, options = {}) {
   const user = auth?.currentUser;
@@ -8744,14 +8744,82 @@ async function refreshAgent() {
   try {
     const data = await agentRequest("chats");
     document.getElementById("agentBtn").hidden = !data.enabled;
-    const select = document.getElementById("agentChats");
-    select.replaceChildren(new Option("新しい会話", ""), ...data.chats.map(c => new Option(c.title || "（無題）", c.id)));
-    select.value = agentState.chatId;
+    agentState.chats = data.chats;
+    renderAgentHistory();
     return data.chats;
   } catch (e) {
     console.warn(e);
     return [];
   }
+}
+
+// 会話の一覧（今日・昨日・それより前に分けて、検索で絞れる）
+function agentDayGroup(date, now) {
+  const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((day(now) - day(date)) / 86400000);
+  return diff <= 0 ? "今日" : diff === 1 ? "昨日" : diff < 7 ? "今週" : "それより前";
+}
+
+function agentAgo(date, now) {
+  const minutes = Math.floor((now - date) / 60000);
+  if (minutes < 1) return "たった今";
+  if (minutes < 60) return `${minutes}分前`;
+  if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}時間前`;
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function renderAgentHistory() {
+  const current = agentState.chats.find(c => c.id === agentState.chatId);
+  const title = document.getElementById("agentTitle");
+  if (!agentState.chatId) title.textContent = "新しい会話";
+  else if (current) title.textContent = current.title || "（無題）";
+
+  const word = document.getElementById("agentSearch").value.trim().toLowerCase();
+  const now = new Date();
+  const items = [];
+  let group = "";
+  for (const chat of agentState.chats) {
+    if (word && !String(chat.title).toLowerCase().includes(word)) continue;
+    const date = new Date(chat.updated_at || now);
+    const name = agentDayGroup(date, now);
+    if (name !== group) {
+      group = name;
+      const head = document.createElement("div");
+      head.className = "agent-history-group";
+      head.textContent = name;
+      items.push(head);
+    }
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "agent-history-row";
+    row.dataset.chatId = chat.id;
+    if (chat.id === agentState.chatId) row.setAttribute("aria-current", "true");
+    const label = document.createElement("span");
+    label.textContent = chat.title || "（無題）";
+    const ago = document.createElement("small");
+    ago.textContent = agentAgo(date, now);
+    row.append(label, ago);
+    items.push(row);
+  }
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "agent-history-group";
+    empty.textContent = word ? "見つかりません" : "まだ会話がありません";
+    items.push(empty);
+  }
+  document.getElementById("agentHistoryList").replaceChildren(...items);
+}
+
+function toggleAgentHistory(open) {
+  const box = document.getElementById("agentHistory");
+  box.hidden = !open;
+  document.getElementById("agentHistoryBtn").setAttribute("aria-expanded", String(open));
+  if (!open) return;
+  const search = document.getElementById("agentSearch");
+  search.value = "";
+  renderAgentHistory();
+  // スマホではキーボードが一覧を隠すので、指で操作する端末では自動で入力欄に移らない
+  if (window.matchMedia("(pointer: fine)").matches) search.focus();
 }
 
 function setAgentFiles(files) {
@@ -8783,7 +8851,8 @@ function openAgentChat(chatId) {
   agentState.status = "done";
   agentState.shown = "";
   document.getElementById("agentError").hidden = true;
-  document.getElementById("agentChats").value = chatId;
+  toggleAgentHistory(false);
+  renderAgentHistory();
   document.getElementById("agentSend").disabled = false;
   document.getElementById("agentLog").replaceChildren();
   return loadAgentChat();
@@ -8792,12 +8861,13 @@ function openAgentChat(chatId) {
 function resetAgent() {
   clearTimeout(agentState.timer);
   agentState.loading++;
-  Object.assign(agentState, { chatId: "", status: "done", shown: "" });
+  Object.assign(agentState, { chatId: "", status: "done", shown: "", chats: [] });
+  toggleAgentHistory(false);
   setAgentFiles([]);
   document.getElementById("agentBtn").hidden = true;
   document.getElementById("agentPanel").hidden = true;
   document.getElementById("agentInput").value = "";
-  document.getElementById("agentChats").replaceChildren();
+  renderAgentHistory();
   document.getElementById("agentLog").replaceChildren();
 }
 
@@ -8807,7 +8877,9 @@ function initAgent() {
   const send = document.getElementById("agentSend");
   const error = document.getElementById("agentError");
   const form = document.getElementById("agentForm");
-  const close = () => { panel.hidden = true; clearTimeout(agentState.timer); };
+  const history = document.getElementById("agentHistory");
+  const historyBtn = document.getElementById("agentHistoryBtn");
+  const close = () => { panel.hidden = true; toggleAgentHistory(false); clearTimeout(agentState.timer); };
   let sending = false;
 
   document.getElementById("agentBtn").addEventListener("click", async () => {
@@ -8818,8 +8890,29 @@ function initAgent() {
   });
   document.getElementById("agentClose").addEventListener("click", close);
   panel.addEventListener("click", e => { if (e.target === panel) close(); });
-  panel.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
-  document.getElementById("agentChats").addEventListener("change", e => openAgentChat(e.target.value));
+  panel.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    if (history.hidden) close();
+    else { toggleAgentHistory(false); historyBtn.focus(); }
+  });
+  historyBtn.addEventListener("click", () => {
+    const open = history.hidden;
+    toggleAgentHistory(open);
+    if (open) void refreshAgent();
+  });
+  panel.addEventListener("pointerdown", e => {
+    if (!history.hidden && !history.contains(e.target) && !historyBtn.contains(e.target)) toggleAgentHistory(false);
+  });
+  document.getElementById("agentSearch").addEventListener("input", renderAgentHistory);
+  document.getElementById("agentSearch").addEventListener("keydown", e => {
+    if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    history.querySelector(".agent-history-row")?.click();
+  });
+  history.addEventListener("click", e => {
+    const row = e.target.closest(".agent-history-row");
+    if (row) void openAgentChat(row.dataset.chatId);
+  });
   document.getElementById("agentNew").addEventListener("click", () => { void openAgentChat(""); input.focus(); });
   input.addEventListener("keydown", e => {
     // 日本語の変換を決めるEnterでは送らない

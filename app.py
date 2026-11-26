@@ -2474,8 +2474,11 @@ def api_agent_chats():
     if _agent_config(uid) is None:
         return jsonify(enabled=False, chats=[]), 200, _AGENT_NO_STORE
     query = _agent_chats_ref(uid).order_by("updated_at", direction="DESCENDING").limit(_AGENT_CHATS_MAX)
-    chats = [{"id": document.id, "title": str((document.to_dict() or {}).get("title") or "")}
-             for document in query.stream()]
+    chats = []
+    for document in query.stream():
+        data = document.to_dict() or {}
+        chats.append({"id": document.id, "title": str(data.get("title") or ""),
+                      "updated_at": str(data.get("updated_at") or "")})
     return jsonify(enabled=True, chats=chats), 200, _AGENT_NO_STORE
 
 
