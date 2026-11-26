@@ -8682,7 +8682,7 @@ const noteAiAssistant = createAiAssistant({
 });
 
 // ── Claudeに任せる（持ち主のアカウントだけボタンが出る） ─────────────────────
-const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [], chats: [] };
+const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [], chats: [], tabs: [], drafts: new Map() };
 
 async function agentRequest(path, options = {}) {
   const user = auth?.currentUser;
@@ -8769,11 +8769,7 @@ function agentAgo(date, now) {
 }
 
 function renderAgentHistory() {
-  const current = agentState.chats.find(c => c.id === agentState.chatId);
-  const title = document.getElementById("agentTitle");
-  if (!agentState.chatId) title.textContent = "新しい会話";
-  else if (current) title.textContent = current.title || "（無題）";
-
+  renderAgentTabs();
   const word = document.getElementById("agentSearch").value.trim().toLowerCase();
   const now = new Date();
   const items = [];
@@ -8822,6 +8818,71 @@ function toggleAgentHistory(open) {
   if (window.matchMedia("(pointer: fine)").matches) search.focus();
 }
 
+// ── 開いている会話のタブ ──
+// 開いているタブは、この端末に利用者ごとに覚える。×はタブを閉じるだけで、会話は一覧に残る
+const agentTabsKey = () => `agentTabs:${auth?.currentUser?.uid || ""}`;
+
+function saveAgentTabs() {
+  try {
+    localStorage.setItem(agentTabsKey(), JSON.stringify({ tabs: agentState.tabs, active: agentState.chatId }));
+  } catch (e) { /* 覚えられないだけ */ }
+}
+
+function readAgentTabs() {
+  try {
+    const data = JSON.parse(localStorage.getItem(agentTabsKey()) || "{}");
+    const tabs = Array.isArray(data.tabs) ? data.tabs.filter(t => t && typeof t.id === "string") : [];
+    return { tabs, active: typeof data.active === "string" ? data.active : "" };
+  } catch (e) {
+    return { tabs: [], active: "" };
+  }
+}
+
+function agentTabTitle(tab) {
+  if (!tab.id) return "新しい会話";
+  const chat = agentState.chats.find(c => c.id === tab.id);
+  if (chat) tab.title = chat.title;
+  return tab.title || "（無題）";
+}
+
+function renderAgentTabs() {
+  const strip = document.getElementById("agentTabs");
+  let activeTab = null;
+  strip.replaceChildren(...agentState.tabs.map(tab => {
+    const box = document.createElement("div");
+    box.className = "agent-tab";
+    box.dataset.chatId = tab.id;
+    const title = agentTabTitle(tab);
+    const select = document.createElement("button");
+    select.type = "button";
+    select.className = "agent-tab-name";
+    select.setAttribute("role", "tab");
+    select.setAttribute("aria-selected", String(tab.id === agentState.chatId));
+    select.title = title;
+    select.textContent = title;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "agent-tab-close";
+    close.setAttribute("aria-label", `${title}のタブを閉じる`);
+    close.textContent = "×";
+    box.append(select, close);
+    if (tab.id === agentState.chatId) { box.classList.add("active"); activeTab = box; }
+    return box;
+  }));
+  activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function closeAgentTab(chatId) {
+  const index = agentState.tabs.findIndex(t => t.id === chatId);
+  if (index < 0) return;
+  agentState.tabs.splice(index, 1);
+  agentState.drafts.delete(chatId);
+  if (chatId !== agentState.chatId) { renderAgentTabs(); saveAgentTabs(); return; }
+  // 開いていたタブを閉じたら、右隣（無ければ左隣）へ移る
+  const next = agentState.tabs[Math.min(index, agentState.tabs.length - 1)];
+  void openAgentChat(next ? next.id : "", { keepDraft: false });
+}
+
 function setAgentFiles(files) {
   agentState.files = files;
   const list = document.getElementById("agentFileList");
@@ -8846,13 +8907,23 @@ function addAgentFiles(added) {
   setAgentFiles(files);
 }
 
-function openAgentChat(chatId) {
+function openAgentChat(chatId, { keepDraft = true } = {}) {
+  const input = document.getElementById("agentInput");
+  // 書きかけの文と添付は、タブごとに持っておく
+  if (keepDraft && agentState.tabs.some(t => t.id === agentState.chatId)) {
+    agentState.drafts.set(agentState.chatId, { text: input.value, files: agentState.files });
+  }
+  if (!agentState.tabs.some(t => t.id === chatId)) agentState.tabs.push({ id: chatId, title: "" });
   agentState.chatId = chatId;
+  const draft = agentState.drafts.get(chatId);
+  input.value = draft?.text || "";
+  setAgentFiles(draft?.files || []);
   agentState.status = "done";
   agentState.shown = "";
   document.getElementById("agentError").hidden = true;
   toggleAgentHistory(false);
   renderAgentHistory();
+  saveAgentTabs();
   document.getElementById("agentSend").disabled = false;
   document.getElementById("agentLog").replaceChildren();
   return loadAgentChat();
@@ -8861,7 +8932,7 @@ function openAgentChat(chatId) {
 function resetAgent() {
   clearTimeout(agentState.timer);
   agentState.loading++;
-  Object.assign(agentState, { chatId: "", status: "done", shown: "", chats: [] });
+  Object.assign(agentState, { chatId: "", status: "done", shown: "", chats: [], tabs: [], drafts: new Map() });
   toggleAgentHistory(false);
   setAgentFiles([]);
   document.getElementById("agentBtn").hidden = true;
@@ -8885,8 +8956,13 @@ function initAgent() {
   document.getElementById("agentBtn").addEventListener("click", async () => {
     panel.hidden = false;
     input.focus();
+    // 開き直したときは前のタブを戻す。初めてなら、いちばん新しい会話を開く
     const chats = await refreshAgent();
-    await openAgentChat(agentState.chatId || chats[0]?.id || "");
+    if (agentState.tabs.length) { await openAgentChat(agentState.chatId); return; }
+    const saved = readAgentTabs();
+    agentState.tabs = saved.tabs;
+    const active = saved.tabs.some(t => t.id === saved.active) ? saved.active : saved.tabs[0]?.id;
+    await openAgentChat(active ?? chats[0]?.id ?? "", { keepDraft: false });
   });
   document.getElementById("agentClose").addEventListener("click", close);
   panel.addEventListener("click", e => { if (e.target === panel) close(); });
@@ -8903,6 +8979,23 @@ function initAgent() {
   panel.addEventListener("pointerdown", e => {
     if (!history.hidden && !history.contains(e.target) && !historyBtn.contains(e.target)) toggleAgentHistory(false);
   });
+  const strip = document.getElementById("agentTabs");
+  strip.addEventListener("click", e => {
+    const box = e.target.closest(".agent-tab");
+    if (!box) return;
+    if (e.target.closest(".agent-tab-close")) closeAgentTab(box.dataset.chatId);
+    else void openAgentChat(box.dataset.chatId);
+  });
+  strip.addEventListener("auxclick", e => {
+    const box = e.target.closest(".agent-tab");
+    if (box && e.button === 1) { e.preventDefault(); closeAgentTab(box.dataset.chatId); }
+  });
+  // マウスの縦ホイールでも、タブを横に送れるようにする
+  strip.addEventListener("wheel", e => {
+    if (!e.deltaY || strip.scrollWidth <= strip.clientWidth) return;
+    e.preventDefault();
+    strip.scrollLeft += e.deltaY;
+  }, { passive: false });
   document.getElementById("agentSearch").addEventListener("input", renderAgentHistory);
   document.getElementById("agentSearch").addEventListener("keydown", e => {
     if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
@@ -8951,13 +9044,19 @@ function initAgent() {
         body.append("chat_id", agentState.chatId);
         files.forEach(file => body.append("files", file));
       }
+      const sentFrom = agentState.chatId;
       const data = await agentRequest("messages", { method: "POST", body });
-      input.value = "";
-      setAgentFiles([]);
       send.disabled = false;
-      agentState.chatId = data.chat_id;
+      // 送っている間に別のタブへ移っていたら、そのタブの書きかけには触らない
+      const stayed = agentState.chatId === sentFrom;
+      agentState.drafts.delete(sentFrom);
+      if (stayed) { input.value = ""; setAgentFiles([]); }
+      const tab = agentState.tabs.find(t => t.id === sentFrom);
+      if (tab && !sentFrom) Object.assign(tab, { id: data.chat_id, title: text.split("\n")[0].slice(0, 60) });
+      if (stayed) agentState.chatId = data.chat_id;
       await refreshAgent();
-      await openAgentChat(data.chat_id);
+      if (stayed) await openAgentChat(data.chat_id, { keepDraft: false });
+      else saveAgentTabs();
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;

@@ -283,10 +283,10 @@
         <input id="titleInput" class="title-input" placeholder="メモを選択するか作成してください">
       </section>
 
-      <div id="agentPanel" class="note-ai-panel" role="dialog" aria-labelledby="agentTitle" hidden>
+      <div id="agentPanel" class="note-ai-panel" role="dialog" aria-label="Claude" hidden>
         <div class="mindmap-ai-dialog agent-dialog">
           <div class="mindmap-node-settings-head">
-            <strong id="agentTitle" class="agent-title">新しい会話</strong>
+            <div id="agentTabs" class="agent-tabs" role="tablist" aria-label="開いている会話"></div>
             <button id="agentHistoryBtn" class="agent-icon" type="button" title="これまでの会話" aria-label="これまでの会話" aria-haspopup="dialog" aria-expanded="false" aria-controls="agentHistory">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.3M3.5 3.8v4.5H8M12 7.5V12l3 2"/></svg>
             </button>
