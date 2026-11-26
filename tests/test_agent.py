@@ -239,6 +239,31 @@ class AgentTest(unittest.TestCase):
         self._as("someone")
         self.assertEqual(self.client.post("/api/v1/agent/chats/chat1/stop").status_code, 404)
 
+    def test_app_repos_use_other_routine(self):
+        self._as("owner")
+        apps = {
+            "CLAUDE_AGENT_REPOS": "RakuYade-management",
+            "CLAUDE_AGENT_APP_REPOS": "matometokiya",
+            "CLAUDE_ROUTINE_APPS_FIRE_URL": "https://api.anthropic.com/v1/claude_code/routines/trig_apps/fire",
+            "CLAUDE_ROUTINE_APPS_FIRE_TOKEN": "apps-secret",
+        }
+        with patch.dict("os.environ", apps):
+            names = [r["name"] for r in self.client.get("/api/v1/agent/chats").get_json()["repos"]]
+            self.assertEqual(names, ["RakuYade-management", "matometokiya"])
+            self.client.post("/api/v1/agent/messages", json={"text": "a", "repo": "matometokiya"})
+            url, token, sent = self.fire.call_args.args
+            self.assertEqual((url.split("/")[-2], token), ("trig_apps", "apps-secret"))
+            self.assertIn("本番への反映はしません", sent)
+            self.assertNotIn("apps-secret", sent)
+            self.client.post("/api/v1/agent/messages", json={"text": "b", "repo": "RakuYade-management"})
+            url, token, sent = self.fire.call_args.args
+            self.assertEqual(token, "fire-secret")
+            self.assertNotIn("アプリのコードを直すとき", sent)
+        # アプリ用の設定が無ければ、アプリは選べない
+        with patch.dict("os.environ", {**apps, "CLAUDE_ROUTINE_APPS_FIRE_TOKEN": ""}):
+            bad = self.client.post("/api/v1/agent/messages", json={"text": "a", "repo": "matometokiya"})
+            self.assertEqual(bad.status_code, 400)
+
     def test_empty_and_too_long(self):
         self._as("owner")
         for text in ("  ", "a" * 20001):

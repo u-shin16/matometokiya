@@ -2370,12 +2370,39 @@ def _agent_skill_note(text: str, repo: str) -> str:
 """
 
 
+def _agent_repo_names(env: str) -> list[str]:
+    names = [name.strip() for name in os.getenv(env, "").split(",")]
+    return [name for name in names if re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", name)]
+
+
+# アプリは数が多く起動が遅いので、別のroutineに分ける（全体管理とnoteの速さを保つ）
+def _agent_app_routine() -> tuple[str, str] | None:
+    url = os.getenv("CLAUDE_ROUTINE_APPS_FIRE_URL", "").strip()
+    token = os.getenv("CLAUDE_ROUTINE_APPS_FIRE_TOKEN", "").strip()
+    return (url, token) if token and url.startswith(_AGENT_URL_PREFIX) else None
+
+
+def _agent_app_repos() -> list[str]:
+    return _agent_repo_names("CLAUDE_AGENT_APP_REPOS") if _agent_app_routine() else []
+
+
 def _agent_repos() -> list[dict]:
     """選べるリポジトリ。routineに入れて、GitHubで許可したものを.envに並べる（先頭が初期値）。"""
-    names = [name.strip() for name in os.getenv("CLAUDE_AGENT_REPOS", "").split(",")]
-    names = [name for name in names if re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", name)]
-    return [{"name": name, "skills": _agent_skills(name)}
-            for name in (names or ["RakuYade-management"])]
+    names = _agent_repo_names("CLAUDE_AGENT_REPOS") or ["RakuYade-management"]
+    names += [name for name in _agent_app_repos() if name not in names]
+    return [{"name": name, "skills": _agent_skills(name)} for name in names]
+
+
+def _agent_app_note(repo: str) -> str:
+    if repo not in _agent_app_repos():
+        return ""
+    return f"""
+## アプリのコードを直すときの決まり
+- 最初に {repo} の CLAUDE.md と README を読みます（あれば）
+- テストがあれば実行し、結果を書きます。実行できなかったときは、そう書きます
+- 変更は claude/ の枝にpushするまでです。mainへの反映と本番への反映はしません
+- ファイルを変えた結果の最後に「本番にはまだ入っていません。MacのClaudeに『{repo}を反映して』と伝えてください」と書きます
+"""
 _AGENT_FILES_BYTES = 10 * 1024 * 1024
 # 添付は鍵の期限までサーバーに置き、その鍵を持つクラウドのClaudeだけが取り出せる
 _AGENT_FILES_DIR = Path(__file__).resolve().parent / "uploads" / "agent"
@@ -2527,7 +2554,7 @@ textはふつうの日本語にします。鍵やパスワードは書きませ�
 
 ## 今回の指示
 {text}
-{_agent_skill_note(text, repo)}{attached}"""
+{_agent_app_note(repo)}{_agent_skill_note(text, repo)}{attached}"""
 
 
 def fire_claude_routine(url: str, token: str, text: str) -> str:
@@ -2641,6 +2668,8 @@ def api_agent_send():
         chat_ref.set({"title": text.splitlines()[0][:60], "messages": [],
                       "created_at": message["at"], "updated_at": message["at"]})
 
+    if repo in _agent_app_repos():
+        config = _agent_app_routine()
     files = _agent_save_files(uploads)
     run_token = secrets.token_urlsafe(32)
     token_ref = _agent_token_ref(run_token)
