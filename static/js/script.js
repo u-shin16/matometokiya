@@ -8682,7 +8682,7 @@ const noteAiAssistant = createAiAssistant({
 });
 
 // ── Claudeに任せる（持ち主のアカウントだけボタンが出る） ─────────────────────
-const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [], chats: [], tabs: [], drafts: new Map(), repos: [], repo: "", skills: [], skillIndex: 0 };
+const agentState = { chatId: "", status: "done", timer: null, shown: "", loading: 0, files: [], chats: [], tabs: [], drafts: new Map(), repos: [], repo: "", skillIndex: 0 };
 
 async function agentRequest(path, options = {}) {
   const user = auth?.currentUser;
@@ -8750,7 +8750,6 @@ async function refreshAgent() {
     document.getElementById("agentBtn").hidden = !data.enabled;
     agentState.chats = data.chats;
     setAgentRepos(data.repos || []);
-    agentState.skills = data.skills || [];
     renderAgentHistory();
     return data.chats;
   } catch (e) {
@@ -8905,6 +8904,9 @@ function selectAgentRepo(name) {
 
 function renderAgentRepoButton() {
   const name = document.getElementById("agentRepo").value;
+  const hasSkills = !!agentState.repos.find(r => r.name === name)?.skills?.length;
+  document.getElementById("agentSkillBtn").hidden = !hasSkills;
+  document.getElementById("agentSkills").hidden = true;
   document.getElementById("agentRepoName").textContent = name || "リポジトリ";
   const button = document.getElementById("agentRepoBtn");
   button.title = name;
@@ -8981,8 +8983,11 @@ function setAgentRepos(repos) {
 function renderAgentSkills(showAll = false) {
   const box = document.getElementById("agentSkills");
   const typed = document.getElementById("agentInput").value.match(/^\/([a-z0-9-]*)$/);
+  // 出すのは、選んでいるリポジトリで使えるスキルだけ
+  const repo = document.getElementById("agentRepo").value;
+  const skills = agentState.repos.find(r => r.name === repo)?.skills || [];
   const found = showAll || typed
-    ? agentState.skills.filter(s => showAll || s.name.includes(typed[1]))
+    ? skills.filter(s => showAll || s.name.includes(typed[1]))
     : [];
   box.hidden = !found.length;
   agentState.skillIndex = Math.max(0, Math.min(agentState.skillIndex, found.length - 1));
@@ -9065,7 +9070,7 @@ function openAgentChat(chatId, { keepDraft = true } = {}) {
 function resetAgent() {
   clearTimeout(agentState.timer);
   agentState.loading++;
-  Object.assign(agentState, { chatId: "", status: "done", shown: "", chats: [], tabs: [], drafts: new Map(), repoPending: "", skills: [] });
+  Object.assign(agentState, { chatId: "", status: "done", shown: "", chats: [], tabs: [], drafts: new Map(), repoPending: "" });
   setAgentRepos([]);
   document.getElementById("agentSkills").hidden = true;
   toggleAgentHistory(false);
@@ -9180,7 +9185,7 @@ function initAgent() {
     if (row) pickAgentSkill(row.dataset.name);
   });
   input.addEventListener("keydown", e => {
-    if (!skillBox.hidden && !e.isComposing && e.keyCode !== 229) {
+    if (!skillBox.hidden && skillBox.children.length && !e.isComposing && e.keyCode !== 229) {
       const rows = [...skillBox.children];
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();

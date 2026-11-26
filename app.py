@@ -2292,30 +2292,42 @@ _AGENT_RUN_TTL = timedelta(hours=2)
 _AGENT_STALE_AFTER = timedelta(minutes=20)
 _AGENT_NO_STORE = {"Cache-Control": "no-store"}
 _AGENT_FILES_MAX = 3
-# クラウドで手順を進められるスキル（全体管理の .claude/skills にあるもの）。
-# サーバー接続・本番反映・各種の鍵・このMacが要るスキルは載せない
+# リポジトリごとの、クラウドで手順を進められるスキル（各リポジトリの .claude/skills にあるもの）。
+# サーバー接続・本番反映・Gmail・ブラウザ操作・各種の鍵・このMacが要るスキルは載せない
 _AGENT_SKILLS = {
-    "todo": "今やることの確認・追加・完了",
-    "meeting": "今日の会議記録を作る",
-    "zenn-diary": "成長日記の材料をまとめる",
-    "zenn-article": "Zenn記事を書く",
-    "sidejob": "副業の案件の判定・提案文",
-    "adsense": "AdSense審査の状況と点検",
-    "roadmap-app": "アプリのロードマップ",
-    "roadmap-me": "自分のロードマップ",
-    "roadmap-rakuyade": "RakuYade全体のロードマップ",
+    "RakuYade-management": {
+        "todo": "今やることの確認・追加・完了",
+        "meeting": "今日の会議記録を作る",
+        "zenn-diary": "成長日記の材料をまとめる",
+        "zenn-article": "Zenn記事を書く",
+        "sidejob": "副業の案件の判定・提案文",
+        "adsense": "AdSense審査の状況と点検",
+        "roadmap-app": "アプリのロードマップ",
+        "roadmap-me": "自分のロードマップ",
+        "roadmap-rakuyade": "RakuYade全体のロードマップ",
+    },
+    "note": {
+        "free-ideas": "無料記事のタイトル案を10個",
+        "paid-ideas": "有料記事のタイトル案を10個",
+        "ai-news-ideas": "最新AIニュースから記事案",
+        "free-article": "無料記事を書く（サムネは除く）",
+        "paid-article": "有料記事を書く（サムネは除く）",
+        "account-strategy": "アカウント分析と今後の戦略",
+    },
 }
 
 
-def _agent_skill_note(text: str) -> str:
+def _agent_skill_note(text: str, repo: str) -> str:
     match = re.match(r"/([a-z0-9-]+)(?=\s|$)", text)
-    if not match or match.group(1) not in _AGENT_SKILLS:
+    if not match or match.group(1) not in _AGENT_SKILLS.get(repo, {}):
         return ""
     return f"""
 ## 使うスキル
-RakuYade-management の .claude/skills/{match.group(1)}/SKILL.md を読み、その手順に従います。
-クラウドでできない手順（鍵・MCP・外部の取得が要るもの）は飛ばして、飛ばしたと結果に書きます。
+{repo} の .claude/skills/{match.group(1)}/SKILL.md を読み、その手順に従います。
+手順にある /Users/ で始まる場所は、このリポジトリの中の同じ場所に読み替えます。
+クラウドでできない手順（鍵・MCP・ブラウザ操作・外部の取得が要るもの）は飛ばして、飛ばしたと結果に書きます。
 手順にpushやmainへの反映があっても、claude/ の枝までにします。
+作った文章は、結果にも本文を載せます。
 """
 
 
@@ -2323,7 +2335,10 @@ def _agent_repos() -> list[dict]:
     """選べるリポジトリ。routineに入れて、GitHubで許可したものを.envに並べる（先頭が初期値）。"""
     names = [name.strip() for name in os.getenv("CLAUDE_AGENT_REPOS", "").split(",")]
     names = [name for name in names if re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", name)]
-    return [{"name": name} for name in (names or ["RakuYade-management"])]
+    return [{"name": name,
+             "skills": [{"name": skill, "label": label}
+                        for skill, label in _AGENT_SKILLS.get(name, {}).items()]}
+            for name in (names or ["RakuYade-management"])]
 _AGENT_FILES_BYTES = 10 * 1024 * 1024
 # 添付は鍵の期限までサーバーに置き、その鍵を持つクラウドのClaudeだけが取り出せる
 _AGENT_FILES_DIR = Path(__file__).resolve().parent / "uploads" / "agent"
@@ -2465,7 +2480,7 @@ textはふつうの日本語にします。鍵やパスワードは書きませ�
 
 ## 今回の指示
 {text}
-{_agent_skill_note(text)}{attached}"""
+{_agent_skill_note(text, repo)}{attached}"""
 
 
 def fire_claude_routine(url: str, token: str, text: str) -> str:
@@ -2508,15 +2523,14 @@ def api_agent_chats():
     if auth_error is not None:
         return auth_error
     if _agent_config(uid) is None:
-        return jsonify(enabled=False, chats=[], repos=[], skills=[]), 200, _AGENT_NO_STORE
+        return jsonify(enabled=False, chats=[], repos=[]), 200, _AGENT_NO_STORE
     query = _agent_chats_ref(uid).order_by("updated_at", direction="DESCENDING").limit(_AGENT_CHATS_MAX)
     chats = []
     for document in query.stream():
         data = document.to_dict() or {}
         chats.append({"id": document.id, "title": str(data.get("title") or ""),
                       "updated_at": str(data.get("updated_at") or "")})
-    skills = [{"name": name, "label": label} for name, label in _AGENT_SKILLS.items()]
-    return jsonify(enabled=True, chats=chats, repos=_agent_repos(), skills=skills), 200, _AGENT_NO_STORE
+    return jsonify(enabled=True, chats=chats, repos=_agent_repos()), 200, _AGENT_NO_STORE
 
 
 @app.get("/api/v1/agent/chats/<chat_id>")

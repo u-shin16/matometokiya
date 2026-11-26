@@ -4258,6 +4258,7 @@ body.has-mindmap-memo-fullscreen {
 .agent-repo-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-repo-row small { color: #2563eb; font-size: 13px; }
 .agent-tab:only-child .agent-tab-name { padding-right: 12px; }
+#agentSkillBtn[hidden] { display: none; }
 .agent-error { margin: 0; color: #dc2626; font-size: 13px; }
 .note-ai-panel[hidden] { display: none; }
 #agentBtn[hidden] { display: none; }

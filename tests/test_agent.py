@@ -186,16 +186,20 @@ class AgentTest(unittest.TestCase):
             self.assertEqual(mixed.status_code, 400)
             self.assertEqual(self.fire.call_count, 1)
 
-    def test_skill(self):
+    def test_skills_per_repo(self):
         self._as("owner")
-        names = [s["name"] for s in self.client.get("/api/v1/agent/chats").get_json()["skills"]]
-        self.assertIn("todo", names)
-        self.assertNotIn("deploy", names)
-        self._send("/todo 一覧を出して")
-        self.assertIn(".claude/skills/todo/SKILL.md", self.fire.call_args.args[2])
-        self.chats.store["chat1"]["status"] = "done"
-        self._send("/deploy", "chat1")
-        self.assertNotIn("## 使うスキル", self.fire.call_args.args[2])
+        with patch.dict("os.environ", {"CLAUDE_AGENT_REPOS": "RakuYade-management,note,other"}):
+            repos = {r["name"]: [s["name"] for s in r["skills"]]
+                     for r in self.client.get("/api/v1/agent/chats").get_json()["repos"]}
+            self.assertIn("zenn-diary", repos["RakuYade-management"])
+            self.assertIn("free-ideas", repos["note"])
+            self.assertNotIn("zenn-diary", repos["note"])
+            self.assertNotIn("note-draft", repos["note"])
+            self.assertEqual(repos["other"], [])
+            self.client.post("/api/v1/agent/messages", json={"text": "/free-ideas", "repo": "note"})
+            self.assertIn("note の .claude/skills/free-ideas/SKILL.md", self.fire.call_args.args[2])
+            self.client.post("/api/v1/agent/messages", json={"text": "/zenn-diary", "repo": "note"})
+            self.assertNotIn("## 使うスキル", self.fire.call_args.args[2])
 
     def test_empty_and_too_long(self):
         self._as("owner")
